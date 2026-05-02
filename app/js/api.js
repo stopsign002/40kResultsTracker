@@ -68,6 +68,7 @@ export const stats = {
   headToHead:             (a, b) => api.get(`/stats/head-to-head?userA=${a}&userB=${b}`),
   firstTurnImpact:        (q) => api.get('/stats/first-turn-impact' + qstr(q)),
   secondaryAverages:      () => api.get('/stats/secondary-averages'),
+  warmap:                 () => api.get('/stats/warmap'),
 };
 
 export const admin = {

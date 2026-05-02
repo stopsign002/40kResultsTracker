@@ -130,11 +130,20 @@ router.get('/:id', async (req, res) => {
 // ── Create / Update helpers ───────────────────────────────────
 function computeFinalScores(players) {
   for (const p of players) {
-    let total = 0;
+    // Compute per-round secondary_score from player_secondaries + challengers
     for (const r of p.rounds || []) {
-      total += (r.primaryScore || 0) + (r.secondaryScore || 0);
+      const secPts = (p.secondaries || [])
+        .filter(s => s.roundNumber === r.roundNumber)
+        .reduce((sum, s) => sum + (s.score || 0), 0);
+      const chalPts = (p.challengers || [])
+        .filter(c => c.roundNumber === r.roundNumber)
+        .reduce((sum, c) => sum + (c.score || 0), 0);
+      r.secondaryScore = secPts + chalPts;
     }
-    p.finalScore = Math.min(100, total);
+    const primaryTotal = (p.rounds || []).reduce((sum, r) => sum + (r.primaryScore || 0), 0);
+    const secTotal     = (p.secondaries || []).reduce((sum, s) => sum + (s.score || 0), 0);
+    const chalTotal    = (p.challengers || []).reduce((sum, c) => sum + (c.score || 0), 0);
+    p.finalScore = Math.min(100, primaryTotal + secTotal + chalTotal);
   }
   if (players.length === 2) {
     const [a, b] = players;
@@ -174,9 +183,9 @@ async function insertPlayerChildren(client, gamePlayerId, p) {
   }
   for (const c of p.challengers || []) {
     await client.query(
-      `INSERT INTO player_challengers (game_player_id, card_id, card_name, completed, score)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [gamePlayerId, c.cardId ?? null, c.cardName, !!c.completed, c.score || 0]
+      `INSERT INTO player_challengers (game_player_id, card_id, card_name, round_number, completed, score)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [gamePlayerId, c.cardId ?? null, c.cardName, c.roundNumber ?? null, !!c.completed, c.score || 0]
     );
   }
 }

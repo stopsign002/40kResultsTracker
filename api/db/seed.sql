@@ -250,7 +250,12 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Cull the Horde'),
   ('Marked for Death'),
   ('Overwhelming Force'),
-  ('A Tempting Target')
+  ('A Tempting Target'),
+  ('Display of Might'),
+  ('Recover Assets'),
+  ('Extend Battle Lines'),
+  ('Secure No Man''s Land'),
+  ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Pariah Nexus' ON CONFLICT DO NOTHING;
 
 -- Pariah Nexus fixed secondaries (subset)
@@ -313,5 +318,10 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Overwhelming Force'),
   ('Cull the Horde'),
   ('A Tempting Target'),
-  ('Marked for Death')
+  ('Marked for Death'),
+  ('Display of Might'),
+  ('Recover Assets'),
+  ('Extend Battle Lines'),
+  ('Secure No Man''s Land'),
+  ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Leviathan' ON CONFLICT DO NOTHING;

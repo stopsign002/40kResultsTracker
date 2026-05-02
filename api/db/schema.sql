@@ -148,9 +148,19 @@ CREATE TABLE IF NOT EXISTS player_challengers (
   game_player_id  INTEGER NOT NULL REFERENCES game_players(id) ON DELETE CASCADE,
   card_id         INTEGER REFERENCES challenger_cards(id),
   card_name       TEXT NOT NULL,
+  round_number    INTEGER CHECK (round_number BETWEEN 1 AND 5),
   completed       BOOLEAN NOT NULL DEFAULT FALSE,
   score           INTEGER NOT NULL DEFAULT 0
 );
+-- Migration: add round_number if upgrading from initial schema
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='player_challengers' AND column_name='round_number'
+  ) THEN
+    ALTER TABLE player_challengers ADD COLUMN round_number INTEGER CHECK (round_number BETWEEN 1 AND 5);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_player_challengers_gp ON player_challengers(game_player_id);
 
 -- Helper view for stats: one row per (game_player) with derived fields

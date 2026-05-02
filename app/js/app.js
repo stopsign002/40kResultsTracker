@@ -5,6 +5,7 @@ import { renderGamesList } from './views/games-list.js';
 import { renderGameDetail } from './views/game-detail.js';
 import { renderGameForm } from './views/game-form.js';
 import { renderStats } from './views/stats.js';
+import { renderWarmap } from './views/warmap.js';
 import { renderAdmin } from './views/admin.js';
 
 const root = document.getElementById('app');
@@ -14,13 +15,14 @@ const state = {
 };
 
 const routes = [
-  { match: /^\/$/,                handler: () => renderGamesList(state) },
-  { match: /^\/games$/,           handler: () => renderGamesList(state) },
-  { match: /^\/games\/new$/,      handler: () => renderGameForm(state, null) },
+  { match: /^\/$/,                   handler: () => renderWarmap(state) },
+  { match: /^\/war$/,                handler: () => renderWarmap(state) },
+  { match: /^\/games$/,              handler: () => renderGamesList(state) },
+  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null) },
   { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
-  { match: /^\/games\/(\d+)$/,    handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
-  { match: /^\/stats$/,           handler: () => renderStats(state) },
-  { match: /^\/admin$/,           handler: () => renderAdmin(state) },
+  { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
+  { match: /^\/stats$/,              handler: () => renderStats(state) },
+  { match: /^\/admin$/,              handler: () => renderAdmin(state) },
 ];
 
 function currentPath() {
@@ -44,10 +46,12 @@ function renderShell(viewNode) {
   const path = currentPath();
   const navLink = (href, label) => {
     const a = el('a', { href: '#' + href }, label);
-    if (path === href || (href === '/games' && path === '/')) a.classList.add('active');
+    const isActive = path === href || (href === '/war' && (path === '/' || path === ''));
+    if (isActive) a.classList.add('active');
     return a;
   };
   const navItems = [
+    navLink('/war', 'Theatre of War'),
     navLink('/games', 'Games'),
     navLink('/games/new', 'New Game'),
     navLink('/stats', 'Stats'),

@@ -8,6 +8,7 @@ import adminRoutes from './routes/admin.js';
 import gameRoutes from './routes/games.js';
 import statsRoutes from './routes/stats.js';
 import referenceRoutes from './routes/reference.js';
+import warmapRoutes from './routes/warmap.js';
 
 const PgSession = connectPgSimple(session);
 const app = express();
@@ -36,6 +37,7 @@ app.use('/admin', adminRoutes);
 app.use('/games', gameRoutes);
 app.use('/stats', statsRoutes);
 app.use('/reference', referenceRoutes);
+app.use('/stats', warmapRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);
