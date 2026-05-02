@@ -12,7 +12,7 @@ function seededRng(seed) {
   };
 }
 
-const MAP_SEED = 0xDEAD40K; // static — same map for everyone forever
+const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
 
 // ── Hardcoded faction home fortresses ───────────────────────────
 // Positions are [x, y] in 0..1 space, placed lore-accurately on a
