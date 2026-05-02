@@ -6,10 +6,10 @@ const ROUNDS = [1, 2, 3, 4, 5];
 export async function renderGameForm(state, gameId) {
   const root = el('div', { class: 'fade-in' }, el('div', {}, 'Loading…'));
 
-  const [factions, missionPacks, users] = await Promise.all([
+  const [factions, missionPacks, playerNames] = await Promise.all([
     reference.factions(),
     reference.missionPacks(),
-    reference.users(),
+    reference.playerNames(),
   ]);
 
   // Load existing game if editing
@@ -96,7 +96,10 @@ export async function renderGameForm(state, gameId) {
     deploySel.value = draft.deploymentMapId || '';
     deploySel.addEventListener('change', () => { draft.deploymentMapId = deploySel.value ? parseInt(deploySel.value, 10) : null; });
 
-    const ruleSel = el('select', {}, selectOptions(missionDetails.missionRules));
+    const ruleSel = el('select', {}, [
+      el('option', { value: '' }, 'None'),
+      ...missionDetails.missionRules.map(r => el('option', { value: r.id }, r.name)),
+    ]);
     ruleSel.value = draft.missionRuleId || '';
     ruleSel.addEventListener('change', () => { draft.missionRuleId = ruleSel.value ? parseInt(ruleSel.value, 10) : null; });
 
@@ -142,30 +145,18 @@ export async function renderGameForm(state, gameId) {
   }
 
   function buildPlayerPanel(p, idx) {
-    const isUser = p.userId != null;
-
-    const playerKindSel = el('select', {}, [
-      el('option', { value: 'user' }, 'Registered user'),
-      el('option', { value: 'guest' }, 'Guest'),
-    ]);
-    playerKindSel.value = isUser ? 'user' : 'guest';
-    playerKindSel.addEventListener('change', () => {
-      if (playerKindSel.value === 'user') { p.guestName = null; p.userId = null; }
-      else { p.userId = null; p.guestName = p.guestName || ''; }
-      rerender();
+    const datalistId = `player-names-${idx}`;
+    const nameInput = el('input', {
+      type: 'text',
+      placeholder: 'Player name',
+      value: p.guestName ?? '',
+      list: datalistId,
+      autocomplete: 'off',
     });
-
-    let identityInput;
-    if (playerKindSel.value === 'user') {
-      identityInput = el('select', {}, selectOptions(users, 'id', 'display_name'));
-      identityInput.value = p.userId || '';
-      identityInput.addEventListener('change', () => {
-        p.userId = identityInput.value ? parseInt(identityInput.value, 10) : null;
-      });
-    } else {
-      identityInput = el('input', { type: 'text', placeholder: 'Guest name', value: p.guestName ?? '' });
-      identityInput.addEventListener('input', () => { p.guestName = identityInput.value || null; });
-    }
+    nameInput.addEventListener('input', () => { p.guestName = nameInput.value || null; });
+    const datalist = el('datalist', { id: datalistId },
+      (playerNames || []).map(n => el('option', { value: n }, ''))
+    );
 
     const factionSel = el('select', {}, selectOptions(factions));
     factionSel.value = p.factionId || '';
@@ -196,12 +187,10 @@ export async function renderGameForm(state, gameId) {
       rerender();
     });
 
-    const isAttackerChk = el('input', { type: 'checkbox' });
-    isAttackerChk.checked = !!p.isAttacker;
-    isAttackerChk.addEventListener('change', () => {
-      p.isAttacker = isAttackerChk.checked;
-      if (p.isAttacker) draft.players[1 - idx].isAttacker = false;
-      rerender();
+    const winnerChk = el('input', { type: 'checkbox' });
+    winnerChk.checked = !!p.manualWinner;
+    winnerChk.addEventListener('change', () => {
+      p.manualWinner = winnerChk.checked;
     });
 
     const armyListArea = el('textarea', { placeholder: 'Paste YAAB code or army list text…' }, p.armyListCode || '');
@@ -214,9 +203,8 @@ export async function renderGameForm(state, gameId) {
         ' · ',
         el('span', {}, p.wentFirst ? 'Went 1st' : '2nd'),
       ]),
-      el('div', { class: 'form-row cols-2' }, [
-        field('Player Type', playerKindSel),
-        field(playerKindSel.value === 'user' ? 'User' : 'Guest Name', identityInput),
+      el('div', { class: 'form-row' }, [
+        el('div', { class: 'form-group' }, [el('label', {}, 'Name'), nameInput, datalist]),
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Faction', factionSel),
@@ -224,11 +212,11 @@ export async function renderGameForm(state, gameId) {
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Went First', wentFirstChk, true),
-        field('Was Attacker', isAttackerChk, true),
+        field('Winner', winnerChk, true),
       ]),
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
       buildRoundsTable(p),
-      buildSecondariesSection(p),
+      buildPerRoundSecondaries(p),
       buildChallengersSection(p),
     ]);
   }
@@ -261,70 +249,131 @@ export async function renderGameForm(state, gameId) {
     ]);
   }
 
-  function buildSecondariesSection(p) {
-    const select = el('select', {}, [
-      el('option', { value: '' }, '— Add Secondary —'),
-      ...missionDetails.secondaryCards.map(c => el('option', { value: c.id }, `${c.name} (${c.card_type})`)),
-    ]);
-    select.addEventListener('change', () => {
-      if (!select.value) return;
-      const card = missionDetails.secondaryCards.find(c => c.id == select.value);
-      p.secondaries.push({ cardId: card.id, cardName: card.name, roundNumber: null, score: 0 });
-      select.value = '';
-      rerender();
-    });
-
-    const list = p.secondaries.map((s, i) => {
-      const round = el('select', {}, [
-        el('option', { value: '' }, 'Fixed'),
-        ...ROUNDS.map(n => el('option', { value: n }, `Round ${n}`)),
+  function buildPerRoundSecondaries(p) {
+    if (!missionDetails.secondaryCards.length) {
+      return el('div', {}, [
+        el('h3', { style: { marginTop: '18px' } }, 'Tactical Secondaries'),
+        el('div', { class: 'muted', style: { fontSize: '12px' } },
+          draft.missionPackId ? 'No secondary cards defined for this mission pack.' : 'Choose a mission pack to score secondaries.'),
       ]);
-      round.value = s.roundNumber || '';
-      round.addEventListener('change', () => { s.roundNumber = round.value ? parseInt(round.value, 10) : null; });
+    }
 
-      const score = el('input', { type: 'number', min: '0', max: '15', value: s.score, style: { width: '70px' } });
-      score.addEventListener('change', () => { s.score = parseInt(score.value, 10) || 0; });
+    const cardOptions = (selectedId) => [
+      el('option', { value: '' }, '—'),
+      ...missionDetails.secondaryCards.map(c =>
+        el('option', { value: c.id, selected: selectedId == c.id ? '' : null }, c.name)
+      ),
+    ];
 
-      const remove = el('button', { class: 'btn small danger', onClick: () => { p.secondaries.splice(i, 1); rerender(); } }, '×');
-
-      return el('div', { class: 'form-row cols-4', style: { alignItems: 'end' } }, [
-        el('div', { class: 'form-group' }, [el('label', {}, 'Card'), el('div', { style: { padding: '8px 0' } }, s.cardName)]),
-        field('Round', round),
-        field('Score', score),
-        el('div', { style: { alignSelf: 'end' } }, remove),
+    const rows = ROUNDS.map(rn => {
+      const existing = p.secondaries.filter(s => s.roundNumber === rn);
+      const slotCount = Math.max(2, existing.length + 1);
+      const slots = [];
+      for (let i = 0; i < slotCount; i++) {
+        slots.push(buildSecondarySlot(p, rn, existing[i] || null));
+      }
+      return el('tr', {}, [
+        el('td', { style: { color: 'var(--text-muted)', fontSize: '12px', verticalAlign: 'top', paddingTop: '10px', width: '40px' } }, `R${rn}`),
+        el('td', { colspan: '2', style: { padding: '4px 0' } }, el('div', { style: { display: 'grid', gap: '4px' } }, slots)),
       ]);
     });
+
+    function buildSecondarySlot(player, rn, entry) {
+      const cardSel = el('select', {}, cardOptions(entry?.cardId));
+      const scoreInp = el('input', {
+        type: 'number', min: '0', max: '15',
+        value: entry?.score ?? 0,
+        style: { width: '70px', textAlign: 'center' },
+      });
+      cardSel.addEventListener('change', () => {
+        if (!cardSel.value) {
+          if (entry) {
+            const idx = player.secondaries.indexOf(entry);
+            if (idx >= 0) player.secondaries.splice(idx, 1);
+          }
+          rerender();
+        } else {
+          const card = missionDetails.secondaryCards.find(c => c.id == cardSel.value);
+          if (entry) {
+            entry.cardId = card.id;
+            entry.cardName = card.name;
+          } else {
+            const newEntry = {
+              cardId: card.id,
+              cardName: card.name,
+              roundNumber: rn,
+              score: parseInt(scoreInp.value, 10) || 0,
+            };
+            player.secondaries.push(newEntry);
+          }
+          rerender();
+        }
+      });
+      scoreInp.addEventListener('change', () => {
+        const v = parseInt(scoreInp.value, 10) || 0;
+        if (entry) {
+          entry.score = v;
+        } else if (cardSel.value) {
+          const card = missionDetails.secondaryCards.find(c => c.id == cardSel.value);
+          player.secondaries.push({ cardId: card.id, cardName: card.name, roundNumber: rn, score: v });
+          rerender();
+        }
+      });
+      return el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 80px', gap: '6px' } }, [cardSel, scoreInp]);
+    }
 
     return el('div', {}, [
-      el('h3', { style: { marginTop: '18px' } }, 'Secondaries'),
-      ...list,
-      el('div', { style: { marginTop: '8px' } }, select),
+      el('h3', { style: { marginTop: '18px' } }, 'Tactical Secondaries'),
+      el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' } },
+        'Pick the cards you scored on each round and the points scored.'),
+      el('table', { style: { width: '100%' } }, el('tbody', {}, rows)),
     ]);
   }
 
   function buildChallengersSection(p) {
-    if (!missionDetails.challengerCards.length) return el('div', {});
-    const select = el('select', {}, [
-      el('option', { value: '' }, '— Add Challenger —'),
+    const hasCards = missionDetails.challengerCards.length > 0;
+
+    const select = hasCards ? el('select', {}, [
+      el('option', { value: '' }, '— Add Challenger Card —'),
       ...missionDetails.challengerCards.map(c => el('option', { value: c.id }, c.name)),
-    ]);
-    select.addEventListener('change', () => {
-      if (!select.value) return;
-      const card = missionDetails.challengerCards.find(c => c.id == select.value);
-      p.challengers.push({ cardId: card.id, cardName: card.name, completed: false, score: 0 });
-      select.value = '';
-      rerender();
-    });
+    ]) : null;
+    if (select) {
+      select.addEventListener('change', () => {
+        if (!select.value) return;
+        const card = missionDetails.challengerCards.find(c => c.id == select.value);
+        p.challengers.push({ cardId: card.id, cardName: card.name, completed: false, score: 0 });
+        select.value = '';
+        rerender();
+      });
+    }
 
     const list = p.challengers.map((c, i) => {
+      // Allow re-picking the card via dropdown
+      const cardSel = el('select', {}, [
+        el('option', { value: '' }, '—'),
+        ...missionDetails.challengerCards.map(card =>
+          el('option', { value: card.id, selected: c.cardId == card.id ? '' : null }, card.name)
+        ),
+      ]);
+      cardSel.addEventListener('change', () => {
+        if (!cardSel.value) {
+          p.challengers.splice(i, 1);
+          rerender();
+          return;
+        }
+        const card = missionDetails.challengerCards.find(x => x.id == cardSel.value);
+        c.cardId = card.id;
+        c.cardName = card.name;
+      });
+
       const completed = el('input', { type: 'checkbox' });
       completed.checked = c.completed;
       completed.addEventListener('change', () => { c.completed = completed.checked; });
-      const score = el('input', { type: 'number', min: '0', max: '20', value: c.score, style: { width: '70px' } });
+      const score = el('input', { type: 'number', min: '0', max: '20', value: c.score, style: { width: '70px', textAlign: 'center' } });
       score.addEventListener('change', () => { c.score = parseInt(score.value, 10) || 0; });
       const remove = el('button', { class: 'btn small danger', onClick: () => { p.challengers.splice(i, 1); rerender(); } }, '×');
       return el('div', { class: 'form-row cols-4', style: { alignItems: 'end' } }, [
-        el('div', { class: 'form-group' }, [el('label', {}, 'Card'), el('div', { style: { padding: '8px 0' } }, c.cardName)]),
+        field('Card', cardSel),
         field('Completed', completed, true),
         field('Score', score),
         el('div', { style: { alignSelf: 'end' } }, remove),
@@ -333,9 +382,11 @@ export async function renderGameForm(state, gameId) {
 
     return el('div', {}, [
       el('h3', { style: { marginTop: '18px' } }, 'Challenger Cards'),
+      hasCards ? null : el('div', { class: 'muted', style: { fontSize: '12px' } },
+        draft.missionPackId ? 'No challenger cards defined for this mission pack.' : 'Choose a mission pack to score challenger cards.'),
       ...list,
-      el('div', { style: { marginTop: '8px' } }, select),
-    ]);
+      hasCards ? el('div', { style: { marginTop: '8px' } }, select) : null,
+    ].filter(Boolean));
   }
 
   function buildSubmit() {
@@ -424,7 +475,7 @@ function makeDraft(existing) {
     notes: existing.notes,
     players: existing.players.map(p => ({
       userId: p.user_id,
-      guestName: p.guest_name,
+      guestName: p.guest_name || (p.display_name && p.user_id ? p.display_name : null),
       factionId: p.faction_id,
       detachmentId: p.detachment_id,
       armyListCode: p.army_list_code,
@@ -432,6 +483,7 @@ function makeDraft(existing) {
       isAttacker: p.is_attacker,
       finalScore: p.final_score,
       result: p.result,
+      manualWinner: p.result === 'win',
       rounds: (p.rounds || []).map(r => ({
         roundNumber: r.round_number,
         primaryScore: r.primary_score,
@@ -454,6 +506,7 @@ function emptyPlayer() {
     userId: null, guestName: null,
     factionId: null, detachmentId: null,
     armyListCode: null, wentFirst: false, isAttacker: null,
+    manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),
     secondaries: [], challengers: [],
   };
@@ -475,6 +528,11 @@ function serializeDraft(d) {
     tournamentTable: d.tournamentTable,
     location: d.location,
     notes: d.notes,
-    players: d.players,
+    players: d.players.map(p => ({
+      ...p,
+      // Strip empty secondaries and challengers (no card chosen)
+      secondaries: (p.secondaries || []).filter(s => s.cardId && s.cardName),
+      challengers: (p.challengers || []).filter(c => c.cardId && c.cardName),
+    })),
   };
 }

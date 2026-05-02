@@ -47,4 +47,17 @@ router.get('/users', async (_req, res) => {
   res.json(rows);
 });
 
+// Distinct player names ever entered (for autocomplete in the form)
+router.get('/player-names', async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT DISTINCT name FROM (
+       SELECT display_name AS name FROM users WHERE is_active = TRUE AND display_name IS NOT NULL
+       UNION
+       SELECT guest_name AS name FROM game_players WHERE guest_name IS NOT NULL AND guest_name <> ''
+     ) names
+     ORDER BY name`
+  );
+  res.json(rows.map(r => r.name));
+});
+
 export default router;

@@ -132,13 +132,17 @@ function computeFinalScores(players) {
   for (const p of players) {
     let total = 0;
     for (const r of p.rounds || []) {
-      total += (r.primary_score || 0) + (r.secondary_score || 0);
+      total += (r.primaryScore || 0) + (r.secondaryScore || 0);
     }
-    if (p.finalScore == null) p.finalScore = Math.min(100, total);
+    p.finalScore = Math.min(100, total);
   }
   if (players.length === 2) {
     const [a, b] = players;
-    if (a.finalScore > b.finalScore) { a.result = 'win'; b.result = 'loss'; }
+    // Manual winner override (checkbox per player). Both checked = draw.
+    if (a.manualWinner && b.manualWinner) { a.result = 'draw'; b.result = 'draw'; }
+    else if (a.manualWinner) { a.result = 'win'; b.result = 'loss'; }
+    else if (b.manualWinner) { a.result = 'loss'; b.result = 'win'; }
+    else if (a.finalScore > b.finalScore) { a.result = 'win'; b.result = 'loss'; }
     else if (a.finalScore < b.finalScore) { a.result = 'loss'; b.result = 'win'; }
     else { a.result = 'draw'; b.result = 'draw'; }
   }

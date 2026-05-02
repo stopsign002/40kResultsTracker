@@ -41,6 +41,7 @@ export const reference = {
   missionPacks:    () => api.get('/reference/mission-packs'),
   missionDetails:  (packId) => api.get(`/reference/mission-packs/${packId}/details`),
   users:           () => api.get('/reference/users'),
+  playerNames:     () => api.get('/reference/player-names'),
 };
 
 export const games = {
