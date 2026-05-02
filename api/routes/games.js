@@ -128,6 +128,8 @@ router.get('/:id', async (req, res) => {
 });
 
 // ── Create / Update helpers ───────────────────────────────────
+// Operates on the request payload, which is camelCase (primaryScore,
+// roundNumber, etc.) — NOT on DB rows. See CLAUDE.md "Common pitfalls".
 function computeFinalScores(players) {
   for (const p of players) {
     // Compute per-round secondary_score from player_secondaries + challengers

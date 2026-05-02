@@ -1,0 +1,460 @@
+# CLAUDE.md — 40k Results Tracker
+
+This file is auto-loaded by Claude Code into every session. It is the single source of truth for orienting in this repo. **Read it first; it'll save you re-reading half the codebase.**
+
+---
+
+## What this is
+
+Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log matches (mission, factions, per-round scoring, secondaries, challenger cards), browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" galaxy map. Hosted at **https://40k.thewheeliebois.com** as a Docker stack alongside other thewheeliebois.com sites. See `DEPLOY.md` for infra/deploy steps.
+
+---
+
+## Stack
+
+- **Backend:** Node 22 (alpine) + Express 4 + Postgres 17 (shared with other sites on the box)
+- **Frontend:** Vanilla HTML/CSS/JS — **no build step**, no framework. Chart.js loaded from CDN.
+- **Auth:** `bcrypt` + `express-session` + `connect-pg-simple` (Postgres-backed sessions)
+- **Reverse proxy:** Caddy 2 (handled by base infra; this repo only ships a `caddy.example` snippet)
+- **Container:** single service `40k-api`; Caddy serves `app/` directly off disk
+
+---
+
+## Repo layout
+
+```
+40kResultsTracker/
+├── CLAUDE.md               ← you are here
+├── DEPLOY.md               server-side install + env recipe
+├── docker-compose.yml      defines the 40k-api service on the shared 'web' network
+├── caddy.example           drop into ~/sites/base/conf.d/40k.caddy on the host
+├── .env.example            6 vars; copy to .env on the server
+├── api/
+│   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
+│   ├── package.json        ESM module ("type": "module")
+│   ├── server.js           ENTRY: initSchema → ensureBootstrapAdmin → app.listen
+│   ├── lib/
+│   │   ├── db.js           pg pool, withTx() helper, initSchema() (runs schema.sql + seed.sql)
+│   │   └── auth.js         bcrypt helpers, requireAuth / requireAdmin middleware
+│   ├── routes/             each file: `export default Router()` mounted in server.js
+│   │   ├── auth.js         /auth/*  — login, logout, me, change-password
+│   │   ├── admin.js        /admin/* — user CRUD + game visibility (admin-only)
+│   │   ├── games.js        /games/* — list/get/create/update (HEAVY: contains computeFinalScores + insertPlayerChildren)
+│   │   ├── stats.js        /stats/* — overview + 8 stat endpoints
+│   │   ├── warmap.js       /stats/warmap — single endpoint feeding the war map
+│   │   └── reference.js    /reference/* — factions, detachments, mission packs, player names
+│   └── db/
+│       ├── schema.sql      tables, indexes, view; idempotent (CREATE IF NOT EXISTS + ALTER guard)
+│       └── seed.sql        28 factions + detachments + Pariah Nexus + Leviathan packs (idempotent)
+└── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
+    ├── index.html          script tags for every JS module (no bundler)
+    ├── css/style.css       YAAB-matched dark Warhammer theme — see "Critical invariants"
+    └── js/
+        ├── app.js          hash router, shell renderer, route table, nav links
+        ├── api.js          fetch wrapper; export objects: api / auth / reference / games / stats / admin
+        ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions() — USE THESE
+        └── views/
+            ├── login.js          public login screen
+            ├── games-list.js     filter panel + paginated game table
+            ├── game-detail.js    single game view
+            ├── game-form.js      ⚠ HEAVIEST file; new game + edit; per-round scoring grid
+            ├── stats.js          KPIs + Chart.js charts; faction drilldown
+            ├── warmap.js         ⚠ Theatre of War canvas — DO NOT TOUCH constants (see invariants)
+            └── admin.js          user management + change-own-password
+```
+
+High-traffic files when iterating: **`game-form.js`**, **`games.js`**, **`warmap.js`**, **`stats.js`**.
+
+---
+
+## Critical invariants — DO NOT TOUCH WITHOUT THINKING
+
+These are load-bearing. Changing any of them silently breaks production.
+
+| Invariant | File | Why it's frozen |
+|---|---|---|
+| `MAP_SEED = 0xDEAD40` | `app/js/views/warmap.js` | The whole Theatre of War is a Voronoi computed from this seed. Change it and every faction's territory boundary jumps to a new shape for everyone, instantly invalidating the visual continuity that's the whole point. |
+| `FACTION_HOMES` positions | `app/js/views/warmap.js` | Each faction's home fortress sits at a hard-coded `[x, y]` in 0..1 space. Editing existing entries shifts that faction's home; reordering can change which Voronoi seed point wins ties. **Append new factions only; never edit or reorder.** |
+| `FACTION_COLOURS` | `app/js/views/warmap.js` | Lore-matched (Blood Angels red, Salamanders green, etc). Treat as the canonical palette. |
+| YAAB CSS variables | `app/css/style.css` | `--bg`, `--panel-bg`, `--accent`, `--font-display`, etc. were copied verbatim from the sister `yetanotherarmybuilder` site to keep visual consistency across the user's properties. Don't redesign — match. |
+| 5 battle rounds | everywhere | `ROUNDS = [1,2,3,4,5]` in `game-form.js`; `CHECK (round_number BETWEEN 1 AND 5)` in `schema.sql` (twice). 10e is a 5-round game. |
+| No public signup | `routes/auth.js` (no register endpoint) | Admin creates all accounts via `POST /admin/users`. Login page must not have a "Sign up" link. |
+| No game deletion | `routes/games.js` (no DELETE) | Admin can only `PATCH /admin/games/:id/visibility { hidden: true }`. Per the user's spec: results are permanent. |
+| Bootstrap admin only when users table is empty | `lib/auth.js` `ensureBootstrapAdmin()` | After first run, `ADMIN_PASSWORD` env var is ignored. To recover, INSERT directly via psql. |
+
+---
+
+## Common pitfalls (real bugs that have happened)
+
+### 1. camelCase frontend ↔ snake_case database
+
+The frontend sends and receives **camelCase** (`primaryScore`, `roundNumber`, `gameFormat`). The Postgres columns are **snake_case** (`primary_score`, `round_number`, `game_format`).
+
+**Conversion happens at the boundary** — either when writing into the DB, or when shaping the response back to the client:
+
+| Direction | Where the mapping lives |
+|---|---|
+| DB row → frontend (loading a game for edit) | `makeDraft()` in `app/js/views/game-form.js` |
+| Frontend payload → DB INSERT | `insertPlayerChildren()` and the create/update handlers in `api/routes/games.js` |
+| `computeFinalScores(players)` reads camelCase | `api/routes/games.js` — it operates on the request body before insert |
+
+**The bug:** `computeFinalScores` once read `r.primary_score` instead of `r.primaryScore`, which made every game total to 0–0 → recorded as a draw forever. If you touch this function, **the keys must be camelCase** (it runs on the request payload, not on DB rows).
+
+### 2. `rerender()` in `game-form.js` blows away input focus
+
+The form view has a `rerender()` helper that clears the form root and rebuilds. **Don't trigger it on every keystroke** — only on structural changes (mission pack change, faction change, add/remove a card slot). For score inputs, mutate the draft state directly in the `change` listener; let the next structural rerender pick up the value.
+
+### 3. Schema migrations aren't automatic
+
+`initSchema()` runs `schema.sql` on every container start. `CREATE TABLE IF NOT EXISTS` won't ALTER an existing table. To add a column to an existing table, append a guarded `ALTER TABLE` block — see the `player_challengers.round_number` migration in `schema.sql` for the pattern:
+
+```sql
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='X' AND column_name='Y'
+  ) THEN
+    ALTER TABLE X ADD COLUMN Y ...;
+  END IF;
+END $$;
+```
+
+### 4. Caddy mount is read-only and roots at `app/`
+
+`/srv/40kResultsTracker/app` is what's served. Backend code at `/srv/40kResultsTracker/api` is invisible to the public web. **Don't put anything sensitive in `app/`** assuming privacy.
+
+### 5. NAT loopback isn't a thing on this host
+
+`https://40k.thewheeliebois.com` from inside the host will time out. Smoke-test with:
+
+```bash
+curl --resolve 40k.thewheeliebois.com:443:127.0.0.1 https://40k.thewheeliebois.com/api/health
+```
+
+For real public-reach checks, ask the user to hit it from a phone on cellular.
+
+### 6. Schema/seed are idempotent — extend them, don't rewrite
+
+`schema.sql` uses `CREATE TABLE IF NOT EXISTS` everywhere; `seed.sql` uses `ON CONFLICT DO NOTHING`. Both run on every startup. Adding new INSERTs is safe; do not write seed entries that depend on previous seed runs having committed (no SELECT-then-INSERT-by-id patterns; use the `SELECT id, n FROM factions, (VALUES …) AS d(n) WHERE factions.name = '…'` cross-join pattern that's already in there).
+
+---
+
+## Backend architecture
+
+### Boot sequence (`api/server.js`)
+
+1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`)
+2. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
+3. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
+4. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`
+5. `app.listen(PORT)`
+
+### Route module convention
+
+Every `routes/*.js` looks like:
+
+```js
+import { Router } from 'express';
+import { requireAuth /* or requireAdmin */ } from '../lib/auth.js';
+
+const router = Router();
+router.use(requireAuth);   // or requireAdmin for admin.js
+
+router.get('/foo', async (req, res) => { … });
+
+export default router;
+```
+
+`auth.js` is special — it does NOT call `router.use(requireAuth)` at the top because login/logout must be reachable while logged out. Auth requirement is per-route via the `requireAuth` middleware passed inline.
+
+### The two heavy helpers in `routes/games.js`
+
+- **`computeFinalScores(players)`** — sums `primaryScore` from rounds + `score` from secondaries + `score` from challengers. Recomputes `secondaryScore` per round from the cards. Sets `result` to `'win'/'loss'/'draw'`. **Manual winner override:** if `players[0].manualWinner` is true → P1 wins; both true → draw; else falls back to score comparison. Read camelCase, not snake_case.
+- **`insertPlayerChildren(client, gamePlayerId, p)`** — writes `game_rounds`, `player_secondaries`, `player_challengers` rows for one player. Always called inside `withTx()`.
+
+For game updates, the pattern is **delete-then-reinsert all children** (rounds, secondaries, challengers) — there's no diff/patch. The transaction makes that safe.
+
+### `lib/db.js` exports
+
+- `pool` — pg `Pool` (use `pool.query` for one-offs)
+- `withTx(async (client) => {...})` — wraps in BEGIN/COMMIT/ROLLBACK; pass `client` to inner queries
+- `initSchema()` — boot-time only
+
+### `lib/auth.js` exports
+
+- `hashPassword(plain)` — bcrypt cost 12
+- `verifyPassword(plain, hash)`
+- `ensureBootstrapAdmin()` — boot-time only
+- `requireAuth(req, res, next)` — 401 if no session
+- `requireAdmin(req, res, next)` — 401 if no session, 403 if `role !== 'admin'`
+
+---
+
+## Frontend architecture
+
+### Routing
+
+Hash-based router in `app/js/app.js`:
+
+```js
+const routes = [
+  { match: /^\/$/,                   handler: () => renderWarmap(state) },
+  { match: /^\/war$/,                handler: () => renderWarmap(state) },
+  { match: /^\/games$/,              handler: () => renderGamesList(state) },
+  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null) },
+  { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
+  { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
+  { match: /^\/stats$/,              handler: () => renderStats(state) },
+  { match: /^\/admin$/,              handler: () => renderAdmin(state) },
+];
+```
+
+`route()` runs on `hashchange` and `load`. If no session, `renderShell` short-circuits to the login view. Navigate from anywhere with `window.__nav('/games')` — a global set in `app.js`.
+
+### View module convention
+
+Every file in `app/js/views/` exports one async function: `export async function renderXxx(state, ...args)`. It returns a single root DOM node. Async `await reference.…()` calls happen up-front. Local helpers and a `rerender()` closure mutate a `draft` object and rebuild as needed.
+
+### DOM helpers — use them, do not template-string
+
+`components.js`:
+
+- `el(tag, attrs?, children?)` — the workhorse. `attrs.class`, `attrs.style` (object), `attrs.onClick` etc. Children can be string, node, array, or null/false (skipped).
+- `clear(node)` — empty children
+- `toast(msg, kind?)` — bottom-right ephemeral toast (3s); kind `'error'` styles red
+- `pill(text, kind?)` — a styled badge; kind `'win'`, `'loss'`, `'draw'`, `'first'`, `'hidden'`
+- `fmtDate(d)` — YYYY-MM-DD
+- `selectOptions(items, valueKey?, labelKey?, includeBlank?, blankLabel?)` — quick `<option>` array
+
+**Don't introduce React, Vue, lit-html, htm, or template-literal HTML.** This codebase is consciously framework-free; the `el()` pattern is consistent across every view. New code should match.
+
+### `api.js` shape
+
+Always extend the right export object — never call `fetch` directly from a view:
+
+```js
+export const auth      = { me, login, logout, changePassword };
+export const reference = { factions, detachments, missionPacks, missionDetails, users, playerNames };
+export const games     = { list, get, create, update };
+export const stats     = { overview, factionWinRates, playerWinRates, factionMissionBreakdown,
+                            factionDeploymentBreakdown, factionMatchups, headToHead,
+                            firstTurnImpact, secondaryAverages, warmap };
+export const admin     = { users, createUser, updateUser, setVisibility };
+```
+
+All requests `credentials: 'same-origin'`; errors throw with `.status` and `.data` on the Error.
+
+---
+
+## HTTP API reference
+
+All routes require an authenticated session unless noted. Responses are JSON. Errors return `{ error: '<message>' }` with appropriate status.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/health` | public | `{ ok: true }` |
+| POST | `/auth/login` | public | `{ username, password }` → user object; sets session |
+| POST | `/auth/logout` | session | destroys session |
+| GET | `/auth/me` | auth | current user `{ id, username, displayName, role }` |
+| POST | `/auth/change-password` | auth | `{ currentPassword, newPassword }` |
+| GET | `/reference/factions` | auth | `[{ id, name }]` |
+| GET | `/reference/factions/:id/detachments` | auth | `[{ id, name }]` |
+| GET | `/reference/mission-packs` | auth | `[{ id, name }]` |
+| GET | `/reference/mission-packs/:id/details` | auth | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
+| GET | `/reference/users` | auth | active users `[{ id, username, display_name }]` |
+| GET | `/reference/player-names` | auth | distinct names from past games (for autocomplete) |
+| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `dateFrom`, `dateTo`, `includeHidden`, `limit`, `offset`) |
+| GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
+| POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js` |
+| PUT | `/games/:id` | auth | replace game; same payload as POST |
+| GET | `/stats/overview` | auth | totals + recent activity |
+| GET | `/stats/faction-winrates` | auth | per-faction W/L/D + win% + avg score |
+| GET | `/stats/player-winrates` | auth | per-player W/L/D + win% (groups by user_id OR guest_name) |
+| GET | `/stats/faction-mission-breakdown?factionId=N` | auth | how a faction performs across primary missions |
+| GET | `/stats/faction-deployment-breakdown?factionId=N` | auth | by deployment map |
+| GET | `/stats/faction-matchups` | auth | full A-vs-B matrix (every faction pair with games) |
+| GET | `/stats/head-to-head?userA=N&userB=M` | auth | every game between two users |
+| GET | `/stats/first-turn-impact` | auth | win% comparison going first vs second |
+| GET | `/stats/secondary-averages` | auth | per-card pick count + avg score |
+| GET | `/stats/warmap` | auth | array of factions with `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score` |
+| GET | `/admin/users` | admin | all users including inactive |
+| POST | `/admin/users` | admin | `{ username, displayName, password, role }` |
+| PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password? }` |
+| PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` |
+
+**Total: 28 endpoints** (cross-checked with `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js | wc -l`).
+
+---
+
+## DB schema reference
+
+Tables (snake_case throughout):
+
+| Table | Purpose | Key columns |
+|---|---|---|
+| `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active |
+| `session` | express-session storage | sid, sess (json), expire — auto-managed by `connect-pg-simple` |
+| `factions` | parent codex factions | id, name (unique), parent_id (nullable, currently unused) |
+| `detachments` | per-faction detachments | id, faction_id, name; UNIQUE (faction_id, name) |
+| `mission_packs` | e.g. Pariah Nexus, Leviathan | id, name (unique) |
+| `primary_missions` | e.g. Take and Hold | id, mission_pack_id, name |
+| `deployment_maps` | e.g. Hammer and Anvil | id, mission_pack_id, name |
+| `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
+| `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
+| `challenger_cards` | Pariah Nexus gambits | id, mission_pack_id, name |
+| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, created_at, updated_at |
+| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id, army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
+| `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
+| `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
+| `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
+
+### View
+
+`v_game_player_stats` — denormalised one-row-per-`game_player` view with columns from `games` joined and the opposite seat's player joined as `opponent_*`. Use it for stats queries that need "this player's row + their opponent in one shot".
+
+### Seed-data totals (current)
+
+- **28 factions** (Adepta Sororitas through World Eaters)
+- All current 10e detachments per codex
+- 2 mission packs with full primaries / deployments / rules / secondaries / challengers (Pariah Nexus, Leviathan), plus stub names for Tempest of War / Crusade / Open Play / Other
+
+When the user adds a new faction or mission pack, see "How to add things" below.
+
+---
+
+## Permission model
+
+| Action | User | Admin | Enforced where |
+|---|---|---|---|
+| Log in | ✓ | ✓ | `POST /auth/login` |
+| View games / stats / war map | ✓ | ✓ | `requireAuth` middleware on all `/games`, `/stats`, `/reference` routes |
+| Create / edit games | ✓ | ✓ | `POST/PUT /games` (auth only) |
+| Hide game from stats | – | ✓ | `requireAdmin` on `PATCH /admin/games/:id/visibility`; the **Hide** button in `game-detail.js` is conditionally rendered for admins only |
+| Manage users | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
+| Change own password | ✓ | ✓ | `POST /auth/change-password` |
+| Delete a game | – | – | not implemented; out of scope per spec |
+
+Server enforcement is the source of truth; client gating is a UX convenience only.
+
+---
+
+## How to add things (recipes)
+
+### A new mission pack
+
+1. `api/db/seed.sql` — append:
+   - `INSERT INTO mission_packs (name) VALUES ('Pack Name') ON CONFLICT (name) DO NOTHING;`
+   - Then 5 `INSERT INTO ... SELECT id, n FROM mission_packs, (VALUES ...) AS d(n) WHERE mission_packs.name = 'Pack Name' ON CONFLICT DO NOTHING;` blocks for `primary_missions`, `deployment_maps`, `mission_rules`, `secondary_cards` (with `card_type`), `challenger_cards` (optional)
+2. Restart the container (`docker compose up -d --build` or just `docker restart 40k-api`). The new pack appears in the New Game form's mission-pack dropdown automatically.
+
+### A new secondary or challenger card to an existing pack
+
+Just append to the right `INSERT INTO secondary_cards / challenger_cards` block in `seed.sql`. `ON CONFLICT DO NOTHING` makes it safe to re-run.
+
+### A new faction
+
+1. `api/db/seed.sql` — append to the `INSERT INTO factions (name) VALUES …` block, then add a `INSERT INTO detachments` cross-join for that faction's detachments
+2. `app/js/views/warmap.js` — append to `FACTION_HOMES` (lore-accurate `[x, y]` in 0..1 space) and `FACTION_COLOURS` (canonical hex). **Append, never reorder existing entries.**
+3. Restart container
+
+### A new stats chart
+
+1. Backend: add a new handler in `api/routes/stats.js` (or a new route file mounted under `/stats`)
+2. Client: add a method on the `stats` export in `app/js/api.js`
+3. View: render the chart inside `app/js/views/stats.js` via Chart.js (already loaded globally in `index.html`)
+
+### A new view / page
+
+1. Create `app/js/views/foo.js` exporting `renderFoo(state, ...)`
+2. Add a `<script type="module" src="/js/views/foo.js"></script>` line to `app/index.html` (script order doesn't matter — they're modules)
+3. Import in `app/js/app.js`: `import { renderFoo } from './views/foo.js';`
+4. Add an entry to the `routes` array
+5. Add a `navLink('/foo', 'Foo')` to `navItems` (and gate by role if needed: `if (state.user.role === 'admin')`)
+
+### A new permission rule
+
+1. New middleware in `api/lib/auth.js` (e.g. `requireOwner`)
+2. Apply in the relevant route module
+3. Mirror the gating in `app.js` `navItems` (hide nav link) AND in any view that should refuse the action (e.g. early-return with a "permission denied" panel)
+
+### A schema change to an existing table
+
+Append a guarded `ALTER TABLE` block to `api/db/schema.sql` — see the `player_challengers.round_number` migration pattern at the top of that file. Plain `CREATE TABLE IF NOT EXISTS` does NOT alter existing tables.
+
+---
+
+## Theatre of War internals (`app/js/views/warmap.js`)
+
+The map is a deterministic Voronoi diagram drawn into a `<canvas>`. Same seed, same input data → identical pixel output on every device, every browser, forever.
+
+### Constants (immutable)
+
+- `MAP_SEED = 0xDEAD40` — passed to a mulberry32 RNG. **Never change.**
+- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 space, lore-positioned. 28 entries; matches faction count in `seed.sql`. Append new factions only.
+- `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
+- `SPRITE_MARINE`, `SPRITE_BOLT` — 8×8 bitmaps; `0` = transparent, `1` = faction colour, `2` = lighter accent. Drawn at scale 2 → 16px.
+- `CELL = 4` — Voronoi grid sample step in pixels; lower = sharper borders + slower render.
+
+### Render pipeline (`drawMap`)
+
+1. **Generate seed points.** For every faction in `FACTION_HOMES` (active OR not), push the home position into `sites[]`. Inactive factions get exactly one "ghost" site so their home is reserved space — meaning new factions joining the war don't reshape existing territories.
+2. **Scatter extras for active factions.** For each faction with games, push 0–12 additional sites at random angles within 25% of the map, count proportional to `territory_score`. Each faction's scatter uses `seededRng(MAP_SEED ^ hashStr(name))` so the scatter is deterministic per faction.
+3. **Voronoi via grid sampling.** For each grid cell `(gx, gy)` at step `CELL`, find the nearest site by squared distance. Store the winning faction in `ownership[]`.
+4. **Paint territories.** Active factions get their `FACTION_COLOURS`; inactive = `#1a1a20` (dark void). Add per-cell noise from a deterministic per-cell RNG.
+5. **Draw borders + fortresses + skirmishes + labels.** Borders are drawn by checking neighbour ownership. Fortresses are 20×20 castles with battlements + a white beacon + gold ring. Skirmishes pick ~24 evenly-distributed border points and draw two facing pixel marines with a bolt between them.
+
+### Territory score formula
+
+Computed server-side in `api/routes/warmap.js`:
+
+```js
+const winRate    = wins / games;
+const gameWeight = Math.log1p(games) / Math.log1p(50);   // log-scaled, normalised around 50 games
+const territory_score = Math.min(1, gameWeight * 0.70 + winRate * 0.30);
+```
+
+Tuning notes: 70% games / 30% win% means high-volume players dominate land but pure win-rate still matters. The `log1p / log1p(50)` shape gives early games big returns and diminishing returns past ~50 games. Adjust those constants if the user complains the leaderboard is too lopsided.
+
+### Why home fortresses can't fall
+
+Each `FACTION_HOMES` entry contributes one immutable site to `sites[]` regardless of whether the faction has played a game. Even a 0-game faction has a Voronoi cell around its home. An active losing faction can lose territory to active rivals' scattered seed points, but the cell containing its home will always be owned by it (the home itself is the closest site to itself). This is how "fortresses are eternal" is enforced — it falls out of the geometry, no special case.
+
+---
+
+## Dev / deploy loop
+
+Full installation: see `DEPLOY.md`.
+
+Day-to-day update on the host:
+
+```bash
+cd ~/sites/sites/40kResultsTracker
+git pull
+docker compose up -d --build
+```
+
+Logs: `docker logs -f 40k-api`
+
+Container-internal psql: `docker exec -it postgres psql -U 40k_user -d 40k_db`
+
+Smoke test from the host: `curl --resolve 40k.thewheeliebois.com:443:127.0.0.1 https://40k.thewheeliebois.com/api/health`
+
+---
+
+## Coding style for this project
+
+The system prompt's general rules apply. Project-specific reminders:
+
+- **No comments unless WHY is non-obvious.** Identifier names should carry the meaning. The only inline comment blocks in this codebase are above frozen invariants (`MAP_SEED`, `computeFinalScores` payload contract).
+- **No frameworks, no bundlers.** Use `el()` from `components.js`. Use ES modules (already configured — `<script type="module">`).
+- **Match existing patterns.** Every view is `export async function renderXxx(state, ...)`. Every route module is `export default Router()` with `requireAuth` at the top.
+- **Idempotent SQL.** New `CREATE TABLE` → `IF NOT EXISTS`. New `INSERT INTO seed` → `ON CONFLICT DO NOTHING`. Schema changes to existing tables → guarded `ALTER TABLE` in a `DO $$ … END $$` block.
+- **Server-side enforcement is the source of truth.** Client gating is UX only.
+
+---
+
+## When in doubt
+
+- `DEPLOY.md` for infra
+- Git log for "when did this change" (`git log --oneline -- path/to/file`)
+- Live YAAB CSS for styling reference (`yetanotherarmybuilder` repo on the user's GitHub) — visit https://github.com/stopsign002/yetanotherarmybuilder

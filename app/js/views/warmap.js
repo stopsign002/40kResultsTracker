@@ -13,6 +13,10 @@ function seededRng(seed) {
 }
 
 const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
+// MAP_SEED and FACTION_HOMES are FROZEN. Changing the seed reshuffles every
+// faction's territory; editing or reordering FACTION_HOMES shifts existing
+// homes for every user. Append new factions only. See CLAUDE.md "Critical
+// invariants".
 
 // ── Hardcoded faction home fortresses ───────────────────────────
 // Positions are [x, y] in 0..1 space, placed lore-accurately on a
