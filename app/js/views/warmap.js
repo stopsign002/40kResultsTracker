@@ -13,44 +13,48 @@ function seededRng(seed) {
 }
 
 const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
-// MAP_SEED and FACTION_HOMES are FROZEN. Changing the seed reshuffles every
-// faction's territory; editing or reordering FACTION_HOMES shifts existing
-// homes for every user. Append new factions only. See CLAUDE.md "Critical
-// invariants".
+// MAP_SEED, FACTION_HOMES and FACTION_COLOURS are FROZEN. Changing the seed
+// reshapes the continent and territory boundaries; editing or reordering
+// FACTION_HOMES shifts existing homes for every user. Append new factions
+// only. See CLAUDE.md "Critical invariants".
 
-// ── Hardcoded faction home fortresses ───────────────────────────
-// Positions are [x, y] in 0..1 space, placed lore-accurately on a
-// generalised 40k map (Segmentums approximated left-to-right).
-// These are fixed forever — do not change or the whole map shifts.
+const N_TERRITORIES = 50;
+const LLOYD_ITERATIONS = 8;
+
+// ── Boimaggedon faction homes ───────────────────────────────────
+// Roughly the same regional placement as the old galaxy: Imperials centred,
+// Chaos to the west, Tyranids/T'au/Necrons to the east. The continent is
+// generated to fit these — each faction's home becomes its nearest land
+// territory after Voronoi + Lloyd's relaxation.
 const FACTION_HOMES = {
-  'Space Marines':       [0.50, 0.48], // Terra / Segmentum Solar
-  'Adeptus Custodes':    [0.50, 0.50], // Terra
-  'Imperial Agents':     [0.50, 0.49],
+  'Space Marines':       [0.50, 0.48],
+  'Adeptus Custodes':    [0.50, 0.50],
+  'Imperial Agents':     [0.52, 0.49],
   'Adepta Sororitas':    [0.45, 0.52],
-  'Adeptus Mechanicus':  [0.46, 0.48], // Mars
-  'Astra Militarum':     [0.48, 0.45],
-  'Grey Knights':        [0.52, 0.46], // Titan (Segmentum Solar)
-  'Deathwatch':          [0.53, 0.44],
-  'Imperial Knights':    [0.44, 0.50],
-  'Black Templars':      [0.47, 0.44],
-  'Blood Angels':        [0.55, 0.52], // Baal
-  'Dark Angels':         [0.41, 0.46], // Caliban / The Rock
-  'Space Wolves':        [0.38, 0.38], // Fenris (Segmentum Obscurus)
-  'Aeldari':             [0.30, 0.42], // Craftworlds (Segmentum Obscurus rim)
-  'Drukhari':            [0.29, 0.55], // Commorragh (Webway)
-  'Necrons':             [0.72, 0.60], // Segmentum Ultima — Tomb worlds
-  'Orks':                [0.60, 0.38], // Charadon / Octarius
-  'Tyranids':            [0.85, 0.65], // Eastern Fringe — galactic east
-  'T\'au Empire':        [0.78, 0.55], // Eastern Fringe — Tau sept worlds
-  'Genestealer Cults':   [0.65, 0.55], // Scattered, centred Ultima
-  'Leagues of Votann':   [0.35, 0.62], // Galactic core fringes
-  'Chaos Space Marines': [0.20, 0.50], // Eye of Terror
-  'Chaos Daemons':       [0.20, 0.48],
-  'Chaos Knights':       [0.22, 0.52],
-  'Death Guard':         [0.18, 0.56], // Plague Planet / Eye of Terror
-  'Thousand Sons':       [0.19, 0.44], // Planet of Sorcerers
-  'World Eaters':        [0.21, 0.40], // Eye of Terror
-  'Emperor\'s Children': [0.17, 0.48], // Eye of Terror
+  'Adeptus Mechanicus':  [0.46, 0.46],
+  'Astra Militarum':     [0.48, 0.43],
+  'Grey Knights':        [0.54, 0.46],
+  'Deathwatch':          [0.55, 0.42],
+  'Imperial Knights':    [0.43, 0.50],
+  'Black Templars':      [0.48, 0.40],
+  'Blood Angels':        [0.58, 0.52],
+  'Dark Angels':         [0.40, 0.46],
+  'Space Wolves':        [0.36, 0.40],
+  'Aeldari':             [0.30, 0.42],
+  'Drukhari':            [0.28, 0.55],
+  'Necrons':             [0.74, 0.60],
+  'Orks':                [0.62, 0.36],
+  'Tyranids':            [0.86, 0.66],
+  'T\'au Empire':        [0.80, 0.56],
+  'Genestealer Cults':   [0.66, 0.55],
+  'Leagues of Votann':   [0.34, 0.62],
+  'Chaos Space Marines': [0.18, 0.50],
+  'Chaos Daemons':       [0.20, 0.46],
+  'Chaos Knights':       [0.22, 0.55],
+  'Death Guard':         [0.16, 0.58],
+  'Thousand Sons':       [0.18, 0.42],
+  'World Eaters':        [0.21, 0.38],
+  'Emperor\'s Children': [0.15, 0.48],
 };
 
 // ── Faction colours (40k lore-matched) ──────────────────────────
@@ -85,30 +89,11 @@ const FACTION_COLOURS = {
   'Emperor\'s Children': '#cc44aa',
 };
 
-// ── Pixel art units — 8×8 sprite bitmaps ────────────────────────
-// Each unit is an 8×8 grid; 1 = faction colour, 2 = lighter accent, 0 = transparent
-// Facing RIGHT by default; flipped for LEFT-side border troops.
-const SPRITE_MARINE = [
-  [0,0,1,1,1,1,0,0],
-  [0,1,1,1,1,1,1,0],
-  [0,1,2,1,1,2,1,0],
-  [0,1,1,1,1,1,1,0],
-  [0,0,1,1,1,1,0,0],
-  [0,1,1,1,1,1,1,0],
-  [0,1,0,1,1,0,1,0],
-  [0,1,0,0,0,0,1,0],
-];
-
-const SPRITE_BOLT = [
-  [0,0,0,0,0,0,0,0],
-  [0,0,0,0,0,0,0,0],
-  [0,0,0,2,2,0,0,0],
-  [0,0,2,2,2,2,0,0],
-  [0,0,2,2,2,2,0,0],
-  [0,0,0,2,2,0,0,0],
-  [0,0,0,0,0,0,0,0],
-  [0,0,0,0,0,0,0,0],
-];
+const HUD_CYAN  = 'rgba(120, 220, 255, 0.85)';
+const HUD_DIM   = 'rgba(120, 220, 255, 0.35)';
+const HUD_FAINT = 'rgba(120, 220, 255, 0.10)';
+const HUD_AMBER = 'rgba(255, 190, 80, 0.95)';
+const HUD_BG    = '#020610';
 
 function hexToRgb(hex) {
   const r = parseInt(hex.slice(1,3), 16);
@@ -117,320 +102,613 @@ function hexToRgb(hex) {
   return [r, g, b];
 }
 
-function lighten(hex, amount = 60) {
-  const [r,g,b] = hexToRgb(hex);
-  return `rgb(${Math.min(255,r+amount)},${Math.min(255,g+amount)},${Math.min(255,b+amount)})`;
+function abbreviate(name) {
+  return name
+    .replace('Adeptus Mechanicus', 'AdMech')
+    .replace('Adeptus Custodes', 'Custodes')
+    .replace('Adepta Sororitas', 'Sororitas')
+    .replace('Astra Militarum', 'Guard')
+    .replace('Imperial Knights', 'Knights')
+    .replace('Imperial Agents', 'Agents')
+    .replace('Black Templars', 'BT')
+    .replace('Blood Angels', 'BA')
+    .replace('Dark Angels', 'DA')
+    .replace('Space Wolves', 'SW')
+    .replace('Space Marines', 'Marines')
+    .replace('Grey Knights', 'GK')
+    .replace('Genestealer Cults', 'GSC')
+    .replace('Leagues of Votann', 'Votann')
+    .replace('Chaos Space Marines', 'CSM')
+    .replace('Chaos Daemons', 'Daemons')
+    .replace('Chaos Knights', 'C.Knights')
+    .replace('Death Guard', 'DG')
+    .replace('Thousand Sons', 'TSons')
+    .replace('World Eaters', 'WE')
+    .replace('Emperor\'s Children', 'EC')
+    .replace('T\'au Empire', 'T\'au');
 }
 
-// ── Main render ──────────────────────────────────────────────────
+// ── Continent silhouette ────────────────────────────────────────
+function generateContinent(W, H, seed) {
+  const cx = W / 2, cy = H / 2;
+  const baseR = Math.min(W, H) * 0.42;
+  const N = 96;
+  const rng = seededRng(seed);
+  const phases = [rng()*6.28, rng()*6.28, rng()*6.28, rng()*6.28];
+
+  const polygon = [];
+  for (let i = 0; i < N; i++) {
+    const angle = (i / N) * Math.PI * 2;
+    // Multi-octave noise for organic coastline
+    const n = 1
+      + Math.sin(angle * 2 + phases[0]) * 0.18
+      + Math.sin(angle * 5 + phases[1]) * 0.10
+      + Math.sin(angle * 11 + phases[2]) * 0.06
+      + Math.sin(angle * 19 + phases[3]) * 0.03;
+    // Asymmetric squash so it isn't a circle
+    const aspectX = 1.15, aspectY = 0.92;
+    polygon.push([
+      cx + Math.cos(angle) * baseR * n * aspectX,
+      cy + Math.sin(angle) * baseR * n * aspectY,
+    ]);
+  }
+  return polygon;
+}
+
+function isInsidePolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i];
+    const [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// ── Voronoi territories with Lloyd's relaxation ────────────────
+function generateTerritories(W, H, polygon) {
+  const rng = seededRng(MAP_SEED);
+  const sites = [];
+
+  // Poisson-ish disc sampling: reject points too close to existing ones
+  const cx = W / 2, cy = H / 2;
+  const minDist = Math.min(W, H) * 0.07;
+  let attempts = 0;
+  while (sites.length < N_TERRITORIES && attempts < 8000) {
+    attempts++;
+    const x = rng() * W;
+    const y = rng() * H;
+    if (!isInsidePolygon(x, y, polygon)) continue;
+    let ok = true;
+    for (const s of sites) {
+      const dx = x - s.x, dy = y - s.y;
+      if (dx*dx + dy*dy < minDist*minDist) { ok = false; break; }
+    }
+    if (ok) sites.push({ x, y });
+  }
+  // Top up if we couldn't reach N (shrink minDist isn't strictly needed at this scale)
+  while (sites.length < N_TERRITORIES && attempts < 20000) {
+    attempts++;
+    const x = rng() * W;
+    const y = rng() * H;
+    if (isInsidePolygon(x, y, polygon)) sites.push({ x, y });
+  }
+
+  const CELL = 4;
+  const GW = Math.ceil(W / CELL), GH = Math.ceil(H / CELL);
+  const ownership = new Int32Array(GW * GH);
+
+  // Pre-compute land mask once (continent doesn't move)
+  const land = new Uint8Array(GW * GH);
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
+      const px = gx * CELL + CELL/2;
+      const py = gy * CELL + CELL/2;
+      land[gy * GW + gx] = isInsidePolygon(px, py, polygon) ? 1 : 0;
+    }
+  }
+
+  for (let iter = 0; iter < LLOYD_ITERATIONS; iter++) {
+    // Rasterize Voronoi
+    for (let gy = 0; gy < GH; gy++) {
+      for (let gx = 0; gx < GW; gx++) {
+        if (!land[gy * GW + gx]) { ownership[gy * GW + gx] = -1; continue; }
+        const px = gx * CELL + CELL/2, py = gy * CELL + CELL/2;
+        let best = Infinity, bestIdx = 0;
+        for (let s = 0; s < sites.length; s++) {
+          const dx = px - sites[s].x, dy = py - sites[s].y;
+          const d = dx*dx + dy*dy;
+          if (d < best) { best = d; bestIdx = s; }
+        }
+        ownership[gy * GW + gx] = bestIdx;
+      }
+    }
+
+    if (iter < LLOYD_ITERATIONS - 1) {
+      // Move sites toward the centroid of their cell (relaxation)
+      const sums = new Array(sites.length);
+      for (let s = 0; s < sites.length; s++) sums[s] = { x: 0, y: 0, n: 0 };
+      for (let gy = 0; gy < GH; gy++) {
+        for (let gx = 0; gx < GW; gx++) {
+          const o = ownership[gy * GW + gx];
+          if (o < 0) continue;
+          sums[o].x += gx * CELL + CELL/2;
+          sums[o].y += gy * CELL + CELL/2;
+          sums[o].n++;
+        }
+      }
+      for (let s = 0; s < sites.length; s++) {
+        if (sums[s].n > 0) {
+          sites[s].x = sums[s].x / sums[s].n;
+          sites[s].y = sums[s].y / sums[s].n;
+        }
+      }
+    }
+  }
+
+  return { sites, ownership, GW, GH, CELL, land };
+}
+
+function buildAdjacency(ownership, GW, GH) {
+  const adj = new Map();
+  const add = (a, b) => {
+    if (!adj.has(a)) adj.set(a, new Set());
+    adj.get(a).add(b);
+  };
+  for (let gy = 0; gy < GH - 1; gy++) {
+    for (let gx = 0; gx < GW - 1; gx++) {
+      const a = ownership[gy * GW + gx];
+      const b = ownership[gy * GW + gx + 1];
+      const c = ownership[(gy + 1) * GW + gx];
+      if (a >= 0 && b >= 0 && a !== b) { add(a, b); add(b, a); }
+      if (a >= 0 && c >= 0 && a !== c) { add(a, c); add(c, a); }
+    }
+  }
+  return adj;
+}
+
+// ── Faction-to-territory assignment ─────────────────────────────
+function assignFactions(sites, factionData, W, H, adj) {
+  // Find each active faction's home territory: the territory whose site is
+  // closest to its FACTION_HOMES coords (in 0..1 space).
+  const taken = new Set();
+  const homeOf = {};
+  // Sort by faction key for deterministic order when ties exist
+  const sorted = [...factionData].sort((a, b) => a.faction.localeCompare(b.faction));
+  for (const f of sorted) {
+    const [hx, hy] = FACTION_HOMES[f.faction] || [0.5, 0.5];
+    const tx = hx * W, ty = hy * H;
+    let best = Infinity, bestId = -1;
+    for (let s = 0; s < sites.length; s++) {
+      if (taken.has(s)) continue;
+      const dx = sites[s].x - tx, dy = sites[s].y - ty;
+      const d = dx*dx + dy*dy;
+      if (d < best) { best = d; bestId = s; }
+    }
+    if (bestId >= 0) { homeOf[f.faction] = bestId; taken.add(bestId); }
+  }
+
+  // Allocate non-home territories proportional to territory_score, BFS-expand
+  // from each home in round-robin.
+  const totalScore = factionData.reduce((s, f) => s + (f.territory_score || 0.001), 0) || 1;
+  const target = {};
+  for (const f of factionData) {
+    target[f.faction] = Math.max(1, Math.round((f.territory_score || 0.001) / totalScore * sites.length));
+  }
+
+  const owner = new Array(sites.length).fill(null);
+  for (const [name, id] of Object.entries(homeOf)) owner[id] = name;
+
+  const frontier = {};
+  for (const [name, id] of Object.entries(homeOf)) frontier[name] = [id];
+
+  let stuck = 0;
+  while (stuck < factionData.length) {
+    stuck = 0;
+    for (const f of factionData) {
+      const owned = owner.filter(o => o === f.faction).length;
+      if (owned >= target[f.faction]) { stuck++; continue; }
+      const queue = frontier[f.faction];
+      let took = false;
+      while (queue.length) {
+        const tid = queue[0];
+        const neighbours = adj.get(tid);
+        if (!neighbours) { queue.shift(); continue; }
+        let found = false;
+        for (const nb of neighbours) {
+          if (owner[nb] === null) {
+            owner[nb] = f.faction;
+            queue.push(nb);
+            found = true;
+            took = true;
+            break;
+          }
+        }
+        if (!found) { queue.shift(); continue; }
+        break;
+      }
+      if (!took) stuck++;
+    }
+  }
+
+  return { owner, homeOf };
+}
+
+// ── Render ──────────────────────────────────────────────────────
 export async function renderWarmap(_state) {
   const root = el('div', { class: 'fade-in' });
 
-  const titleEl = el('div', { style: {
-    fontFamily: 'var(--font-display)',
-    fontSize: '28px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.14em',
+  // ── Title block: BOIMAGGEDON / Theatre of War ────────────────
+  const titleWrap = el('div', { style: {
     textAlign: 'center',
-    marginBottom: '4px',
-    color: 'var(--accent)',
-  } }, 'Theatre of War');
-  const subtitleEl = el('div', { style: {
-    textAlign: 'center',
-    color: 'var(--text-muted)',
-    fontSize: '13px',
-    marginBottom: '16px',
-    letterSpacing: '0.04em',
-  } }, 'Territory is earned through blood and battle. Home fortresses stand eternal.');
+    marginBottom: '14px',
+    padding: '14px 12px 12px',
+    background: 'linear-gradient(180deg, rgba(120,220,255,0.05), transparent)',
+    border: '1px solid rgba(120,220,255,0.15)',
+    borderRadius: 'var(--radius-lg)',
+  } }, [
+    el('div', { style: {
+      fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+      fontWeight: '700',
+      fontSize: '34px',
+      letterSpacing: '0.32em',
+      color: '#aef0ff',
+      textShadow: '0 0 12px rgba(120,220,255,0.6), 0 0 30px rgba(120,220,255,0.25)',
+      lineHeight: '1',
+    } }, 'BOIMAGGEDON'),
+    el('div', { style: {
+      fontFamily: '"Consolas", "Monaco", "Courier New", monospace',
+      fontSize: '11px',
+      letterSpacing: '0.5em',
+      color: 'rgba(255, 190, 80, 0.85)',
+      marginTop: '8px',
+      textTransform: 'uppercase',
+    } }, '// theatre of war //'),
+  ]);
 
-  const loadingEl = el('div', { class: 'muted', style: { textAlign: 'center', padding: '40px' } }, 'Calculating theatre of war…');
+  const loadingEl = el('div', { class: 'muted', style: { textAlign: 'center', padding: '60px', fontFamily: 'monospace', letterSpacing: '0.1em' } }, '> CALIBRATING TACTICAL DISPLAY');
+
   const canvasWrapper = el('div', { style: {
     position: 'relative',
-    background: 'var(--panel-bg)',
-    border: '1px solid var(--border)',
+    background: HUD_BG,
+    border: '1px solid rgba(120,220,255,0.25)',
     borderRadius: 'var(--radius-lg)',
     overflow: 'hidden',
     display: 'flex',
     justifyContent: 'center',
+    boxShadow: '0 0 40px rgba(120,220,255,0.05) inset',
   } }, loadingEl);
 
   const legendEl = el('div', { style: {
     display: 'flex',
     flexWrap: 'wrap',
-    gap: '12px',
+    gap: '10px',
     justifyContent: 'center',
     marginTop: '14px',
-    padding: '12px',
-    background: 'var(--panel-bg)',
-    border: '1px solid var(--border)',
+    padding: '14px',
+    background: 'rgba(2,6,16,0.6)',
+    border: '1px solid rgba(120,220,255,0.2)',
     borderRadius: 'var(--radius-lg)',
+    fontFamily: 'monospace',
+    fontSize: '11px',
+    letterSpacing: '0.06em',
   } });
 
-  root.appendChild(titleEl);
-  root.appendChild(subtitleEl);
+  root.appendChild(titleWrap);
   root.appendChild(canvasWrapper);
   root.appendChild(legendEl);
 
-  // Fetch data then render
   const factionData = await stats.warmap();
 
-  clear(loadingEl.parentNode === canvasWrapper ? canvasWrapper : canvasWrapper);
+  clear(canvasWrapper);
 
   if (!factionData.length) {
-    canvasWrapper.appendChild(el('div', { class: 'muted', style: { padding: '60px', textAlign: 'center' } },
-      'No games recorded yet. Play some games to claim territory.'));
+    canvasWrapper.appendChild(el('div', {
+      class: 'muted',
+      style: {
+        padding: '80px',
+        textAlign: 'center',
+        fontFamily: 'monospace',
+        letterSpacing: '0.1em',
+        color: 'rgba(120,220,255,0.6)',
+      },
+    }, '> NO ENGAGEMENTS REGISTERED. AWAITING FIRST CONTACT.'));
     return root;
+  }
+
+  // Build legend
+  for (const f of factionData) {
+    const col = FACTION_COLOURS[f.faction] || '#666';
+    legendEl.appendChild(el('div', { style: {
+      display: 'flex', alignItems: 'center', gap: '6px',
+      color: 'rgba(180,210,230,0.95)',
+    } }, [
+      el('div', { style: {
+        width: '12px', height: '12px', background: col,
+        border: '1px solid rgba(120,220,255,0.4)',
+        boxShadow: `0 0 6px ${col}`,
+      } }),
+      el('div', { class: 'tabular' }, `${abbreviate(f.faction)} ${f.wins}W/${f.losses}L`),
+    ]));
   }
 
   const canvas = el('canvas', { id: 'warmap-canvas' });
   canvasWrapper.appendChild(canvas);
 
-  // Build legend
-  for (const f of factionData) {
-    const col = FACTION_COLOURS[f.faction] || '#666';
-    legendEl.appendChild(el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px' } }, [
-      el('div', { style: { width: '14px', height: '14px', background: col, border: '1px solid var(--border-light)', borderRadius: '2px', flexShrink: '0' } }),
-      el('div', { class: 'tabular' }, `${f.faction} ${f.wins}W/${f.losses}L (${f.win_rate}%)`),
-    ]));
-  }
-
-  // Draw after layout so canvas has dimensions
   requestAnimationFrame(() => {
-    const W = Math.min(1200, canvasWrapper.clientWidth || 960);
-    const H = Math.round(W * 0.58);
+    const W = Math.min(1280, canvasWrapper.clientWidth || 1000);
+    const H = Math.round(W * 0.62);
     canvas.width = W;
     canvas.height = H;
     canvas.style.display = 'block';
-    drawMap(canvas, factionData, W, H);
+    drawTacticalMap(canvas, factionData, W, H);
   });
 
   return root;
 }
 
-function drawMap(canvas, factionData, W, H) {
+function drawTacticalMap(canvas, factionData, W, H) {
   const ctx = canvas.getContext('2d');
-  const rng = seededRng(MAP_SEED);
 
-  // ── Step 1: generate ALL faction seed points (home) including those
-  //   without games. They shape the map so future factions don't displace
-  //   existing territories when they first play.
-  const allFactionNames = Object.keys(FACTION_HOMES);
-  const activeFactions = new Set(factionData.map(f => f.faction));
+  // ── Step 0: backdrop with vignette + grid ───────────────────
+  drawBackdrop(ctx, W, H);
 
-  // Map fraction-space [0,1] → canvas pixels
-  const toX = v => Math.round(v * W);
-  const toY = v => Math.round(v * H);
+  // ── Step 1: continent + territories ─────────────────────────
+  const polygon = generateContinent(W, H, MAP_SEED);
+  const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon);
+  const adj = buildAdjacency(ownership, GW, GH);
+  const { owner, homeOf } = assignFactions(sites, factionData, W, H, adj);
 
-  // Build site list: home + jitter points proportional to territory score
-  const sites = []; // { x, y, faction, isHome }
+  // ── Step 2: paint territories ────────────────────────────────
+  paintTerritories(ctx, ownership, owner, GW, GH, CELL, W, H);
 
-  // For inactive factions, add their home as a "ghost" site so it holds space
-  for (const name of allFactionNames) {
-    const [hx, hy] = FACTION_HOMES[name];
-    sites.push({ x: toX(hx), y: toY(hy), faction: name, isHome: true });
+  // ── Step 3: territory borders + coastline ────────────────────
+  drawCoastline(ctx, polygon);
+  drawBorders(ctx, ownership, owner, GW, GH, CELL);
+
+  // ── Step 4: home fortress markers + labels ───────────────────
+  for (const [name, tid] of Object.entries(homeOf)) {
+    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[name] || '#fff');
   }
+  drawLabels(ctx, sites, owner, homeOf);
 
-  // For active factions, scatter extra seed points proportional to territory_score
-  for (const f of factionData) {
-    const factionRng = seededRng(MAP_SEED ^ hashStr(f.faction));
-    const extras = Math.round(f.territory_score * 12); // 0–12 extra points
-    for (let i = 0; i < extras; i++) {
-      const angle = factionRng() * Math.PI * 2;
-      const dist = factionRng() * 0.25; // spread up to 25% of map
-      const [hx, hy] = FACTION_HOMES[f.faction];
-      sites.push({
-        x: Math.max(0, Math.min(W, toX(hx + Math.cos(angle) * dist))),
-        y: Math.max(0, Math.min(H, toY(hy + Math.sin(angle) * dist))),
-        faction: f.faction,
-        isHome: false,
-      });
-    }
+  // ── Step 5: HUD chrome ───────────────────────────────────────
+  drawScanlines(ctx, W, H);
+  drawCornerBrackets(ctx, W, H);
+  drawCompass(ctx, 50, H - 60);
+  drawReadout(ctx, W, H, factionData, sites.length);
+}
+
+function drawBackdrop(ctx, W, H) {
+  // Deep navy with radial vignette
+  const bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  bg.addColorStop(0, '#0a1828');
+  bg.addColorStop(0.7, '#040a16');
+  bg.addColorStop(1, HUD_BG);
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Faint coordinate grid
+  ctx.strokeStyle = HUD_FAINT;
+  ctx.lineWidth = 1;
+  const STEP = 50;
+  for (let x = 0; x <= W; x += STEP) {
+    ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, H); ctx.stroke();
   }
+  for (let y = 0; y <= H; y += STEP) {
+    ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(W, y + 0.5); ctx.stroke();
+  }
+}
 
-  // ── Step 2: Voronoi — for each pixel, find nearest site ────────
-  // At this canvas size doing per-pixel would be too slow; use a grid approach.
-  const CELL = 4; // sample every 4px
-  const GW = Math.ceil(W / CELL);
-  const GH = Math.ceil(H / CELL);
-  const ownership = new Array(GW * GH);
-
+function paintTerritories(ctx, ownership, owner, GW, GH, CELL, W, H) {
+  const img = ctx.getImageData(0, 0, W, H);
+  const data = img.data;
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
-      const px = gx * CELL + CELL / 2;
-      const py = gy * CELL + CELL / 2;
-      let best = Infinity, bestIdx = 0;
-      for (let s = 0; s < sites.length; s++) {
-        const dx = px - sites[s].x, dy = py - sites[s].y;
-        const d = dx*dx + dy*dy;
-        if (d < best) { best = d; bestIdx = s; }
+      const o = ownership[gy * GW + gx];
+      if (o < 0) continue; // ocean stays as backdrop
+      const factionName = owner[o];
+      let r, g, b, a;
+      if (!factionName) {
+        // Unclaimed land — neutral steel
+        r = 60; g = 75; b = 90; a = 0.55;
+      } else {
+        const hex = FACTION_COLOURS[factionName] || '#666';
+        [r, g, b] = hexToRgb(hex);
+        a = 0.72;
       }
-      ownership[gy * GW + gx] = sites[bestIdx].faction;
-    }
-  }
-
-  // ── Step 3: draw territories ────────────────────────────────────
-  const imageData = ctx.createImageData(W, H);
-  const data = imageData.data;
-
-  for (let gy = 0; gy < GH; gy++) {
-    for (let gx = 0; gx < GW; gx++) {
-      const faction = ownership[gy * GW + gx];
-      // Only colour tiles for active factions; inactive = dark bg
-      const col = activeFactions.has(faction) ? (FACTION_COLOURS[faction] || '#333333') : '#1a1a20';
-      const [r, g, b] = hexToRgb(col);
-      // Add subtle grid noise
-      const noiseRng = seededRng((gx * 7919 + gy * 104729) ^ MAP_SEED);
-      const n = (noiseRng() * 16 - 8) | 0;
       for (let dy = 0; dy < CELL; dy++) {
         for (let dx = 0; dx < CELL; dx++) {
           const px = gx * CELL + dx, py = gy * CELL + dy;
           if (px >= W || py >= H) continue;
           const i = (py * W + px) * 4;
-          data[i]   = Math.max(0, Math.min(255, r + n));
-          data[i+1] = Math.max(0, Math.min(255, g + n));
-          data[i+2] = Math.max(0, Math.min(255, b + n));
+          data[i]   = Math.round(data[i]   * (1 - a) + r * a);
+          data[i+1] = Math.round(data[i+1] * (1 - a) + g * a);
+          data[i+2] = Math.round(data[i+2] * (1 - a) + b * a);
           data[i+3] = 255;
         }
       }
     }
   }
-  ctx.putImageData(imageData, 0, 0);
+  ctx.putImageData(img, 0, 0);
+}
 
-  // ── Step 4: draw territory borders ─────────────────────────────
-  ctx.lineWidth = 2;
+function drawCoastline(ctx, polygon) {
+  // Outer glow
+  ctx.save();
+  ctx.strokeStyle = HUD_CYAN;
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'rgba(120, 220, 255, 0.9)';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(polygon[0][0], polygon[0][1]);
+  for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBorders(ctx, ownership, owner, GW, GH, CELL) {
   for (let gy = 0; gy < GH - 1; gy++) {
     for (let gx = 0; gx < GW - 1; gx++) {
-      const here = ownership[gy * GW + gx];
-      const right = ownership[gy * GW + (gx+1)];
-      const below = ownership[(gy+1) * GW + gx];
-      if (here !== right || here !== below) {
-        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-        ctx.beginPath();
-        if (here !== right) {
-          ctx.moveTo((gx+1)*CELL, gy*CELL);
-          ctx.lineTo((gx+1)*CELL, (gy+1)*CELL);
-        }
-        if (here !== below) {
-          ctx.moveTo(gx*CELL, (gy+1)*CELL);
-          ctx.lineTo((gx+1)*CELL, (gy+1)*CELL);
-        }
-        ctx.stroke();
-      }
+      const a = ownership[gy * GW + gx];
+      const b = ownership[gy * GW + gx + 1];
+      const c = ownership[(gy + 1) * GW + gx];
+      if (a < 0) continue;
+
+      if (b >= 0 && a !== b) drawSegment(ctx, (gx+1)*CELL, gy*CELL, (gx+1)*CELL, (gy+1)*CELL,
+        owner[a] === owner[b]);
+      if (c >= 0 && a !== c) drawSegment(ctx, gx*CELL, (gy+1)*CELL, (gx+1)*CELL, (gy+1)*CELL,
+        owner[a] === owner[c]);
     }
-  }
-
-  // ── Step 5: draw home fortresses for active factions ───────────
-  for (const f of factionData) {
-    const [hx, hy] = FACTION_HOMES[f.faction] || [rng(), rng()];
-    const px = toX(hx), py = toY(hy);
-    const col = FACTION_COLOURS[f.faction] || '#888';
-    drawFortress(ctx, px, py, col);
-  }
-
-  // ── Step 6: draw pixel unit skirmishes at borders ───────────────
-  drawBorderSkirmishes(ctx, ownership, sites, factionData, GW, GH, CELL, W, H);
-
-  // ── Step 7: faction name labels ──────────────────────────────────
-  ctx.font = 'bold 10px "Segoe UI", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (const f of factionData) {
-    const [hx, hy] = FACTION_HOMES[f.faction] || [0.5, 0.5];
-    const px = toX(hx), py = toY(hy);
-    const label = f.faction.replace('Emperor\'s Children', 'Emp. Children').replace('Adeptus Mechanicus', 'Ad. Mech').replace('Genestealer Cults', 'GSC').replace('Chaos Space Marines', 'CSM').replace('Leagues of Votann', 'LoV');
-    // Drop shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.8)';
-    ctx.fillText(label, px+1, py + 22);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, px, py + 21);
   }
 }
 
-function drawFortress(ctx, cx, cy, col) {
-  const S = 10; // half-size
-  // Outer wall
-  ctx.fillStyle = '#222';
-  ctx.fillRect(cx - S, cy - S, S*2, S*2);
-  ctx.fillStyle = col;
-  ctx.fillRect(cx - S + 2, cy - S + 2, S*2 - 4, S*2 - 4);
-  // Battlements (pixel art)
-  ctx.fillStyle = '#111';
-  for (let i = 0; i < 3; i++) {
-    ctx.fillRect(cx - S + 1 + i * 6, cy - S - 4, 4, 4);
-    ctx.fillRect(cx - S + 1 + i * 6, cy + S, 4, 4);
+function drawSegment(ctx, x1, y1, x2, y2, sameFaction) {
+  // Inner-faction territory border = thin cyan
+  // Cross-faction border = bold amber (war front)
+  if (sameFaction) {
+    ctx.strokeStyle = 'rgba(120, 220, 255, 0.45)';
+    ctx.lineWidth = 0.6;
+  } else {
+    ctx.strokeStyle = HUD_AMBER;
+    ctx.lineWidth = 1.6;
   }
-  // Keep (inner tower)
-  ctx.fillStyle = lighten(col, 30);
-  ctx.fillRect(cx - 4, cy - 4, 8, 8);
-  // White dot — the unconquerable beacon
-  ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.beginPath();
-  ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Gold ring
-  ctx.strokeStyle = '#ffd700';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(cx, cy, S + 2, 0, Math.PI * 2);
+  ctx.moveTo(x1 + 0.5, y1 + 0.5);
+  ctx.lineTo(x2 + 0.5, y2 + 0.5);
   ctx.stroke();
 }
 
-function drawBorderSkirmishes(ctx, ownership, sites, factionData, GW, GH, CELL, W, H) {
-  // Find border cells between two different active factions
-  const active = new Set(factionData.map(f => f.faction));
-  const borders = [];
-  for (let gy = 1; gy < GH - 2; gy++) {
-    for (let gx = 1; gx < GW - 2; gx++) {
-      const here = ownership[gy * GW + gx];
-      const right = ownership[gy * GW + (gx+1)];
-      if (here !== right && active.has(here) && active.has(right)) {
-        borders.push({ gx, gy, leftFaction: here, rightFaction: right });
-      }
-    }
-  }
-
-  if (!borders.length) return;
-
-  // Seed-consistent selection — pick ~20 evenly distributed border fights
-  const step = Math.max(1, Math.floor(borders.length / 20));
-  const fights = borders.filter((_, i) => i % step === 0).slice(0, 24);
-
-  const SCALE = 2; // each pixel art pixel = 2 canvas pixels
-  const SZ = 8 * SCALE;
-
-  for (const { gx, gy, leftFaction, rightFaction } of fights) {
-    const bx = gx * CELL;
-    const by = gy * CELL;
-
-    const lCol = FACTION_COLOURS[leftFaction] || '#888';
-    const rCol = FACTION_COLOURS[rightFaction] || '#888';
-
-    // Left unit faces right
-    drawSprite(ctx, SPRITE_MARINE, bx - SZ - 2, by - SZ/2, SCALE, lCol, false);
-    // Right unit faces left (mirrored)
-    drawSprite(ctx, SPRITE_MARINE, bx + 4, by - SZ/2, SCALE, rCol, true);
-    // Bolt between them
-    drawSprite(ctx, SPRITE_BOLT, bx - SZ/2, by - SZ/2, SCALE, lCol, false);
-  }
+function drawFortress(ctx, cx, cy, col) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  // Diamond marker, slightly larger than territory border
+  ctx.shadowColor = col;
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(0, -8);
+  ctx.lineTo(8, 0);
+  ctx.lineTo(0, 8);
+  ctx.lineTo(-8, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // Inner ring
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+  ctx.fill();
+  // Cross-hairs
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(-11, 0); ctx.lineTo(-9, 0);
+  ctx.moveTo(9, 0);   ctx.lineTo(11, 0);
+  ctx.moveTo(0, -11); ctx.lineTo(0, -9);
+  ctx.moveTo(0, 9);   ctx.lineTo(0, 11);
+  ctx.stroke();
+  ctx.restore();
 }
 
-function drawSprite(ctx, sprite, ox, oy, scale, col, flipX) {
-  const [r, g, b] = hexToRgb(col);
-  const lr = Math.min(255, r + 80), lg = Math.min(255, g + 80), lb = Math.min(255, b + 80);
-  const H = sprite.length, W = sprite[0].length;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const v = sprite[y][flipX ? W - 1 - x : x];
-      if (!v) continue;
-      if (v === 1) ctx.fillStyle = `rgb(${r},${g},${b})`;
-      else         ctx.fillStyle = `rgb(${lr},${lg},${lb})`;
-      ctx.fillRect(ox + x * scale, oy + y * scale, scale, scale);
-    }
+function drawLabels(ctx, sites, owner, homeOf) {
+  ctx.save();
+  ctx.font = '600 11px "Consolas", "Monaco", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const [name, tid] of Object.entries(homeOf)) {
+    const s = sites[tid];
+    const label = abbreviate(name);
+    // Shadow for legibility
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText(label, s.x + 1, s.y + 19);
+    ctx.fillStyle = 'rgba(255, 230, 160, 0.95)';
+    ctx.fillText(label, s.x, s.y + 18);
   }
+  ctx.restore();
 }
 
-function hashStr(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x9e3779b9) | 0;
-  return h >>> 0;
+function drawScanlines(ctx, W, H) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.10)';
+  for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+  ctx.restore();
+}
+
+function drawCornerBrackets(ctx, W, H) {
+  ctx.save();
+  ctx.strokeStyle = HUD_CYAN;
+  ctx.lineWidth = 2;
+  ctx.shadowColor = 'rgba(120,220,255,0.6)';
+  ctx.shadowBlur = 4;
+  const sz = 22, m = 12;
+  // TL
+  ctx.beginPath(); ctx.moveTo(m, m + sz); ctx.lineTo(m, m); ctx.lineTo(m + sz, m); ctx.stroke();
+  // TR
+  ctx.beginPath(); ctx.moveTo(W - m - sz, m); ctx.lineTo(W - m, m); ctx.lineTo(W - m, m + sz); ctx.stroke();
+  // BL
+  ctx.beginPath(); ctx.moveTo(m, H - m - sz); ctx.lineTo(m, H - m); ctx.lineTo(m + sz, H - m); ctx.stroke();
+  // BR
+  ctx.beginPath(); ctx.moveTo(W - m - sz, H - m); ctx.lineTo(W - m, H - m); ctx.lineTo(W - m, H - m - sz); ctx.stroke();
+  ctx.restore();
+}
+
+function drawCompass(ctx, cx, cy) {
+  ctx.save();
+  ctx.strokeStyle = HUD_CYAN;
+  ctx.fillStyle = HUD_CYAN;
+  ctx.lineWidth = 1;
+  ctx.font = '600 9px "Consolas", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const r = 18;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Tick marks
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const x1 = cx + Math.cos(a) * (r - 3);
+    const y1 = cy + Math.sin(a) * (r - 3);
+    const x2 = cx + Math.cos(a) * r;
+    const y2 = cy + Math.sin(a) * r;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  // N marker
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy - r - 4);
+  ctx.stroke();
+  ctx.fillText('N', cx, cy - r - 10);
+  // Centre cross
+  ctx.beginPath();
+  ctx.moveTo(cx - 3, cy); ctx.lineTo(cx + 3, cy);
+  ctx.moveTo(cx, cy - 3); ctx.lineTo(cx, cy + 3);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawReadout(ctx, W, H, factionData, territoryCount) {
+  ctx.save();
+  ctx.font = '600 10px "Consolas", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = HUD_CYAN;
+  const lines = [
+    `> WORLD: BOIMAGGEDON`,
+    `> THEATRES: ${territoryCount}`,
+    `> COMBATANTS: ${factionData.length}`,
+    `> STATUS: ${'●'} ENGAGED`,
+  ];
+  let y = H - 60;
+  for (const line of lines) {
+    ctx.fillText(line, W - 24, y);
+    y += 13;
+  }
+  ctx.restore();
 }

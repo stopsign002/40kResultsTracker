@@ -385,23 +385,29 @@ Append a guarded `ALTER TABLE` block to `api/db/schema.sql` — see the `player_
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic Voronoi diagram drawn into a `<canvas>`. Same seed, same input data → identical pixel output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 evenly-sized territories via Voronoi + Lloyd's relaxation, then assigned to factions by territory_score. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
-- `MAP_SEED = 0xDEAD40` — passed to a mulberry32 RNG. **Never change.**
-- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 space, lore-positioned. 28 entries; matches faction count in `seed.sql`. Append new factions only.
+- `MAP_SEED = 0xDEAD40` — drives both the continent silhouette and the territory site placement. **Never change.**
+- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** When a faction first plays, its closest land territory by site distance becomes its home.
 - `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
-- `SPRITE_MARINE`, `SPRITE_BOLT` — 8×8 bitmaps; `0` = transparent, `1` = faction colour, `2` = lighter accent. Drawn at scale 2 → 16px.
-- `CELL = 4` — Voronoi grid sample step in pixels; lower = sharper borders + slower render.
+- `N_TERRITORIES = 50` — total territories on the continent. Changing this changes everyone's map.
+- `LLOYD_ITERATIONS = 8` — relaxation passes; more = more even cell sizes.
+- `CELL = 4` — Voronoi/raster sample step in pixels.
 
-### Render pipeline (`drawMap`)
+### Render pipeline (`drawTacticalMap`)
 
-1. **Generate seed points.** For every faction in `FACTION_HOMES` (active OR not), push the home position into `sites[]`. Inactive factions get exactly one "ghost" site so their home is reserved space — meaning new factions joining the war don't reshape existing territories.
-2. **Scatter extras for active factions.** For each faction with games, push 0–12 additional sites at random angles within 25% of the map, count proportional to `territory_score`. Each faction's scatter uses `seededRng(MAP_SEED ^ hashStr(name))` so the scatter is deterministic per faction.
-3. **Voronoi via grid sampling.** For each grid cell `(gx, gy)` at step `CELL`, find the nearest site by squared distance. Store the winning faction in `ownership[]`.
-4. **Paint territories.** Active factions get their `FACTION_COLOURS`; inactive = `#1a1a20` (dark void). Add per-cell noise from a deterministic per-cell RNG.
-5. **Draw borders + fortresses + skirmishes + labels.** Borders are drawn by checking neighbour ownership. Fortresses are 20×20 castles with battlements + a white beacon + gold ring. Skirmishes pick ~24 evenly-distributed border points and draw two facing pixel marines with a bolt between them.
+1. **Continent silhouette.** `generateContinent` builds a closed polygon by sampling 96 angles around the canvas centre with multi-octave sine noise and a slight horizontal squash. Result: an organic, asymmetric coastline.
+2. **Territory sites.** `generateTerritories` Poisson-disc-samples 50 points inside the polygon; ranks them by minimum spacing.
+3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
+4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
+5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
+6. **Faction assignment.** `assignFactions` finds each active faction's home (closest unclaimed site to its `FACTION_HOMES` coords). Then BFS-expands from each home, round-robin between factions, until each faction owns `round(territory_score / total * 50)` territories.
+7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
+8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
+9. **Fortresses + labels.** Diamond marker with cross-hairs at each home; abbreviated faction name in amber monospace below.
+10. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout.
 
 ### Territory score formula
 
@@ -417,7 +423,7 @@ Tuning notes: 70% games / 30% win% means high-volume players dominate land but p
 
 ### Why home fortresses can't fall
 
-Each `FACTION_HOMES` entry contributes one immutable site to `sites[]` regardless of whether the faction has played a game. Even a 0-game faction has a Voronoi cell around its home. An active losing faction can lose territory to active rivals' scattered seed points, but the cell containing its home will always be owned by it (the home itself is the closest site to itself). This is how "fortresses are eternal" is enforced — it falls out of the geometry, no special case.
+Each active faction's home is assigned in `assignFactions` and added to `taken` before any other allocation. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if the faction's `territory_score` would round to 0 territories, they keep their home (the `Math.max(1, ...)` floor in target count + the home being claimed first). Inactive factions get no rendered home — only active factions appear on the map.
 
 ---
 
