@@ -1,0 +1,12 @@
+services:
+  40k-api:
+    container_name: 40k-api
+    build: ./api
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
