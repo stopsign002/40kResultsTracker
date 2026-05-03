@@ -217,7 +217,6 @@ export async function renderGameForm(state, gameId) {
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
       buildRoundsTable(p),
       buildPerRoundSecondaries(p),
-      buildChallengersSection(p),
     ]);
   }
 
