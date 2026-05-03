@@ -151,21 +151,38 @@ homes and colours), schema changes, new views, new endpoints.
 
 There is no public signup. Admin creates accounts from the **Admin** tab.
 
-## Backups (rough sketch — not automated yet)
+## Backups
 
-Manual snapshot of just this site's database:
+Automated nightly snapshots are handled by `scripts/backup.sh`. Each run
+gzip-pumps `pg_dump 40k_db` to `~/sites/backups/40k_db_<YYYY-MM-DD>.sql.gz`
+and prunes anything older than 30 days. Wire it into cron once on the host:
 
 ```bash
-docker exec postgres pg_dump -U postgres 40k_db > 40k_db_$(date +%F).sql
+chmod +x ~/sites/sites/40kResultsTracker/scripts/backup.sh
+mkdir -p ~/sites/backups
+
+# nightly at 03:15 — adjust as preferred
+( crontab -l 2>/dev/null; echo "15 3 * * * bash ~/sites/sites/40kResultsTracker/scripts/backup.sh >> ~/sites/backups/40k.log 2>&1" ) | crontab -
+```
+
+Tunable env vars (set inline before the script if needed):
+- `BACKUP_DIR` — where snapshots land (default `~/sites/backups`)
+- `RETAIN_DAYS` — keep this many days of snapshots (default 30)
+- `DB_NAME` — defaults to `40k_db`
+- `PG_CONTAINER` — name of the running Postgres container (default `postgres`)
+
+Manual one-off snapshot:
+
+```bash
+bash ~/sites/sites/40kResultsTracker/scripts/backup.sh
 ```
 
 To restore into a fresh DB:
 
 ```bash
-docker exec -i postgres psql -U postgres -d 40k_db < 40k_db_<date>.sql
+gunzip -c ~/sites/backups/40k_db_<date>.sql.gz \
+  | docker exec -i postgres psql -U postgres -d 40k_db
 ```
-
-Adding cron-driven nightly backups is a reasonable future improvement.
 
 ## Known limitations / future work
 
