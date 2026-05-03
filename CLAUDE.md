@@ -276,10 +276,10 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/stats/head-to-head?userA=N&userB=M` | auth | every game between two users |
 | GET | `/stats/first-turn-impact` | auth | win% comparison going first vs second |
 | GET | `/stats/secondary-averages` | auth | per-card pick count + avg score |
-| GET | `/stats/warmap` | auth | array of factions with `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score` |
+| GET | `/stats/warmap` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_played_at` |
 | GET | `/admin/users` | admin | all users including inactive |
-| POST | `/admin/users` | admin | `{ username, displayName, password, role }` |
-| PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password? }` |
+| POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
+| PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
 | PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` |
 
 **Total: 28 endpoints** (cross-checked with `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js | wc -l`).
@@ -292,7 +292,7 @@ Tables (snake_case throughout):
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active |
+| `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active, army_name (optional, shown on the war map) |
 | `session` | express-session storage | sid, sess (json), expire — auto-managed by `connect-pg-simple` |
 | `factions` | parent codex factions | id, name (unique), parent_id (nullable, currently unused) |
 | `detachments` | per-faction detachments | id, faction_id, name; UNIQUE (faction_id, name) |
@@ -301,7 +301,7 @@ Tables (snake_case throughout):
 | `deployment_maps` | e.g. Hammer and Anvil | id, mission_pack_id, name |
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
-| `challenger_cards` | Pariah Nexus gambits | id, mission_pack_id, name |
+| `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
 | `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, created_at, updated_at |
 | `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id, army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
@@ -385,7 +385,7 @@ Append a guarded `ALTER TABLE` block to `api/db/schema.sql` — see the `player_
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 evenly-sized territories via Voronoi + Lloyd's relaxation, then assigned to factions by territory_score. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate fortresses but share the Necron green colour. The label on each fortress is the user's `army_name` (falling back to their display name; for guests, their guest name). Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
@@ -404,7 +404,7 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 e
 3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
 4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
 5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
-6. **Faction assignment.** `assignFactions` finds each active faction's home (closest unclaimed site to its `FACTION_HOMES` coords). Then BFS-expands from each home, round-robin between factions, until each faction owns `round(territory_score / total * 50)` territories.
+6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_played_at` (earliest banner claims home first), tiebreak by `(player_key, faction_id)`. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * 50)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
 7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
 9. **Fortresses + labels.** Diamond marker with cross-hairs at each home; abbreviated faction name in amber monospace below.
@@ -424,7 +424,13 @@ Tuning notes: 70% games / 30% win% means high-volume players dominate land but p
 
 ### Why home fortresses can't fall
 
-Each active faction's home is assigned in `assignFactions` and added to `taken` before any other allocation. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if the faction's `territory_score` would round to 0 territories, they keep their home (the `Math.max(1, ...)` floor in target count + the home being claimed first). Inactive factions get no rendered home — only active factions appear on the map.
+Each active banner's home is assigned in `assignTerritories` and added to `taken` before any other allocation. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if a banner's `territory_score` would round to 0 territories, they keep their home (`Math.max(1, ...)` floor in target count + the home being claimed first).
+
+The first player to play a faction wins the closest-to-anchor territory permanently — `first_played_at` is sourced from `MIN(g.played_at)` per `(player, faction)` in the SQL, which is monotonically stable. Subsequent players who pick up that faction get the next-nearest free territory in the regional zone. Once a fortress is established it never moves.
+
+### Recipe: changing what shows on a player's fortress label
+
+`drawLabels()` calls `unitLabel(u)` which returns `u.army_name || u.player_name`. To change the displayed text, edit those identifiers — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
 
 ---
 

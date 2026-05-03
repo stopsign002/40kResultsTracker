@@ -277,15 +277,32 @@ function buildAdjacency(ownership, GW, GH) {
 }
 
 // ── Faction-to-territory assignment ─────────────────────────────
-function assignFactions(sites, factionData, W, H, adj) {
-  // Find each active faction's home territory: the territory whose site is
-  // closest to its FACTION_HOMES coords (in 0..1 space).
+// units = [{ player_key, player_name, army_name, faction_id, faction,
+//   games, wins, losses, draws, territory_score, first_played_at }]
+// Each unique (player, faction) combo is a separate banner: Joe's Necrons
+// and Jane's Necrons hold different territories with their own home.
+function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
+
+function unitLabel(u) {
+  if (u.army_name) return u.army_name;
+  return `${u.player_name} (${abbreviate(u.faction)})`;
+}
+
+function assignTerritories(sites, units, W, H, adj) {
+  // Sort by first_played_at (earliest first), ties broken by player_key+faction_id.
+  // The first player to play a faction claims the territory closest to that
+  // faction's regional anchor; subsequent players cluster nearby.
+  const sorted = [...units].sort((a, b) => {
+    const ta = String(a.first_played_at || '');
+    const tb = String(b.first_played_at || '');
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    return unitKey(a).localeCompare(unitKey(b));
+  });
+
   const taken = new Set();
-  const homeOf = {};
-  // Sort by faction key for deterministic order when ties exist
-  const sorted = [...factionData].sort((a, b) => a.faction.localeCompare(b.faction));
-  for (const f of sorted) {
-    const [hx, hy] = FACTION_HOMES[f.faction] || [0.5, 0.5];
+  const homeOf = {}; // unitKey -> territoryId
+  for (const u of sorted) {
+    const [hx, hy] = FACTION_HOMES[u.faction] || [0.5, 0.5];
     const tx = hx * W, ty = hy * H;
     let best = Infinity, bestId = -1;
     for (let s = 0; s < sites.length; s++) {
@@ -294,30 +311,31 @@ function assignFactions(sites, factionData, W, H, adj) {
       const d = dx*dx + dy*dy;
       if (d < best) { best = d; bestId = s; }
     }
-    if (bestId >= 0) { homeOf[f.faction] = bestId; taken.add(bestId); }
+    if (bestId >= 0) { homeOf[unitKey(u)] = bestId; taken.add(bestId); }
   }
 
-  // Allocate non-home territories proportional to territory_score, BFS-expand
-  // from each home in round-robin.
-  const totalScore = factionData.reduce((s, f) => s + (f.territory_score || 0.001), 0) || 1;
+  // Allocate non-home territories proportional to territory_score (BFS expansion).
+  const totalScore = units.reduce((s, u) => s + (u.territory_score || 0.001), 0) || 1;
   const target = {};
-  for (const f of factionData) {
-    target[f.faction] = Math.max(1, Math.round((f.territory_score || 0.001) / totalScore * sites.length));
+  for (const u of units) {
+    target[unitKey(u)] = Math.max(1, Math.round((u.territory_score || 0.001) / totalScore * sites.length));
   }
 
   const owner = new Array(sites.length).fill(null);
-  for (const [name, id] of Object.entries(homeOf)) owner[id] = name;
+  for (const [k, id] of Object.entries(homeOf)) owner[id] = k;
 
   const frontier = {};
-  for (const [name, id] of Object.entries(homeOf)) frontier[name] = [id];
+  for (const [k, id] of Object.entries(homeOf)) frontier[k] = [id];
 
   let stuck = 0;
-  while (stuck < factionData.length) {
+  while (stuck < sorted.length) {
     stuck = 0;
-    for (const f of factionData) {
-      const owned = owner.filter(o => o === f.faction).length;
-      if (owned >= target[f.faction]) { stuck++; continue; }
-      const queue = frontier[f.faction];
+    for (const u of sorted) {
+      const k = unitKey(u);
+      if (!frontier[k]) { stuck++; continue; }
+      const owned = owner.filter(o => o === k).length;
+      if (owned >= target[k]) { stuck++; continue; }
+      const queue = frontier[k];
       let took = false;
       while (queue.length) {
         const tid = queue[0];
@@ -326,7 +344,7 @@ function assignFactions(sites, factionData, W, H, adj) {
         let found = false;
         for (const nb of neighbours) {
           if (owner[nb] === null) {
-            owner[nb] = f.faction;
+            owner[nb] = k;
             queue.push(nb);
             found = true;
             took = true;
@@ -407,11 +425,11 @@ export async function renderWarmap(_state) {
   root.appendChild(canvasWrapper);
   root.appendChild(legendEl);
 
-  const factionData = await stats.warmap();
+  const units = await stats.warmap();
 
   clear(canvasWrapper);
 
-  if (!factionData.length) {
+  if (!units.length) {
     canvasWrapper.appendChild(el('div', {
       class: 'muted',
       style: {
@@ -425,9 +443,9 @@ export async function renderWarmap(_state) {
     return root;
   }
 
-  // Build legend
-  for (const f of factionData) {
-    const col = FACTION_COLOURS[f.faction] || '#666';
+  // Build legend — one entry per (player, faction) banner
+  for (const u of units) {
+    const col = FACTION_COLOURS[u.faction] || '#666';
     legendEl.appendChild(el('div', { style: {
       display: 'flex', alignItems: 'center', gap: '6px',
       color: 'rgba(180,210,230,0.95)',
@@ -437,7 +455,7 @@ export async function renderWarmap(_state) {
         border: '1px solid rgba(120,220,255,0.4)',
         boxShadow: `0 0 6px ${col}`,
       } }),
-      el('div', { class: 'tabular' }, `${abbreviate(f.faction)} ${f.wins}W/${f.losses}L`),
+      el('div', { class: 'tabular' }, `${unitLabel(u)} — ${abbreviate(u.faction)} ${u.wins}W/${u.losses}L`),
     ]));
   }
 
@@ -454,13 +472,13 @@ export async function renderWarmap(_state) {
   canvas.style.height = 'auto';
   canvas.style.maxWidth = VIRTUAL_W + 'px';
   requestAnimationFrame(() => {
-    drawTacticalMap(canvas, factionData, VIRTUAL_W, VIRTUAL_H);
+    drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H);
   });
 
   return root;
 }
 
-function drawTacticalMap(canvas, factionData, W, H) {
+function drawTacticalMap(canvas, units, W, H) {
   const ctx = canvas.getContext('2d');
 
   // ── Step 0: backdrop with vignette + grid ───────────────────
@@ -470,26 +488,31 @@ function drawTacticalMap(canvas, factionData, W, H) {
   const polygon = generateContinent(W, H, MAP_SEED);
   const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon);
   const adj = buildAdjacency(ownership, GW, GH);
-  const { owner, homeOf } = assignFactions(sites, factionData, W, H, adj);
+  const { owner, homeOf } = assignTerritories(sites, units, W, H, adj);
+
+  // Lookup tables: unitKey -> { faction, label }
+  const unitMeta = {};
+  for (const u of units) unitMeta[unitKey(u)] = u;
 
   // ── Step 2: paint territories ────────────────────────────────
-  paintTerritories(ctx, ownership, owner, GW, GH, CELL, W, H);
+  paintTerritories(ctx, ownership, owner, unitMeta, GW, GH, CELL, W, H);
 
   // ── Step 3: territory borders + coastline ────────────────────
   drawCoastline(ctx, polygon);
   drawBorders(ctx, ownership, owner, GW, GH, CELL);
 
   // ── Step 4: home fortress markers + labels ───────────────────
-  for (const [name, tid] of Object.entries(homeOf)) {
-    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[name] || '#fff');
+  for (const [k, tid] of Object.entries(homeOf)) {
+    const u = unitMeta[k];
+    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[u?.faction] || '#fff');
   }
-  drawLabels(ctx, sites, owner, homeOf);
+  drawLabels(ctx, sites, unitMeta, homeOf);
 
   // ── Step 5: HUD chrome ───────────────────────────────────────
   drawScanlines(ctx, W, H);
   drawCornerBrackets(ctx, W, H);
   drawCompass(ctx, 50, H - 60);
-  drawReadout(ctx, W, H, factionData, sites.length);
+  drawReadout(ctx, W, H, units, sites.length);
 }
 
 function drawBackdrop(ctx, W, H) {
@@ -513,20 +536,21 @@ function drawBackdrop(ctx, W, H) {
   }
 }
 
-function paintTerritories(ctx, ownership, owner, GW, GH, CELL, W, H) {
+function paintTerritories(ctx, ownership, owner, unitMeta, GW, GH, CELL, W, H) {
   const img = ctx.getImageData(0, 0, W, H);
   const data = img.data;
   for (let gy = 0; gy < GH; gy++) {
     for (let gx = 0; gx < GW; gx++) {
       const o = ownership[gy * GW + gx];
       if (o < 0) continue; // ocean stays as backdrop
-      const factionName = owner[o];
+      const ownerKey = owner[o];
       let r, g, b, a;
-      if (!factionName) {
+      if (!ownerKey) {
         // Unclaimed land — neutral steel
         r = 60; g = 75; b = 90; a = 0.55;
       } else {
-        const hex = FACTION_COLOURS[factionName] || '#666';
+        const u = unitMeta[ownerKey];
+        const hex = (u && FACTION_COLOURS[u.faction]) || '#666';
         [r, g, b] = hexToRgb(hex);
         a = 0.72;
       }
@@ -625,19 +649,31 @@ function drawFortress(ctx, cx, cy, col) {
   ctx.restore();
 }
 
-function drawLabels(ctx, sites, owner, homeOf) {
+function drawLabels(ctx, sites, unitMeta, homeOf) {
   ctx.save();
-  ctx.font = '600 11px "Consolas", "Monaco", monospace';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  for (const [name, tid] of Object.entries(homeOf)) {
+  for (const [k, tid] of Object.entries(homeOf)) {
     const s = sites[tid];
-    const label = abbreviate(name);
-    // Shadow for legibility
+    const u = unitMeta[k];
+    if (!u) continue;
+    // Primary label = army name OR player name; secondary = faction abbreviation
+    const primary = u.army_name || u.player_name;
+    const secondary = abbreviate(u.faction);
+
+    // Primary line
+    ctx.font = '700 12px "Consolas", "Monaco", monospace';
     ctx.fillStyle = 'rgba(0,0,0,0.85)';
-    ctx.fillText(label, s.x + 1, s.y + 19);
+    ctx.fillText(primary, s.x + 1, s.y + 19);
     ctx.fillStyle = 'rgba(255, 230, 160, 0.95)';
-    ctx.fillText(label, s.x, s.y + 18);
+    ctx.fillText(primary, s.x, s.y + 18);
+
+    // Secondary (faction) line
+    ctx.font = '500 9px "Consolas", "Monaco", monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText(secondary, s.x + 1, s.y + 31);
+    ctx.fillStyle = 'rgba(180, 220, 255, 0.85)';
+    ctx.fillText(secondary, s.x, s.y + 30);
   }
   ctx.restore();
 }
@@ -705,15 +741,19 @@ function drawCompass(ctx, cx, cy) {
   ctx.restore();
 }
 
-function drawReadout(ctx, W, H, factionData, territoryCount) {
+function drawReadout(ctx, W, H, units, territoryCount) {
   ctx.save();
   ctx.font = '600 10px "Consolas", monospace';
   ctx.textAlign = 'right';
   ctx.fillStyle = HUD_CYAN;
+  const factionsActive = new Set(units.map(u => u.faction)).size;
+  const playersActive = new Set(units.map(u => u.player_key)).size;
   const lines = [
     `> WORLD: BOIMAGGEDON`,
     `> THEATRES: ${territoryCount}`,
-    `> COMBATANTS: ${factionData.length}`,
+    `> BANNERS: ${units.length}`,
+    `> FACTIONS: ${factionsActive}`,
+    `> PLAYERS: ${playersActive}`,
     `> STATUS: ${'●'} ENGAGED`,
   ];
   let y = H - 60;

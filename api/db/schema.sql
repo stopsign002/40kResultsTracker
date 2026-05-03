@@ -7,8 +7,18 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  army_name     TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Migration: add army_name if upgrading from earlier schema
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='users' AND column_name='army_name'
+  ) THEN
+    ALTER TABLE users ADD COLUMN army_name TEXT;
+  END IF;
+END $$;
 
 -- Session store (connect-pg-simple)
 CREATE TABLE IF NOT EXISTS "session" (

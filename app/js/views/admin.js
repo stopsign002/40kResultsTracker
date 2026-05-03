@@ -23,6 +23,7 @@ export async function renderAdmin(state) {
   // Create user form
   const cuUsername = el('input', { type: 'text', placeholder: 'username' });
   const cuDisplay = el('input', { type: 'text', placeholder: 'display name' });
+  const cuArmyName = el('input', { type: 'text', placeholder: 'optional — shown on the war map' });
   const cuPassword = el('input', { type: 'password', placeholder: 'min 8 chars' });
   const cuRole = el('select', {}, [
     el('option', { value: 'user' }, 'User'),
@@ -36,10 +37,12 @@ export async function renderAdmin(state) {
       await admin.createUser({
         username: cuUsername.value.trim(),
         displayName: cuDisplay.value.trim() || cuUsername.value.trim(),
+        armyName: cuArmyName.value.trim() || null,
         password: cuPassword.value,
         role: cuRole.value,
       });
-      cuUsername.value = ''; cuDisplay.value = ''; cuPassword.value = ''; cuRole.value = 'user';
+      cuUsername.value = ''; cuDisplay.value = ''; cuArmyName.value = '';
+      cuPassword.value = ''; cuRole.value = 'user';
       toast('User created');
       refresh();
     } catch (e) {
@@ -50,9 +53,12 @@ export async function renderAdmin(state) {
   const createPanel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, el('h2', {}, 'Create User')),
     el('div', { class: 'panel-body' }, [
-      el('div', { class: 'form-row cols-4' }, [
+      el('div', { class: 'form-row cols-3' }, [
         field('Username', cuUsername),
         field('Display Name', cuDisplay),
+        field('Army Name', cuArmyName),
+      ]),
+      el('div', { class: 'form-row cols-2' }, [
         field('Password', cuPassword),
         field('Role', cuRole),
       ]),
@@ -109,6 +115,7 @@ function buildUsersTable(users, refresh) {
   const head = el('thead', {}, el('tr', {}, [
     el('th', {}, 'Username'),
     el('th', {}, 'Display Name'),
+    el('th', {}, 'Army Name'),
     el('th', {}, 'Role'),
     el('th', {}, 'Active'),
     el('th', {}, 'Created'),
@@ -137,6 +144,19 @@ function buildUsersTable(users, refresh) {
       },
     }, u.role === 'admin' ? 'Demote' : 'Promote');
 
+    const editArmy = el('button', {
+      class: 'btn small',
+      onClick: async () => {
+        const name = prompt(`Army name for "${u.username}" (blank to clear):`, u.army_name || '');
+        if (name === null) return;
+        try {
+          await admin.updateUser(u.id, { armyName: name.trim() });
+          toast('Army name updated');
+          refresh();
+        } catch (e) { toast(e.message, 'error'); }
+      },
+    }, 'Army');
+
     const resetPw = el('button', {
       class: 'btn small',
       onClick: async () => {
@@ -152,10 +172,11 @@ function buildUsersTable(users, refresh) {
     return el('tr', {}, [
       el('td', {}, u.username),
       el('td', {}, u.display_name),
+      el('td', { class: u.army_name ? '' : 'muted' }, u.army_name || '—'),
       el('td', {}, pill(u.role, u.role === 'admin' ? 'first' : '')),
       el('td', {}, pill(u.is_active ? 'active' : 'inactive', u.is_active ? 'win' : 'loss')),
       el('td', { class: 'muted', style: { fontSize: '11px' } }, String(u.created_at).slice(0, 10)),
-      el('td', {}, el('div', { class: 'btn-group' }, [toggleActive, promote, resetPw])),
+      el('td', {}, el('div', { class: 'btn-group' }, [toggleActive, promote, editArmy, resetPw])),
     ]);
   }));
   return el('table', {}, [head, body]);

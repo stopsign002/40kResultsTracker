@@ -32,7 +32,240 @@ INSERT INTO factions (name) VALUES
   ('World Eaters')
 ON CONFLICT (name) DO NOTHING;
 
--- ── Detachments (current 10e indexes / codexes) ────────────────
+-- ── Detachments (current 10e — sourced from BSData wh40k-10e) ──
+-- Append-only: ON CONFLICT DO NOTHING means re-running is safe and any
+-- legacy rows from earlier seeds linger harmlessly. If you need to prune
+-- a stale detachment, delete it via psql once games no longer reference it.
+
+-- Adepta Sororitas
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Hallowed Martyrs'),
+  ('Penitent Host'),
+  ('Bringers of Flame'),
+  ('Army of Faith'),
+  ('Champions of Faith')
+) AS d(n) WHERE factions.name = 'Adepta Sororitas' ON CONFLICT DO NOTHING;
+
+-- Adeptus Custodes
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Shield Host'),
+  ('Talons of the Emperor'),
+  ('Null Maiden Vigil'),
+  ('Auric Champions'),
+  ('Solar Spearhead'),
+  ('Lions of the Emperor')
+) AS d(n) WHERE factions.name = 'Adeptus Custodes' ON CONFLICT DO NOTHING;
+
+-- Adeptus Mechanicus
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Rad-zone Corps'),
+  ('Skitarii Hunter Cohort'),
+  ('Explorator Maniple'),
+  ('Data-psalm Conclave'),
+  ('Cohort Cybernetica'),
+  ('Haloscreed Battleclade'),
+  ('Eradication Cohort')
+) AS d(n) WHERE factions.name = 'Adeptus Mechanicus' ON CONFLICT DO NOTHING;
+
+-- Aeldari (Craftworlds + Ynnari folded together)
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Battle Host'),
+  ('Windrider Host'),
+  ('Spirit Conclave'),
+  ('Guardian Battlehost'),
+  ('Aspect Host'),
+  ('Seer Council'),
+  ('Armoured Wraith Host'),
+  ('Devoted of Ynnead')
+) AS d(n) WHERE factions.name = 'Aeldari' ON CONFLICT DO NOTHING;
+
+-- Astra Militarum
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Combined Regiment'),
+  ('Bridgehead Strike'),
+  ('Siege Regiment'),
+  ('Mechanised Assault'),
+  ('Hammer of the Emperor'),
+  ('Recon Element'),
+  ('Tempestus Drop Force')
+) AS d(n) WHERE factions.name = 'Astra Militarum' ON CONFLICT DO NOTHING;
+
+-- Black Templars
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Righteous Crusaders')
+) AS d(n) WHERE factions.name = 'Black Templars' ON CONFLICT DO NOTHING;
+
+-- Blood Angels
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Sons of Sanguinius'),
+  ('Liberator Assault Group'),
+  ('The Lost Brotherhood'),
+  ('Angelic Inheritors')
+) AS d(n) WHERE factions.name = 'Blood Angels' ON CONFLICT DO NOTHING;
+
+-- Chaos Daemons
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Daemonic Incursion'),
+  ('Legion of Excess'),
+  ('Scintillating Legion'),
+  ('Blood Legion'),
+  ('Plague Legion'),
+  ('Shadow Legion')
+) AS d(n) WHERE factions.name = 'Chaos Daemons' ON CONFLICT DO NOTHING;
+
+-- Chaos Knights
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Traitoris Lance'),
+  ('Iconoclast Lance'),
+  ('Court of Traitors')
+) AS d(n) WHERE factions.name = 'Chaos Knights' ON CONFLICT DO NOTHING;
+
+-- Chaos Space Marines
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Pactbound Zealots'),
+  ('Veterans of the Long War'),
+  ('Renegade Raiders'),
+  ('Dread Talons'),
+  ('Fellhammer Siege-host'),
+  ('Soulforged Warpack'),
+  ('Creations of Bile'),
+  ('Chaos Cult'),
+  ('Cult of the Arkifane')
+) AS d(n) WHERE factions.name = 'Chaos Space Marines' ON CONFLICT DO NOTHING;
+
+-- Dark Angels
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Unforgiven Task Force'),
+  ('Inner Circle Task Force'),
+  ('Company of Hunters'),
+  ('Lion''s Blade Task Force'),
+  ('Stormlance Task Force')
+) AS d(n) WHERE factions.name = 'Dark Angels' ON CONFLICT DO NOTHING;
+
+-- Death Guard
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Plague Company'),
+  ('Flyblown Host'),
+  ('Lords of Virulence'),
+  ('Mortarion''s Anvil'),
+  ('Bringers of Decay')
+) AS d(n) WHERE factions.name = 'Death Guard' ON CONFLICT DO NOTHING;
+
+-- Deathwatch
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Black Spear Task Force')
+) AS d(n) WHERE factions.name = 'Deathwatch' ON CONFLICT DO NOTHING;
+
+-- Drukhari
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Realspace Raid'),
+  ('Skysplinter Assault'),
+  ('Kabal of the Black Heart'),
+  ('Cult of Strife'),
+  ('Coven of the Twenty'),
+  ('Cult of the Red Grief'),
+  ('Reaper Skyfall')
+) AS d(n) WHERE factions.name = 'Drukhari' ON CONFLICT DO NOTHING;
+
+-- Emperor's Children
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Peerless Bladehost'),
+  ('Flawless Host'),
+  ('Mortal Vessels of Slaanesh'),
+  ('Carnival of Excess'),
+  ('Court of the Phoenician')
+) AS d(n) WHERE factions.name = 'Emperor''s Children' ON CONFLICT DO NOTHING;
+
+-- Genestealer Cults
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Brood Brothers'),
+  ('Ascension Day'),
+  ('Final Day'),
+  ('Biosanctic Broodsurge'),
+  ('Outlander Claw'),
+  ('Host of Ascension'),
+  ('Xenocreed Congregation')
+) AS d(n) WHERE factions.name = 'Genestealer Cults' ON CONFLICT DO NOTHING;
+
+-- Grey Knights
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Teleport Strike Force'),
+  ('Hallowed Conclave'),
+  ('Warpbane Task Force'),
+  ('Sanctic Spearhead')
+) AS d(n) WHERE factions.name = 'Grey Knights' ON CONFLICT DO NOTHING;
+
+-- Imperial Agents
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Joint Operations Detachment'),
+  ('Alien Hunters'),
+  ('Daemon Hunters'),
+  ('Purgation Force')
+) AS d(n) WHERE factions.name = 'Imperial Agents' ON CONFLICT DO NOTHING;
+
+-- Imperial Knights
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Noble Lance'),
+  ('Skyreaper Lance'),
+  ('Honoured Knights'),
+  ('Royal Court'),
+  ('Questor Forgepact')
+) AS d(n) WHERE factions.name = 'Imperial Knights' ON CONFLICT DO NOTHING;
+
+-- Leagues of Votann
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Oathband'),
+  ('Hearthkyn Yeomanry'),
+  ('Hearthfyre Arsenal')
+) AS d(n) WHERE factions.name = 'Leagues of Votann' ON CONFLICT DO NOTHING;
+
+-- Necrons
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Awakened Dynasty'),
+  ('Annihilation Legion'),
+  ('Canoptek Court'),
+  ('Obeisance Phalanx'),
+  ('Hypercrypt Legion'),
+  ('Starshatter Arsenal'),
+  ('Cryptek Conclave'),
+  ('Cursed Legion')
+) AS d(n) WHERE factions.name = 'Necrons' ON CONFLICT DO NOTHING;
+
+-- Orks
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('War Horde'),
+  ('Bully Boyz'),
+  ('Dread Mob'),
+  ('Green Tide'),
+  ('Kult of Speed'),
+  ('Taktikal Brigade'),
+  ('Kommando Skirmish'),
+  ('Da Big Hunt'),
+  ('More Dakka!')
+) AS d(n) WHERE factions.name = 'Orks' ON CONFLICT DO NOTHING;
+
 -- Space Marines
 INSERT INTO detachments (faction_id, name)
 SELECT id, n FROM factions, (VALUES
@@ -42,144 +275,60 @@ SELECT id, n FROM factions, (VALUES
   ('1st Company Task Force'),
   ('Firestorm Assault Force'),
   ('Ironstorm Spearhead'),
-  ('Vanguard Spearhead')
-) AS d(n) WHERE factions.name = 'Space Marines'
-ON CONFLICT DO NOTHING;
-
--- Black Templars
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Righteous Crusaders')) AS d(n)
-WHERE factions.name = 'Black Templars' ON CONFLICT DO NOTHING;
-
--- Blood Angels
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Sons of Sanguinius'), ('Liberator Assault Group'), ('Lost Brotherhood')) AS d(n)
-WHERE factions.name = 'Blood Angels' ON CONFLICT DO NOTHING;
-
--- Dark Angels
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Unforgiven Task Force'), ('Inner Circle Task Force'), ('Company of Hunters'), ('Lion''s Blade Task Force'), ('Stormlance Task Force')) AS d(n)
-WHERE factions.name = 'Dark Angels' ON CONFLICT DO NOTHING;
+  ('Vanguard Spearhead'),
+  ('Librarius Conclave')
+) AS d(n) WHERE factions.name = 'Space Marines' ON CONFLICT DO NOTHING;
 
 -- Space Wolves
 INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Champions of Russ')) AS d(n)
-WHERE factions.name = 'Space Wolves' ON CONFLICT DO NOTHING;
-
--- Deathwatch
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Black Spear Task Force')) AS d(n)
-WHERE factions.name = 'Deathwatch' ON CONFLICT DO NOTHING;
-
--- Grey Knights
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Teleport Strike Force')) AS d(n)
-WHERE factions.name = 'Grey Knights' ON CONFLICT DO NOTHING;
-
--- Adepta Sororitas
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Hallowed Martyrs'), ('Bringers of Flame'), ('Penitent Host'), ('Champions of the Faith'), ('Army of Faith')) AS d(n)
-WHERE factions.name = 'Adepta Sororitas' ON CONFLICT DO NOTHING;
-
--- Adeptus Custodes
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Shield Host'), ('Lions of the Emperor'), ('Auric Champions'), ('Solar Spearhead'), ('Talons of the Emperor')) AS d(n)
-WHERE factions.name = 'Adeptus Custodes' ON CONFLICT DO NOTHING;
-
--- Adeptus Mechanicus
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Skitarii Hunter Cohort'), ('Explorator Maniple'), ('Rad-zone Corps'), ('Data-psalm Conclave'), ('Cohort Cybernetica')) AS d(n)
-WHERE factions.name = 'Adeptus Mechanicus' ON CONFLICT DO NOTHING;
-
--- Astra Militarum
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Combined Regiment'), ('Bridgehead Strike'), ('Mechanised Assault'), ('Recon Element'), ('Hammer of the Emperor'), ('Siege Regiment')) AS d(n)
-WHERE factions.name = 'Astra Militarum' ON CONFLICT DO NOTHING;
-
--- Imperial Knights
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Noble Lance'), ('Skyreaper Lance'), ('Honoured Knights'), ('Royal Court')) AS d(n)
-WHERE factions.name = 'Imperial Knights' ON CONFLICT DO NOTHING;
-
--- Imperial Agents
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Joint Operations Detachment')) AS d(n)
-WHERE factions.name = 'Imperial Agents' ON CONFLICT DO NOTHING;
-
--- Aeldari
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Battle Host'), ('Windrider Host'), ('Armoured Wraith Host'), ('Seer Council'), ('Devoted of Ynnead'), ('Aspect Host'), ('Guardian Battlehost')) AS d(n)
-WHERE factions.name = 'Aeldari' ON CONFLICT DO NOTHING;
-
--- Drukhari
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Realspace Raid'), ('Skysplinter Assault'), ('Kabal of the Black Heart'), ('Cult of Strife'), ('Coven of the Twenty'), ('Cult of the Red Grief'), ('Reaper Skyfall')) AS d(n)
-WHERE factions.name = 'Drukhari' ON CONFLICT DO NOTHING;
-
--- Genestealer Cults
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Brood Brothers'), ('Ascension Day'), ('Final Day'), ('Biosanctic Broodsurge'), ('Outlander Claw'), ('Host of Ascension'), ('Xenocreed Congregation')) AS d(n)
-WHERE factions.name = 'Genestealer Cults' ON CONFLICT DO NOTHING;
-
--- Leagues of Votann
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Oathband'), ('Hearthkyn Yeomanry')) AS d(n)
-WHERE factions.name = 'Leagues of Votann' ON CONFLICT DO NOTHING;
-
--- Necrons
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Awakened Dynasty'), ('Canoptek Court'), ('Hypercrypt Legion'), ('Annihilation Legion'), ('Obeisance Phalanx'), ('Starshatter Arsenal'), ('Living Metal Cohort')) AS d(n)
-WHERE factions.name = 'Necrons' ON CONFLICT DO NOTHING;
-
--- Orks
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('War Horde'), ('Bully Boyz'), ('Dread Mob'), ('Green Tide'), ('Kult of Speed'), ('Taktikal Brigade'), ('Kommando Skirmish'), ('Da Big Hunt')) AS d(n)
-WHERE factions.name = 'Orks' ON CONFLICT DO NOTHING;
+SELECT id, n FROM factions, (VALUES
+  ('Champions of Russ'),
+  ('Champions of Fenris')
+) AS d(n) WHERE factions.name = 'Space Wolves' ON CONFLICT DO NOTHING;
 
 -- T'au Empire
 INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Mont''ka'), ('Kauyon'), ('Retaliation Cadre'), ('Kroot Hunting Pack'), ('Auxiliary Cadre'), ('Ranged Support Cadre'), ('Experimental Cadre')) AS d(n)
-WHERE factions.name = 'T''au Empire' ON CONFLICT DO NOTHING;
-
--- Tyranids
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Invasion Fleet'), ('Vanguard Onslaught'), ('Crusher Stampede'), ('Assimilation Swarm'), ('Endless Multitude'), ('Synaptic Nexus'), ('Unending Swarm'), ('Warrior Bioform Onslaught')) AS d(n)
-WHERE factions.name = 'Tyranids' ON CONFLICT DO NOTHING;
-
--- Chaos Space Marines
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Chaos Lord''s Warband'), ('Pactbound Zealots'), ('Veterans of the Long War'), ('Renegade Raiders'), ('Soulforged Warpack'), ('Dread Talons'), ('Fellhammer Siege-host'), ('Creations of Bile')) AS d(n)
-WHERE factions.name = 'Chaos Space Marines' ON CONFLICT DO NOTHING;
-
--- Chaos Daemons
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Daemonic Incursion'), ('Pandaemonium'), ('Mortal Vessels'), ('Daemonic Champions'), ('Court of Glory')) AS d(n)
-WHERE factions.name = 'Chaos Daemons' ON CONFLICT DO NOTHING;
-
--- Chaos Knights
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Iconoclast Lance'), ('Traitoris Lance'), ('Court of Traitors')) AS d(n)
-WHERE factions.name = 'Chaos Knights' ON CONFLICT DO NOTHING;
-
--- Death Guard
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Plague Company'), ('Flyblown Host'), ('Lords of Virulence'), ('Mortarion''s Anvil'), ('Bringers of Decay')) AS d(n)
-WHERE factions.name = 'Death Guard' ON CONFLICT DO NOTHING;
+SELECT id, n FROM factions, (VALUES
+  ('Mont''ka'),
+  ('Kauyon'),
+  ('Retaliation Cadre'),
+  ('Kroot Hunting Pack'),
+  ('Auxiliary Cadre'),
+  ('Ranged Support Cadre'),
+  ('Experimental Cadre')
+) AS d(n) WHERE factions.name = 'T''au Empire' ON CONFLICT DO NOTHING;
 
 -- Thousand Sons
 INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Hexwarp Thrallband'), ('Cult of Magic'), ('Tzaangor Coven'), ('Cult of Mutation'), ('Cult of Time')) AS d(n)
-WHERE factions.name = 'Thousand Sons' ON CONFLICT DO NOTHING;
+SELECT id, n FROM factions, (VALUES
+  ('Hexwarp Thrallband'),
+  ('Cult of Magic'),
+  ('Tzaangor Coven'),
+  ('Cult of Mutation'),
+  ('Cult of Time'),
+  ('Warpmeld Pact')
+) AS d(n) WHERE factions.name = 'Thousand Sons' ON CONFLICT DO NOTHING;
+
+-- Tyranids
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Invasion Fleet'),
+  ('Vanguard Onslaught'),
+  ('Crusher Stampede'),
+  ('Assimilation Swarm'),
+  ('Endless Multitude'),
+  ('Synaptic Nexus'),
+  ('Unending Swarm'),
+  ('Warrior Bioform Onslaught')
+) AS d(n) WHERE factions.name = 'Tyranids' ON CONFLICT DO NOTHING;
 
 -- World Eaters
 INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Berzerker Warband'), ('Vessels of Wrath'), ('Slaughterbound')) AS d(n)
-WHERE factions.name = 'World Eaters' ON CONFLICT DO NOTHING;
-
--- Emperor's Children
-INSERT INTO detachments (faction_id, name)
-SELECT id, n FROM factions, (VALUES ('Peerless Bladehost'), ('Flawless Host'), ('Slaaneshi Host'), ('Mortal Vessels of Slaanesh')) AS d(n)
-WHERE factions.name = 'Emperor''s Children' ON CONFLICT DO NOTHING;
+SELECT id, n FROM factions, (VALUES
+  ('Berzerker Warband'),
+  ('Vessels of Wrath'),
+  ('Slaughterbound')
+) AS d(n) WHERE factions.name = 'World Eaters' ON CONFLICT DO NOTHING;
 
 -- ── Mission Packs ──────────────────────────────────────────────
 INSERT INTO mission_packs (name) VALUES
@@ -267,14 +416,27 @@ SELECT id, n, 'fixed' FROM mission_packs, (VALUES
   ('Cull the Horde (Fixed)')
 ) AS s(n) WHERE mission_packs.name = 'Pariah Nexus' ON CONFLICT DO NOTHING;
 
--- Pariah Nexus challenger / "Gambit" cards
+-- Pariah Nexus Secret Missions (Tournament Companion 2024)
+-- These replaced the old Leviathan-style "Gambits". Four cards exist; each
+-- player draws all four and picks one as their Secret Mission for the game.
+-- First, prune any obsolete placeholder names if no game references them.
+DELETE FROM challenger_cards
+WHERE name IN (
+  'No Mercy, No Respite',
+  'Recover the Relics',
+  'Storm Hostile Objective',
+  'Defend Stronghold',
+  'Behind Enemy Lines'
+)
+  AND mission_pack_id = (SELECT id FROM mission_packs WHERE name = 'Pariah Nexus')
+  AND NOT EXISTS (SELECT 1 FROM player_challengers pc WHERE pc.card_id = challenger_cards.id);
+
 INSERT INTO challenger_cards (mission_pack_id, name)
 SELECT id, n FROM mission_packs, (VALUES
-  ('No Mercy, No Respite'),
-  ('Behind Enemy Lines'),
-  ('Recover the Relics'),
-  ('Storm Hostile Objective'),
-  ('Defend Stronghold')
+  ('Command Insertion'),
+  ('War of Attrition'),
+  ('Unbroken Wall'),
+  ('Shatter Cohesion')
 ) AS c(n) WHERE mission_packs.name = 'Pariah Nexus' ON CONFLICT DO NOTHING;
 
 -- ── Leviathan (predecessor; for historical games) ──────────────

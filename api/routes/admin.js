@@ -8,24 +8,24 @@ router.use(requireAdmin);
 
 router.get('/users', async (_req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, username, display_name, role, is_active, created_at
+    `SELECT id, username, display_name, role, is_active, army_name, created_at
      FROM users ORDER BY created_at`
   );
   res.json(rows);
 });
 
 router.post('/users', async (req, res) => {
-  const { username, displayName, password, role } = req.body || {};
+  const { username, displayName, password, role, armyName } = req.body || {};
   if (!username || !password || !displayName) return res.status(400).json({ error: 'missing fields' });
   if (password.length < 8) return res.status(400).json({ error: 'password must be 8+ characters' });
   const r = role === 'admin' ? 'admin' : 'user';
   const hash = await hashPassword(password);
   try {
     const { rows } = await pool.query(
-      `INSERT INTO users (username, display_name, password_hash, role, is_active)
-       VALUES ($1, $2, $3, $4, TRUE)
-       RETURNING id, username, display_name, role, is_active, created_at`,
-      [username, displayName, hash, r]
+      `INSERT INTO users (username, display_name, password_hash, role, is_active, army_name)
+       VALUES ($1, $2, $3, $4, TRUE, $5)
+       RETURNING id, username, display_name, role, is_active, army_name, created_at`,
+      [username, displayName, hash, r, armyName || null]
     );
     res.json(rows[0]);
   } catch (e) {
@@ -36,13 +36,14 @@ router.post('/users', async (req, res) => {
 
 router.patch('/users/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const { displayName, role, isActive, password } = req.body || {};
+  const { displayName, role, isActive, password, armyName } = req.body || {};
   const sets = [];
   const vals = [];
   let i = 1;
   if (displayName !== undefined) { sets.push(`display_name = $${i++}`); vals.push(displayName); }
   if (role !== undefined) { sets.push(`role = $${i++}`); vals.push(role === 'admin' ? 'admin' : 'user'); }
   if (isActive !== undefined) { sets.push(`is_active = $${i++}`); vals.push(!!isActive); }
+  if (armyName !== undefined) { sets.push(`army_name = $${i++}`); vals.push(armyName || null); }
   if (password) {
     if (password.length < 8) return res.status(400).json({ error: 'password must be 8+ characters' });
     sets.push(`password_hash = $${i++}`);
@@ -52,7 +53,7 @@ router.patch('/users/:id', async (req, res) => {
   vals.push(id);
   const { rows } = await pool.query(
     `UPDATE users SET ${sets.join(', ')} WHERE id = $${i}
-     RETURNING id, username, display_name, role, is_active, created_at`,
+     RETURNING id, username, display_name, role, is_active, army_name, created_at`,
     vals
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
