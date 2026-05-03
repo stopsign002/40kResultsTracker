@@ -1,9 +1,20 @@
+// @ts-check
+/** @import { PlayerPayload, GamePayload } from '../types.js' */
+
 // Pure helpers used by routes/games.js. Kept here (not inline in the route)
 // so the smoke tests can import them without spinning up the whole HTTP
 // stack. See api/test/game-scoring.test.js.
 
-// Operates on the request payload, which is camelCase (primaryScore,
-// roundNumber, etc.) — NOT on DB rows. See CLAUDE.md "Common pitfalls".
+/**
+ * Operates on the request payload, which is camelCase (primaryScore,
+ * roundNumber, etc.) — NOT on DB rows. See CLAUDE.md "Common pitfalls".
+ *
+ * Mutates each player in place: sets `r.secondaryScore` per round,
+ * `p.finalScore` per player, and (for two-player games) the `result` field.
+ *
+ * @param {PlayerPayload[]} players
+ * @returns {void}
+ */
 export function computeFinalScores(players) {
   for (const p of players) {
     // Compute per-round secondary_score from player_secondaries + challengers
@@ -33,6 +44,13 @@ export function computeFinalScores(players) {
   }
 }
 
+/**
+ * Throws if the inbound game payload is missing required fields. Run before
+ * computeFinalScores / insertPlayerChildren / etc.
+ *
+ * @param {Partial<GamePayload>} body
+ * @returns {void}
+ */
 export function validateGameInput(body) {
   if (!body.playedAt) throw new Error('playedAt required');
   if (!body.pointsLimit) throw new Error('pointsLimit required');

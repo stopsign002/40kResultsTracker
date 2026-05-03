@@ -1,12 +1,19 @@
+// @ts-check
 import { pool } from './db.js';
 
-// Append a single audit_log row. Designed to be fire-and-forget — never
-// throws; an audit-write failure must not block the actual operation.
-//
-// Usage from inside a route handler:
-//   await audit(req, 'game.create', { type: 'game', id: gameId, payload: { ... } });
-//
-// `payload` is anything JSON-serialisable; keep it small (a few key fields).
+/**
+ * Append a single audit_log row. Designed to be fire-and-forget — never
+ * throws; an audit-write failure must not block the actual operation.
+ *
+ * Usage from inside a route handler:
+ *   await audit(req, 'game.create', { type: 'game', id: gameId, payload: { ... } });
+ *
+ * @param {{ session?: { userId?: number, username?: string } }} req  Express req-like
+ * @param {string} action      e.g. 'game.create', 'auth.login'
+ * @param {{ type?: string|null, id?: number|null, payload?: object|null }} [opts]
+ *   payload is anything JSON-serialisable; keep it small (a few key fields).
+ * @returns {Promise<void>}
+ */
 export async function audit(req, action, opts = {}) {
   const { type = null, id = null, payload = null } = opts;
   const actorUserId = req?.session?.userId ?? null;

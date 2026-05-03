@@ -1,3 +1,4 @@
+// @ts-check
 import pg from 'pg';
 import fs from 'fs';
 import path from 'path';
@@ -5,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+/** Shared connection pool. Use directly for one-off queries; use {@link withTx} for transactions. */
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -20,6 +22,14 @@ export async function initSchema() {
   await pool.query(seed);
 }
 
+/**
+ * Run a callback inside a BEGIN/COMMIT (or ROLLBACK) transaction. Pass the
+ * `client` to inner queries so they share the same connection.
+ *
+ * @template T
+ * @param {(client: import('pg').PoolClient) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
 export async function withTx(fn) {
   const client = await pool.connect();
   try {

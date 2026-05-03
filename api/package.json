@@ -6,7 +6,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
