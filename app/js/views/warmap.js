@@ -102,6 +102,53 @@ const HUD_FAINT = 'rgba(120, 220, 255, 0.10)';
 const HUD_AMBER = 'rgba(255, 190, 80, 0.95)';
 const HUD_BG    = '#020610';
 
+// ── Faction glyph (single character) drawn over the fortress diamond ──
+// Rendered via canvas fillText so no font work needed beyond the existing
+// monospace stack. Falls back to a dot when a faction isn't mapped.
+const FACTION_GLYPH = {
+  // Imperium: aquila-cross
+  'Space Marines': '⚔', 'Adeptus Custodes': '✠', 'Adeptus Mechanicus': '⚙',
+  'Imperial Agents': '⚖', 'Adepta Sororitas': '✠', 'Astra Militarum': '✚',
+  'Grey Knights': '✠', 'Deathwatch': '⚔', 'Imperial Knights': '♜',
+  'Black Templars': '✠', 'Blood Angels': '♥', 'Dark Angels': '✠',
+  'Space Wolves': 'Ψ',
+  // Chaos: 8-pointed star (★) and themed god marks
+  'Chaos Space Marines': '✪', 'Chaos Daemons': '✪', 'Chaos Knights': '♜',
+  'Death Guard': '☣', 'Thousand Sons': 'ψ', 'World Eaters': '☠',
+  "Emperor's Children": '♫',
+  // Xenos
+  'Necrons': '☥', 'Tyranids': '⚷', "T'au Empire": 'Τ',
+  'Orks': '☠', 'Aeldari': '◇', 'Drukhari': '◆',
+  'Genestealer Cults': '✦', 'Leagues of Votann': '⚒',
+};
+
+// ── Procedural territory naming ──────────────────────────────────────
+// Each territory ID gets a deterministic name from MAP_SEED + index.
+// Used by the hover tooltip and could be surfaced elsewhere later.
+const TERRITORY_PREFIX = [
+  'Ironcleft', 'Skull', 'Ash', 'Bone', 'Black', 'Crimson', 'Pale', 'Iron',
+  'Ember', 'Glass', 'Frost', 'Cinder', 'Hollow', 'Ruin', 'Storm', 'Salt',
+  'Rust', 'Coil', 'Veil', 'Wraith', 'Hex', 'Fang', 'Ivory', 'Brass',
+  'Verdant', 'Withered', 'Howling', 'Sunken', 'Forsaken', 'Burning',
+  'Shattered', 'Echoing', 'Ancient', 'Untamed',
+];
+const TERRITORY_SUFFIX = [
+  'Hive', 'Plains', 'Reach', 'Wastes', 'Belt', 'Spur', 'Fields', 'Hold',
+  'Spire', 'Run', 'Drift', 'March', 'Basin', 'Marches', 'Fastness',
+  'Crater', 'Expanse', 'Vale', 'Ridge', 'Shore', 'Causeway', 'Steppe',
+  'Reef', 'Hollow', 'Pass', 'Tract', 'Heath', 'Salient', 'Approach',
+];
+
+function territoryName(idx) {
+  const rng = seededRng(MAP_SEED ^ ((idx + 1) * 2654435761));
+  const p = TERRITORY_PREFIX[Math.floor(rng() * TERRITORY_PREFIX.length)];
+  const s = TERRITORY_SUFFIX[Math.floor(rng() * TERRITORY_SUFFIX.length)];
+  // Append a sector code so duplicate prefix+suffix combos still differ
+  const sectorN = Math.floor(rng() * 99) + 1;
+  const sectorL = String.fromCharCode(65 + Math.floor(rng() * 26));
+  return `${p} ${s} ${sectorN}${sectorL}`;
+}
+
 function hexToRgb(hex) {
   const r = parseInt(hex.slice(1,3), 16);
   const g = parseInt(hex.slice(3,5), 16);
@@ -444,6 +491,19 @@ export async function renderWarmap(_state) {
   const canvas = el('canvas', { id: 'warmap-canvas' });
   canvasWrapper.appendChild(canvas);
 
+  // Tooltip floats above the canvas on pointer move (#14). It's positioned
+  // absolutely within canvasWrapper, which is `position: relative` (already
+  // set in the wrapper style). Kept hidden until first hover.
+  const tooltip = el('div', { class: 'warmap-tooltip', style: { display: 'none' } });
+  canvasWrapper.appendChild(tooltip);
+
+  // Legend toggle (#17): a small "?" button bottom-left of the canvas
+  // that pops a panel mapping faction abbreviations → full names.
+  const legendBtn = el('button', { type: 'button', class: 'warmap-legend-toggle', title: 'Faction key' }, '?');
+  const legendPanel = el('div', { class: 'warmap-legend-panel', style: { display: 'none' } });
+  canvasWrapper.appendChild(legendBtn);
+  canvasWrapper.appendChild(legendPanel);
+
   // Always compute at the fixed virtual resolution; CSS scales the rendered
   // bitmap to fit the container. Two devices with different widths still
   // see byte-identical territory geometry and faction allocation.
@@ -453,11 +513,85 @@ export async function renderWarmap(_state) {
   canvas.style.width = '100%';
   canvas.style.height = 'auto';
   canvas.style.maxWidth = VIRTUAL_W + 'px';
+
+  let mapState = null;
   requestAnimationFrame(() => {
-    drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H);
+    mapState = drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H);
+    populateLegend(legendPanel, mapState);
+  });
+
+  // ── Hover tooltip ──────────────────────────────────────────
+  canvas.addEventListener('mousemove', (e) => {
+    if (!mapState) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
+    const gx = Math.floor(sx / mapState.CELL);
+    const gy = Math.floor(sy / mapState.CELL);
+    const tid = mapState.ownership[gy * mapState.GW + gx];
+    if (tid == null || tid < 0) {
+      tooltip.style.display = 'none';
+      return;
+    }
+    const ownerKey = mapState.owner[tid];
+    const u = ownerKey ? mapState.unitMeta[ownerKey] : null;
+    const name = territoryName(tid);
+    const lines = [
+      `<div class="t-title">${escapeHtml(name)}</div>`,
+      u
+        ? `<div class="t-banner">${escapeHtml(u.army_name || u.player_name)}</div>
+           <div class="t-faction">${escapeHtml(u.faction)}</div>
+           <div class="t-record">${u.wins}W · ${u.losses}L · ${u.draws}D · ${u.win_rate}%</div>`
+        : `<div class="t-banner muted">Unclaimed</div>`,
+    ].join('');
+    tooltip.innerHTML = lines;
+    // Position relative to the canvasWrapper (the offset parent for
+    // absolutely-positioned children).
+    const wrapperRect = canvasWrapper.getBoundingClientRect();
+    const tx = e.clientX - wrapperRect.left + 12;
+    const ty = e.clientY - wrapperRect.top + 12;
+    tooltip.style.display = 'block';
+    tooltip.style.left = tx + 'px';
+    tooltip.style.top = ty + 'px';
+  });
+  canvas.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+
+  // ── Legend toggle ──────────────────────────────────────────
+  legendBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    legendPanel.style.display = legendPanel.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', (e) => {
+    if (!canvasWrapper.contains(e.target)) legendPanel.style.display = 'none';
   });
 
   return root;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function populateLegend(panel, mapState) {
+  if (!mapState) return;
+  // Distinct factions present + their full → abbrev mapping
+  const factions = [...new Set(Object.values(mapState.unitMeta).map(u => u.faction))].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0);
+  panel.innerHTML = '<div class="legend-title">Faction Key</div>';
+  for (const f of factions) {
+    const col = FACTION_COLOURS[f] || '#888';
+    const row = document.createElement('div');
+    row.className = 'legend-row';
+    row.innerHTML = `
+      <div class="legend-swatch" style="background:${col};box-shadow:0 0 4px ${col}"></div>
+      <div class="legend-glyph">${FACTION_GLYPH[f] || '•'}</div>
+      <div class="legend-abbrev">${escapeHtml(abbreviate(f))}</div>
+      <div class="legend-name">${escapeHtml(f)}</div>
+    `;
+    panel.appendChild(row);
+  }
 }
 
 function drawTacticalMap(canvas, units, W, H) {
@@ -486,7 +620,7 @@ function drawTacticalMap(canvas, units, W, H) {
   // ── Step 4: home fortress markers + labels ───────────────────
   for (const [k, tid] of Object.entries(homeOf)) {
     const u = unitMeta[k];
-    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[u?.faction] || '#fff');
+    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[u?.faction] || '#fff', FACTION_GLYPH[u?.faction]);
   }
   drawLabels(ctx, sites, unitMeta, homeOf);
 
@@ -495,6 +629,9 @@ function drawTacticalMap(canvas, units, W, H) {
   drawCornerBrackets(ctx, W, H);
   drawCompass(ctx, 50, H - 60);
   drawReadout(ctx, W, H, units, sites.length);
+
+  // Return state for the hover/tooltip handler set up in renderWarmap.
+  return { ownership, owner, unitMeta, GW, GH, CELL, sites };
 }
 
 function drawBackdrop(ctx, W, H) {
@@ -599,7 +736,7 @@ function drawSegment(ctx, x1, y1, x2, y2, sameFaction) {
   ctx.stroke();
 }
 
-function drawFortress(ctx, cx, cy, col) {
+function drawFortress(ctx, cx, cy, col, glyph) {
   ctx.save();
   ctx.translate(cx, cy);
   // Diamond marker, slightly larger than territory border
@@ -607,27 +744,37 @@ function drawFortress(ctx, cx, cy, col) {
   ctx.shadowBlur = 10;
   ctx.fillStyle = col;
   ctx.beginPath();
-  ctx.moveTo(0, -8);
-  ctx.lineTo(8, 0);
-  ctx.lineTo(0, 8);
-  ctx.lineTo(-8, 0);
+  ctx.moveTo(0, -10);
+  ctx.lineTo(10, 0);
+  ctx.lineTo(0, 10);
+  ctx.lineTo(-10, 0);
   ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
-  // Inner ring
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Cross-hairs
+
+  // Cross-hairs (outside the diamond)
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 0.8;
   ctx.beginPath();
-  ctx.moveTo(-11, 0); ctx.lineTo(-9, 0);
-  ctx.moveTo(9, 0);   ctx.lineTo(11, 0);
-  ctx.moveTo(0, -11); ctx.lineTo(0, -9);
-  ctx.moveTo(0, 9);   ctx.lineTo(0, 11);
+  ctx.moveTo(-13, 0); ctx.lineTo(-11, 0);
+  ctx.moveTo(11, 0);  ctx.lineTo(13, 0);
+  ctx.moveTo(0, -13); ctx.lineTo(0, -11);
+  ctx.moveTo(0, 11);  ctx.lineTo(0, 13);
   ctx.stroke();
+
+  // Faction glyph centred in the diamond. Falls back to a small white dot.
+  if (glyph) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 12px "Consolas", "Segoe UI Symbol", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(glyph, 0, 1);
+  } else {
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
