@@ -22,7 +22,7 @@ if (typeof Chart !== 'undefined') {
 export async function renderStats(_state) {
   const root = el('div', { class: 'fade-in' });
 
-  const [overview, factionWR, playerWR, factions, firstTurn, secondaryAvg, matchups, trends] = await Promise.all([
+  const [overview, factionWR, playerWR, factions, firstTurn, secondaryAvg, matchups, trends, calendar] = await Promise.all([
     stats.overview(),
     stats.factionWinRates(),
     stats.playerWinRates(),
@@ -31,6 +31,7 @@ export async function renderStats(_state) {
     stats.secondaryAverages(),
     stats.factionMatchups(),
     stats.trends(),
+    stats.calendar(),
   ]);
 
   // ── KPI row ─────────────────────────────────────────────
@@ -77,6 +78,14 @@ export async function renderStats(_state) {
     el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '12px' } },
       'Row vs column. Green = row faction wins more often, red = loses, grey = small sample. Hover a cell for details.'),
     buildMatchupHeatmap(matchups, factions),
+  ]);
+
+  // ── Calendar heatmap ────────────────────────────────────
+  const calendarPanel = el('div', { class: 'stat-card', style: { gridColumn: '1 / -1' } }, [
+    el('h3', {}, 'Activity Calendar'),
+    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '12px' } },
+      'Days played in the last year. Click a day to filter the games list to that date.'),
+    buildCalendarHeatmap(calendar),
   ]);
 
   // ── Trends over time ────────────────────────────────────
@@ -150,7 +159,7 @@ export async function renderStats(_state) {
   ]);
 
   const grid = el('div', { class: 'stats-grid' }, [
-    factionPanel, playerPanel, firstTurnPanel, h2hPanel, drilldownPanel, secondaryPanel, matchupPanel, trendsPanel,
+    factionPanel, playerPanel, firstTurnPanel, h2hPanel, drilldownPanel, secondaryPanel, calendarPanel, matchupPanel, trendsPanel,
   ]);
 
   root.appendChild(kpiRow);
@@ -636,4 +645,87 @@ function colorFor(pct) {
   if (pct >= 45) return chartTheme.info;
   if (pct >= 35) return chartTheme.warning;
   return chartTheme.danger;
+}
+
+// ── Calendar heatmap (#9) ─────────────────────────────────
+// GitHub-style: 7 rows (days of week, Sun → Sat), N columns (one per week
+// in the requested range). Each cell shaded by game count for that day.
+function buildCalendarHeatmap(data) {
+  const days = data.days || 365;
+  const rangeEnd = new Date(data.range_end || new Date().toISOString().slice(0, 10));
+  // Snap to the most recent Saturday so the columns line up cleanly
+  const end = new Date(rangeEnd);
+  end.setDate(end.getDate() + (6 - end.getDay()));
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days + end.getDay()));
+
+  const counts = new Map(data.rows.map(r => [r.date, r.games]));
+  const maxCount = Math.max(1, ...data.rows.map(r => r.games));
+
+  // Build columns
+  const weeks = [];
+  let cursor = new Date(start);
+  while (cursor <= end) {
+    const week = [];
+    for (let i = 0; i < 7; i++) {
+      const dateStr = cursor.toISOString().slice(0, 10);
+      week.push({ date: dateStr, games: counts.get(dateStr) || 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    weeks.push(week);
+  }
+
+  function shade(games) {
+    if (!games) return '#22222a';
+    const t = Math.min(1, games / maxCount);
+    // Cyan ramp from dim to saturated
+    const r = Math.round(40 + (120 - 40) * t);
+    const g = Math.round(80 + (220 - 80) * t);
+    const b = Math.round(120 + (255 - 120) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  const cellSize = 11, gap = 2;
+  const wrapper = el('div', { style: { overflowX: 'auto', paddingBottom: '6px' } });
+  const dowLabels = el('div', { style: { display: 'inline-flex', flexDirection: 'column', gap: gap + 'px', marginRight: '6px', verticalAlign: 'top' } },
+    ['', 'Mon', '', 'Wed', '', 'Fri', ''].map(d => el('div', {
+      style: { height: cellSize + 'px', fontSize: '9px', color: 'var(--text-muted)', lineHeight: cellSize + 'px' },
+    }, d)));
+  const weeksContainer = el('div', { style: { display: 'inline-flex', gap: gap + 'px' } },
+    weeks.map(week => el('div', { style: { display: 'flex', flexDirection: 'column', gap: gap + 'px' } },
+      week.map(day => el('div', {
+        title: `${day.date}: ${day.games} game${day.games === 1 ? '' : 's'}`,
+        style: {
+          width: cellSize + 'px', height: cellSize + 'px',
+          background: shade(day.games),
+          border: '1px solid rgba(0,0,0,0.4)',
+          borderRadius: '2px',
+          cursor: day.games ? 'pointer' : 'default',
+        },
+        onClick: () => {
+          if (day.games) {
+            window.__nav(`/games?dateFrom=${day.date}&dateTo=${day.date}`);
+          }
+        },
+      })))));
+
+  const row = el('div', { style: { display: 'flex', alignItems: 'flex-start' } }, [dowLabels, weeksContainer]);
+
+  // Legend
+  const legend = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' } }, [
+    el('span', {}, 'Less'),
+    ...[0, 0.25, 0.5, 0.75, 1].map(t => el('div', {
+      style: {
+        width: cellSize + 'px', height: cellSize + 'px',
+        background: shade(Math.round(t * maxCount)),
+        border: '1px solid rgba(0,0,0,0.4)',
+        borderRadius: '2px',
+      },
+    })),
+    el('span', {}, 'More'),
+  ]);
+
+  wrapper.appendChild(row);
+  wrapper.appendChild(legend);
+  return wrapper;
 }

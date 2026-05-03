@@ -299,6 +299,22 @@ router.get('/trends', async (_req, res) => {
   });
 });
 
+// ── Calendar heatmap data ───────────────────────────────────
+// Returns one row per date that has at least one game, with the count.
+// Default range: last 365 days. Client renders a GitHub-style year grid.
+router.get('/calendar', async (req, res) => {
+  const days = Math.min(parseInt(req.query.days, 10) || 365, 730);
+  const { rows } = await pool.query(`
+    SELECT g.played_at::text AS date, COUNT(*)::int AS games
+    FROM games g
+    WHERE g.hidden_from_stats = FALSE
+      AND g.played_at >= CURRENT_DATE - INTERVAL '${days} days'
+    GROUP BY g.played_at
+    ORDER BY g.played_at
+  `);
+  res.json({ days, range_end: new Date().toISOString().slice(0, 10), rows });
+});
+
 // ── Per-player profile ──────────────────────────────────────
 // :playerKey is either "user:<id>" or "guest:<name>". Returns:
 //   - identity (display name, army name)

@@ -84,6 +84,7 @@ export const stats = {
   detachmentWinRates:     (factionId) => api.get('/stats/detachment-winrates' + (factionId ? '?factionId=' + factionId : '')),
   trends:                 () => api.get('/stats/trends'),
   player:                 (playerKey) => api.get('/stats/player/' + encodeURIComponent(playerKey)),
+  calendar:               (days) => api.get('/stats/calendar' + (days ? '?days=' + days : '')),
 };
 
 export const admin = {
