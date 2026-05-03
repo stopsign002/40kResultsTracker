@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { verifyPassword, hashPassword, requireAuth } from '../lib/auth.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ router.post('/login', async (req, res) => {
   req.session.username = u.username;
   req.session.displayName = u.display_name;
   req.session.role = u.role;
+  await audit(req, 'auth.login', { type: 'user', id: u.id });
   res.json({ id: u.id, username: u.username, displayName: u.display_name, role: u.role });
 });
 
@@ -77,6 +79,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
   if (!ok) return res.status(401).json({ error: 'wrong current password' });
   const hash = await hashPassword(newPassword);
   await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.session.userId]);
+  await audit(req, 'auth.change_password', { type: 'user', id: req.session.userId });
   res.json({ ok: true });
 });
 

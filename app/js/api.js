@@ -93,6 +93,7 @@ export const admin = {
   updateUser:   (id, data) => api.patch(`/admin/users/${id}`, data),
   setVisibility:(gameId, hidden) => api.patch(`/admin/games/${gameId}/visibility`, { hidden }),
   deleteGame:   (gameId) => api.del(`/admin/games/${gameId}`),
+  audit:        (limit) => api.get('/admin/audit' + (limit ? '?limit=' + limit : '')),
 };
 
 function qstr(q) {

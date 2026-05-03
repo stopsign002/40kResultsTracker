@@ -99,12 +99,66 @@ export async function renderAdmin(state) {
     usersList,
   ]);
 
+  // Audit log viewer
+  const auditBody = el('div', { class: 'panel-body' }, 'Loading…');
+  async function refreshAudit() {
+    clear(auditBody);
+    auditBody.appendChild(el('div', { class: 'muted' }, 'Loading…'));
+    try {
+      const rows = await admin.audit(200);
+      clear(auditBody);
+      auditBody.appendChild(buildAuditTable(rows));
+    } catch (e) {
+      clear(auditBody);
+      auditBody.appendChild(el('div', { class: 'error-text' }, e.message));
+    }
+  }
+  const auditPanel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [
+      el('h2', {}, 'Audit Log'),
+      el('button', { class: 'btn small', onClick: refreshAudit }, 'Refresh'),
+    ]),
+    auditBody,
+  ]);
+
   root.appendChild(createPanel);
   root.appendChild(usersPanel);
+  root.appendChild(auditPanel);
   root.appendChild(pwPanel);
 
   await refresh();
+  await refreshAudit();
   return root;
+}
+
+function buildAuditTable(rows) {
+  if (!rows.length) return el('div', { class: 'muted' }, 'No audit entries yet.');
+  const head = el('thead', {}, el('tr', {}, [
+    el('th', {}, 'When'),
+    el('th', {}, 'Actor'),
+    el('th', {}, 'Action'),
+    el('th', {}, 'Target'),
+    el('th', {}, 'Payload'),
+  ]));
+  const body = el('tbody', {}, rows.map(r => el('tr', {}, [
+    el('td', { class: 'muted', style: { fontSize: '11px', whiteSpace: 'nowrap' } }, formatAuditTime(r.created_at)),
+    el('td', {}, r.actor_username || (r.actor_user_id ? `#${r.actor_user_id}` : '—')),
+    el('td', {}, el('span', { class: 'pill' }, r.action)),
+    el('td', { class: 'muted' }, r.target_type ? `${r.target_type} #${r.target_id ?? '?'}` : '—'),
+    el('td', { style: { fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', maxWidth: '320px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } },
+      r.payload ? JSON.stringify(r.payload) : ''),
+  ])));
+  return el('table', {}, [head, body]);
+}
+
+function formatAuditTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toISOString().slice(0, 16).replace('T', ' ');
 }
 
 function field(label, control) {

@@ -184,6 +184,21 @@ DO $$ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS idx_player_challengers_gp ON player_challengers(game_player_id);
 
+-- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id              SERIAL PRIMARY KEY,
+  actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_username  TEXT,
+  action          TEXT NOT NULL,
+  target_type     TEXT,
+  target_id       INTEGER,
+  payload         JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created  ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor    ON audit_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_target   ON audit_log(target_type, target_id);
+
 -- Persistent first-seen timestamp per (player, faction) banner. Used by
 -- the war map to assign and PRESERVE home fortresses: once a banner has
 -- a row here, its claimed_at never changes — adding/hiding games can't

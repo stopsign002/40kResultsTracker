@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool, withTx } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 
@@ -295,6 +296,7 @@ router.post('/', async (req, res) => {
       }
       return gameId;
     });
+    await audit(req, 'game.create', { type: 'game', id, payload: { playedAt: b.playedAt, players: b.players.map(p => ({ name: p.userId ? `user:${p.userId}` : `guest:${p.guestName}`, factionId: p.factionId })) } });
     res.json({ id });
   } catch (e) {
     console.error(e);
@@ -365,6 +367,7 @@ router.put('/:id', async (req, res) => {
         await recordBannerFirstSeen(client, p);
       }
     });
+    await audit(req, 'game.update', { type: 'game', id });
     res.json({ id });
   } catch (e) {
     if (e.status === 404) return res.status(404).json({ error: 'not found' });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { hashPassword, requireAdmin } from '../lib/auth.js';
+import { audit } from '../lib/audit.js';
 
 const router = Router();
 
@@ -27,6 +28,7 @@ router.post('/users', async (req, res) => {
        RETURNING id, username, display_name, role, is_active, army_name, created_at`,
       [username, displayName, hash, r, armyName || null]
     );
+    await audit(req, 'user.create', { type: 'user', id: rows[0].id, payload: { username, displayName, role: r } });
     res.json(rows[0]);
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'username already exists' });
@@ -57,6 +59,7 @@ router.patch('/users/:id', async (req, res) => {
     vals
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
+  await audit(req, 'user.update', { type: 'user', id, payload: req.body });
   res.json(rows[0]);
 });
 
@@ -70,6 +73,7 @@ router.patch('/games/:id/visibility', async (req, res) => {
     [!!hidden, id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
+  await audit(req, 'game.visibility', { type: 'game', id, payload: { hidden: !!hidden } });
   res.json(rows[0]);
 });
 
@@ -80,7 +84,21 @@ router.delete('/games/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { rowCount } = await pool.query('DELETE FROM games WHERE id = $1', [id]);
   if (!rowCount) return res.status(404).json({ error: 'not found' });
+  await audit(req, 'game.delete', { type: 'game', id });
   res.json({ ok: true, id });
+});
+
+// Recent audit-log entries — admin viewer.
+router.get('/audit', async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+  const { rows } = await pool.query(
+    `SELECT id, actor_user_id, actor_username, action, target_type, target_id, payload, created_at
+     FROM audit_log
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [limit]
+  );
+  res.json(rows);
 });
 
 export default router;
