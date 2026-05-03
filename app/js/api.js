@@ -47,6 +47,11 @@ export const auth = {
   updateMe: (data) => api.patch('/auth/me', data),
 };
 
+export const seasons = {
+  list:   () => api.get('/seasons'),
+  start:  (data) => api.post('/seasons', data),
+};
+
 export const reference = {
   factions:        () => api.get('/reference/factions'),
   detachments:     (factionId) => api.get(`/reference/factions/${factionId}/detachments`),
@@ -80,7 +85,7 @@ export const stats = {
   headToHead:             (a, b) => api.get(`/stats/head-to-head?userA=${a}&userB=${b}`),
   firstTurnImpact:        (q) => api.get('/stats/first-turn-impact' + qstr(q)),
   secondaryAverages:      () => api.get('/stats/secondary-averages'),
-  warmap:                 () => api.get('/stats/warmap'),
+  warmap:                 (seasonId) => api.get('/stats/warmap' + (seasonId ? '?season=' + seasonId : '')),
   detachmentWinRates:     (factionId) => api.get('/stats/detachment-winrates' + (factionId ? '?factionId=' + factionId : '')),
   trends:                 () => api.get('/stats/trends'),
   player:                 (playerKey) => api.get('/stats/player/' + encodeURIComponent(playerKey)),

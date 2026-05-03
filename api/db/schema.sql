@@ -184,6 +184,33 @@ DO $$ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS idx_player_challengers_gp ON player_challengers(game_player_id);
 
+-- Seasons: each game belongs to a season, the war map can render any
+-- archived season's state, and admins can start a new season at any time.
+-- Initial migration creates "Season 1" and assigns every existing game to it.
+CREATE TABLE IF NOT EXISTS seasons (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  map_seed    BIGINT NOT NULL,                  -- drives war map geometry per season
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at    TIMESTAMPTZ,                      -- NULL = currently active
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Only one active season at a time
+CREATE UNIQUE INDEX IF NOT EXISTS idx_seasons_only_one_active
+  ON seasons (is_active) WHERE is_active = TRUE;
+
+-- Migration: add season_id to games if upgrading from earlier schema.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='games' AND column_name='season_id'
+  ) THEN
+    ALTER TABLE games ADD COLUMN season_id INTEGER REFERENCES seasons(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_games_season ON games(season_id);
+
 -- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
 CREATE TABLE IF NOT EXISTS audit_log (
   id              SERIAL PRIMARY KEY,

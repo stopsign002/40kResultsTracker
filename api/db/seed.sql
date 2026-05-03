@@ -488,6 +488,18 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Leviathan' ON CONFLICT DO NOTHING;
 
+-- ── Seasons: ensure a default "Season 1" exists and backfill ─────
+-- One-shot: every install gets a Season 1 with the canonical MAP_SEED
+-- (0xDEAD40 = 14589504). After this seed runs, any game that lacks a
+-- season_id is attached to the currently-active season.
+INSERT INTO seasons (name, map_seed, is_active)
+SELECT 'Season 1', 14589504::bigint, TRUE
+WHERE NOT EXISTS (SELECT 1 FROM seasons);
+
+UPDATE games
+SET season_id = (SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1)
+WHERE season_id IS NULL;
+
 -- ── Backfill: copy detachment.name into game_players.detachment_name
 -- The detachment input is now a free-text box. Old games saved with a
 -- detachment_id need their name copied over so the display logic stops

@@ -1,4 +1,4 @@
-import { stats } from '../api.js';
+import { stats, seasons } from '../api.js';
 import { el, clear } from '../components.js';
 
 // ── Seeded RNG (mulberry32) ──────────────────────────────────────
@@ -139,8 +139,8 @@ const TERRITORY_SUFFIX = [
   'Reef', 'Hollow', 'Pass', 'Tract', 'Heath', 'Salient', 'Approach',
 ];
 
-function territoryName(idx) {
-  const rng = seededRng(MAP_SEED ^ ((idx + 1) * 2654435761));
+function territoryName(idx, seed = MAP_SEED) {
+  const rng = seededRng(seed ^ ((idx + 1) * 2654435761));
   const p = TERRITORY_PREFIX[Math.floor(rng() * TERRITORY_PREFIX.length)];
   const s = TERRITORY_SUFFIX[Math.floor(rng() * TERRITORY_SUFFIX.length)];
   // Append a sector code so duplicate prefix+suffix combos still differ
@@ -222,8 +222,8 @@ function isInsidePolygon(x, y, poly) {
 }
 
 // ── Voronoi territories with Lloyd's relaxation ────────────────
-function generateTerritories(W, H, polygon) {
-  const rng = seededRng(MAP_SEED);
+function generateTerritories(W, H, polygon, seed = MAP_SEED) {
+  const rng = seededRng(seed);
   const sites = [];
 
   // Poisson-ish disc sampling: reject points too close to existing ones.
@@ -467,10 +467,43 @@ export async function renderWarmap(_state) {
     boxShadow: '0 0 40px rgba(120,220,255,0.05) inset',
   } }, loadingEl);
 
+  // Season picker — only shown if more than one season exists. The picker
+  // updates the hash query string and re-routes; the view rebuilds with
+  // the new season filter. Crude but avoids restructuring the render
+  // pipeline mid-flight.
+  let allSeasons = [];
+  try { allSeasons = await seasons.list(); } catch { /* endpoint missing pre-deploy: ignore */ }
+  const hashQ = new URLSearchParams((window.location.hash.split('?')[1]) || '');
+  const requestedSeasonId = hashQ.get('season') ? parseInt(hashQ.get('season'), 10) : null;
+  const activeSeason = allSeasons.find(s => s.is_active) || allSeasons[allSeasons.length - 1];
+  const selectedSeasonId = requestedSeasonId || activeSeason?.id || null;
+
+  let seasonPicker = null;
+  if (allSeasons.length > 1) {
+    const sel = el('select', { style: { marginLeft: '8px' } },
+      allSeasons.map(s => el('option', {
+        value: s.id,
+        selected: s.id === selectedSeasonId ? '' : null,
+      }, `${s.name}${s.is_active ? '  (active)' : '  (archived)'}  · ${s.games}g`)));
+    sel.addEventListener('change', () => {
+      const newId = parseInt(sel.value, 10);
+      const isActiveChoice = allSeasons.find(s => s.id === newId)?.is_active;
+      window.location.hash = isActiveChoice ? '#/war' : '#/war?season=' + newId;
+    });
+    seasonPicker = el('div', { style: {
+      textAlign: 'center', marginBottom: '8px', color: 'var(--text-muted)',
+      fontFamily: 'monospace', fontSize: '12px',
+    } }, [
+      el('label', { style: { display: 'inline', textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '10px' } }, 'Season:'),
+      sel,
+    ]);
+  }
+
   root.appendChild(titleWrap);
+  if (seasonPicker) root.appendChild(seasonPicker);
   root.appendChild(canvasWrapper);
 
-  const units = await stats.warmap();
+  const units = await stats.warmap(selectedSeasonId);
 
   clear(canvasWrapper);
 
@@ -514,9 +547,16 @@ export async function renderWarmap(_state) {
   canvas.style.height = 'auto';
   canvas.style.maxWidth = VIRTUAL_W + 'px';
 
+  // Per-season seed: use the picked season's map_seed if available, else
+  // fall back to the canonical MAP_SEED. The seed is a BIGINT in the DB so
+  // it arrives as a string; convert to a Number for the JS RNG (truncates
+  // to 32 bits via `>>> 0` inside seededRng).
+  const seasonObj = allSeasons.find(s => s.id === selectedSeasonId);
+  const renderSeed = seasonObj?.map_seed ? Number(seasonObj.map_seed) : MAP_SEED;
+
   let mapState = null;
   requestAnimationFrame(() => {
-    mapState = drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H);
+    mapState = drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H, renderSeed);
     populateLegend(legendPanel, mapState);
   });
 
@@ -535,7 +575,7 @@ export async function renderWarmap(_state) {
     }
     const ownerKey = mapState.owner[tid];
     const u = ownerKey ? mapState.unitMeta[ownerKey] : null;
-    const name = territoryName(tid);
+    const name = territoryName(tid, renderSeed);
     const lines = [
       `<div class="t-title">${escapeHtml(name)}</div>`,
       u
@@ -594,15 +634,15 @@ function populateLegend(panel, mapState) {
   }
 }
 
-function drawTacticalMap(canvas, units, W, H) {
+function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   const ctx = canvas.getContext('2d');
 
   // ── Step 0: backdrop with vignette + grid ───────────────────
   drawBackdrop(ctx, W, H);
 
   // ── Step 1: continent + territories ─────────────────────────
-  const polygon = generateContinent(W, H, MAP_SEED);
-  const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon);
+  const polygon = generateContinent(W, H, seed);
+  const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon, seed);
   const adj = buildAdjacency(ownership, GW, GH);
   const { owner, homeOf } = assignTerritories(sites, units, W, H, adj);
 

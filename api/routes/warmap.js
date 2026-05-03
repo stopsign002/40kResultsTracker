@@ -15,7 +15,17 @@ router.use(requireAuth);
 // to deterministically allocate home fortresses, so adding new games
 // (even backdated ones) or hiding old games does NOT shift existing
 // fortresses. Only NEW banners ever join the back of the order.
-router.get('/warmap', async (_req, res) => {
+router.get('/warmap', async (req, res) => {
+  // Optional ?season=<id>. When omitted, defaults to the active season so
+  // archived past seasons stay reachable from the UI but the live map is
+  // always the current one.
+  let seasonId = req.query.season ? parseInt(String(req.query.season), 10) : null;
+  if (!seasonId) {
+    const r = await pool.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
+    seasonId = r.rows[0]?.id ?? null;
+  }
+  const seasonFilter = seasonId ? `AND g.season_id = ${seasonId}` : '';
+
   // Lazy backfill: cover any banner that exists in game_players but for
   // some reason isn't in banner_first_seen yet (e.g. an admin-inserted
   // game, a row from before this column existed, or the games.js save
@@ -43,7 +53,7 @@ router.get('/warmap', async (_req, res) => {
         END AS player_key,
         gp.user_id, gp.guest_name, gp.faction_id, gp.result, gp.final_score
       FROM game_players gp
-      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE ${seasonFilter}
       WHERE gp.faction_id IS NOT NULL
     )
     SELECT

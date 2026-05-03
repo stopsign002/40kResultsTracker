@@ -222,19 +222,23 @@ router.post('/', async (req, res) => {
 
   try {
     const id = await withTx(async (client) => {
+      // Attach to the currently-active season. NULL is allowed but should
+      // only happen for installs that ran with the schema before seasons.
+      const activeSeason = await client.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
+      const seasonId = activeSeason.rows[0]?.id ?? null;
       const g = await client.query(
         `INSERT INTO games
           (created_by_user_id, played_at, game_format, points_limit, mission_pack_id,
            primary_mission_id, deployment_map_id, mission_rule_id, turn_count,
-           end_condition, tournament_name, tournament_round, tournament_table, location, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           end_condition, tournament_name, tournament_round, tournament_table, location, notes, season_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
          RETURNING id`,
         [
           req.session.userId, b.playedAt, b.gameFormat || 'matched', b.pointsLimit,
           b.missionPackId ?? null, b.primaryMissionId ?? null, b.deploymentMapId ?? null,
           b.missionRuleId ?? null, b.turnCount ?? null, b.endCondition || 'normal',
           b.tournamentName ?? null, b.tournamentRound ?? null, b.tournamentTable ?? null,
-          b.location ?? null, b.notes ?? null,
+          b.location ?? null, b.notes ?? null, seasonId,
         ]
       );
       const gameId = g.rows[0].id;

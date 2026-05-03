@@ -1,5 +1,5 @@
-import { admin, auth } from '../api.js';
-import { el, clear, toast, pill, promptModal } from '../components.js';
+import { admin, auth, seasons } from '../api.js';
+import { el, clear, toast, pill, promptModal, confirmModal } from '../components.js';
 
 export async function renderAdmin(state) {
   if (state.user?.role !== 'admin') {
@@ -121,14 +121,75 @@ export async function renderAdmin(state) {
     auditBody,
   ]);
 
+  // Seasons panel — list + start-new-season
+  const seasonsBody = el('div', { class: 'panel-body' }, 'Loading…');
+  async function refreshSeasons() {
+    clear(seasonsBody);
+    seasonsBody.appendChild(el('div', { class: 'muted' }, 'Loading…'));
+    try {
+      const list = await seasons.list();
+      clear(seasonsBody);
+      seasonsBody.appendChild(buildSeasonsTable(list));
+    } catch (e) {
+      clear(seasonsBody);
+      seasonsBody.appendChild(el('div', { class: 'error-text' }, e.message));
+    }
+  }
+  const startSeasonBtn = el('button', { class: 'btn primary small', onClick: async () => {
+    const name = await promptModal({
+      title: 'Start a new season',
+      label: 'Season name (e.g. "Season 2", "Year of the Whisper")',
+      placeholder: 'Season 2',
+    });
+    if (!name) return;
+    const ok = await confirmModal({
+      title: 'Start "' + name + '"?',
+      body: 'A new map seed will be generated. The current season is closed (still browsable from the war map dropdown). Future games attach to the new season.',
+      confirmLabel: 'Start season',
+    });
+    if (!ok) return;
+    try {
+      await seasons.start({ name });
+      toast('New season started');
+      refreshSeasons();
+    } catch (e) { toast(e.message, 'error'); }
+  } }, 'Start new season');
+  const seasonsPanel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [el('h2', {}, 'Seasons'), startSeasonBtn]),
+    seasonsBody,
+  ]);
+
   root.appendChild(createPanel);
   root.appendChild(usersPanel);
+  root.appendChild(seasonsPanel);
   root.appendChild(auditPanel);
   root.appendChild(pwPanel);
 
   await refresh();
+  await refreshSeasons();
   await refreshAudit();
   return root;
+}
+
+function buildSeasonsTable(rows) {
+  if (!rows.length) return el('div', { class: 'muted' }, 'No seasons yet.');
+  const head = el('thead', {}, el('tr', {}, [
+    el('th', {}, 'Name'),
+    el('th', { style: { textAlign: 'right' } }, 'Games'),
+    el('th', {}, 'Started'),
+    el('th', {}, 'Ended'),
+    el('th', {}, 'Status'),
+    el('th', {}, 'Map seed'),
+  ]));
+  const body = el('tbody', {}, rows.map(r => el('tr', {}, [
+    el('td', {}, r.name),
+    el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(r.games)),
+    el('td', { class: 'muted', style: { fontSize: '11px' } }, String(r.started_at).slice(0, 10)),
+    el('td', { class: 'muted', style: { fontSize: '11px' } }, r.ended_at ? String(r.ended_at).slice(0, 10) : '—'),
+    el('td', {}, pill(r.is_active ? 'active' : 'archived', r.is_active ? 'win' : '')),
+    el('td', { class: 'tabular', style: { fontSize: '11px', color: 'var(--text-muted)' } }, r.map_seed),
+  ])));
+  return el('table', {}, [head, body]);
 }
 
 function buildAuditTable(rows) {
