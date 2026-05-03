@@ -4,7 +4,8 @@
 40k.thewheeliebois.com {
     # SSE endpoint: needs flush_interval so chunks aren't buffered;
     # `encode` (gzip/zstd) is intentionally NOT in this handler.
-    handle_path /api/events {
+    handle /api/events {
+        rewrite * /events
         reverse_proxy 40k-api:3000 {
             flush_interval -1
         }
