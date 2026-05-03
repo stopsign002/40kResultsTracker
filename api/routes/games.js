@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool, withTx } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
 
 const router = Router();
 
@@ -144,46 +145,8 @@ router.get('/:id', async (req, res) => {
   res.json({ ...game.rows[0], players: players.rows });
 });
 
-// ── Create / Update helpers ───────────────────────────────────
-// Operates on the request payload, which is camelCase (primaryScore,
-// roundNumber, etc.) — NOT on DB rows. See CLAUDE.md "Common pitfalls".
-function computeFinalScores(players) {
-  for (const p of players) {
-    // Compute per-round secondary_score from player_secondaries + challengers
-    for (const r of p.rounds || []) {
-      const secPts = (p.secondaries || [])
-        .filter(s => s.roundNumber === r.roundNumber)
-        .reduce((sum, s) => sum + (s.score || 0), 0);
-      const chalPts = (p.challengers || [])
-        .filter(c => c.roundNumber === r.roundNumber)
-        .reduce((sum, c) => sum + (c.score || 0), 0);
-      r.secondaryScore = secPts + chalPts;
-    }
-    const primaryTotal = (p.rounds || []).reduce((sum, r) => sum + (r.primaryScore || 0), 0);
-    const secTotal     = (p.secondaries || []).reduce((sum, s) => sum + (s.score || 0), 0);
-    const chalTotal    = (p.challengers || []).reduce((sum, c) => sum + (c.score || 0), 0);
-    p.finalScore = Math.min(100, primaryTotal + secTotal + chalTotal);
-  }
-  if (players.length === 2) {
-    const [a, b] = players;
-    // Manual winner override (checkbox per player). Both checked = draw.
-    if (a.manualWinner && b.manualWinner) { a.result = 'draw'; b.result = 'draw'; }
-    else if (a.manualWinner) { a.result = 'win'; b.result = 'loss'; }
-    else if (b.manualWinner) { a.result = 'loss'; b.result = 'win'; }
-    else if (a.finalScore > b.finalScore) { a.result = 'win'; b.result = 'loss'; }
-    else if (a.finalScore < b.finalScore) { a.result = 'loss'; b.result = 'win'; }
-    else { a.result = 'draw'; b.result = 'draw'; }
-  }
-}
-
-function validateGameInput(body) {
-  if (!body.playedAt) throw new Error('playedAt required');
-  if (!body.pointsLimit) throw new Error('pointsLimit required');
-  if (!Array.isArray(body.players) || body.players.length !== 2) throw new Error('exactly 2 players required');
-  for (const p of body.players) {
-    if (!p.userId && !p.guestName) throw new Error('each player needs userId or guestName');
-  }
-}
+// computeFinalScores + validateGameInput live in lib/game-scoring.js so
+// the smoke tests can exercise them without spinning up the HTTP stack.
 
 // Form takes a free-text name input. If that name (case-insensitive) matches a
 // registered user's display_name, link the player to that user — this is what
