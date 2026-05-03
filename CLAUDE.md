@@ -137,6 +137,16 @@ For real public-reach checks, ask the user to hit it from a phone on cellular.
 
 `schema.sql` uses `CREATE TABLE IF NOT EXISTS` everywhere; `seed.sql` uses `ON CONFLICT DO NOTHING`. Both run on every startup. Adding new INSERTs is safe; do not write seed entries that depend on previous seed runs having committed (no SELECT-then-INSERT-by-id patterns; use the `SELECT id, n FROM factions, (VALUES …) AS d(n) WHERE factions.name = '…'` cross-join pattern that's already in there).
 
+### 7. Player names are free-text but linked at save time
+
+The new-game form has a single text input for each player's name (no registered/guest toggle). Internally we still store either `game_players.user_id` or `game_players.guest_name` — never both. **The save handlers run `resolvePlayerIdentities()` first** (see `routes/games.js`): for each player whose `userId` is null, it looks up `users.display_name` (case-insensitive, active users only) and rewrites the row to `userId = <found>, guestName = null`. If no match, the row stays a guest.
+
+Why it matters: on the war map, `army_name` only flows through when `gp.user_id` is set — a guest_name string never joins to `users`. Same for head-to-head and player-winrate stats: they group by `(user_id, guest_name)` together, so an unlinked guest_name="Alec" and a real user "Alec" would split into two leaderboard rows.
+
+`seed.sql` ends with an idempotent `UPDATE game_players SET user_id = u.id, guest_name = NULL FROM users u WHERE …` that backfills historical rows the same way. Re-runs find no work once linked.
+
+If you ever want a typed name to **stay** a guest even when it matches a registered user (e.g. a friend-of-a-friend with the same name as a member), you need to bypass `resolvePlayerIdentities` for that player — easiest path: prepend a marker like `"~Bob"` and strip it on display.
+
 ---
 
 ## Backend architecture
@@ -379,7 +389,33 @@ Just append to the right `INSERT INTO secondary_cards / challenger_cards` block 
 
 ### A schema change to an existing table
 
-Append a guarded `ALTER TABLE` block to `api/db/schema.sql` — see the `player_challengers.round_number` migration pattern at the top of that file. Plain `CREATE TABLE IF NOT EXISTS` does NOT alter existing tables.
+Append a guarded `ALTER TABLE` block to `api/db/schema.sql` — see the `player_challengers.round_number` and `users.army_name` migrations for the pattern. Plain `CREATE TABLE IF NOT EXISTS` does NOT alter existing tables.
+
+### A new user-profile field (e.g. preferred general's name, banner colour…)
+
+1. `api/db/schema.sql` — add the column to `CREATE TABLE users` AND a guarded `ALTER TABLE` block (so existing installs migrate)
+2. `api/routes/admin.js` — accept the field in `POST /admin/users` and `PATCH /admin/users/:id`; include it in the `RETURNING` clauses
+3. `api/routes/auth.js` — if the user should see their own value, add it to the `/auth/me` response
+4. `app/js/views/admin.js` — wire input into the create form + a per-row edit button
+5. Anywhere the field affects display (war map, stats labels) — pull it through the relevant `routes/*.js` SELECT and use it client-side
+
+The `users.army_name` column added 2026-05 follows this exact pattern end to end.
+
+### Backfilling DB rows after a schema/behaviour change
+
+If the meaning of an existing column changes (e.g. "guests typed by name should now be linked to user accounts"), append an idempotent `UPDATE … FROM …` block at the bottom of `api/db/seed.sql`. Idempotent means: write it so it finds zero rows on the second run. Example pattern from the guest-name → user_id linkage:
+
+```sql
+UPDATE game_players gp
+SET user_id = u.id, guest_name = NULL
+FROM users u
+WHERE gp.user_id IS NULL
+  AND gp.guest_name IS NOT NULL
+  AND u.is_active = TRUE
+  AND LOWER(u.display_name) = LOWER(gp.guest_name);
+```
+
+Don't gate it on a "have I run this once" flag — let it run every container start. PG handles "no matching rows" instantly.
 
 ---
 
@@ -407,7 +443,7 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 e
 6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_played_at` (earliest banner claims home first), tiebreak by `(player_key, faction_id)`. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * 50)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
 7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
-9. **Fortresses + labels.** Diamond marker with cross-hairs at each home; abbreviated faction name in amber monospace below.
+9. **Fortresses + labels.** Diamond marker with cross-hairs at each home. Primary label = army_name (or display_name fallback) in amber monospace; faction abbreviation drawn smaller below in cyan.
 10. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout.
 
 ### Territory score formula
