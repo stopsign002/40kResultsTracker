@@ -476,7 +476,7 @@ The first player to play a faction wins the closest-to-anchor territory permanen
 
 ### Recipe: changing what shows on a player's fortress label
 
-`drawLabels()` calls `unitLabel(u)` which returns `u.army_name || u.player_name`. To change the displayed text, edit those identifiers — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
+`drawLabels()` resolves the primary label as `u.army_name || u.player_name` inline. To change the displayed text, edit that fallback chain — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
 
 ---
 

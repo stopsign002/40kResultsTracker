@@ -283,10 +283,6 @@ function buildAdjacency(ownership, GW, GH) {
 // and Jane's Necrons hold different territories with their own home.
 function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
 
-function unitLabel(u) {
-  // Army name first; fall back to the user's display name (or guest name).
-  return u.army_name || u.player_name;
-}
 
 function assignTerritories(sites, units, W, H, adj) {
   // Sort by first_played_at (earliest first), ties broken by player_key+faction_id.
@@ -421,24 +417,8 @@ export async function renderWarmap(_state) {
     boxShadow: '0 0 40px rgba(120,220,255,0.05) inset',
   } }, loadingEl);
 
-  const legendEl = el('div', { style: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '10px',
-    justifyContent: 'center',
-    marginTop: '14px',
-    padding: '14px',
-    background: 'rgba(2,6,16,0.6)',
-    border: '1px solid rgba(120,220,255,0.2)',
-    borderRadius: 'var(--radius-lg)',
-    fontFamily: 'monospace',
-    fontSize: '11px',
-    letterSpacing: '0.06em',
-  } });
-
   root.appendChild(titleWrap);
   root.appendChild(canvasWrapper);
-  root.appendChild(legendEl);
 
   const units = await stats.warmap();
 
@@ -456,22 +436,6 @@ export async function renderWarmap(_state) {
       },
     }, '> NO ENGAGEMENTS REGISTERED. AWAITING FIRST CONTACT.'));
     return root;
-  }
-
-  // Build legend — one entry per (player, faction) banner
-  for (const u of units) {
-    const col = FACTION_COLOURS[u.faction] || '#666';
-    legendEl.appendChild(el('div', { style: {
-      display: 'flex', alignItems: 'center', gap: '6px',
-      color: 'rgba(180,210,230,0.95)',
-    } }, [
-      el('div', { style: {
-        width: '12px', height: '12px', background: col,
-        border: '1px solid rgba(120,220,255,0.4)',
-        boxShadow: `0 0 6px ${col}`,
-      } }),
-      el('div', { class: 'tabular' }, `${unitLabel(u)} — ${abbreviate(u.faction)} ${u.wins}W/${u.losses}L`),
-    ]));
   }
 
   const canvas = el('canvas', { id: 'warmap-canvas' });
