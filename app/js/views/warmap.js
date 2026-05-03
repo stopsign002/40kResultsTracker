@@ -18,7 +18,7 @@ const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
 // FACTION_HOMES shifts existing homes for every user. Append new factions
 // only. See CLAUDE.md "Critical invariants".
 
-const N_TERRITORIES = 50;
+const N_TERRITORIES = 120;
 const LLOYD_ITERATIONS = 8;
 
 // Map is computed at a FIXED virtual resolution so the territory geometry
@@ -179,11 +179,14 @@ function generateTerritories(W, H, polygon) {
   const rng = seededRng(MAP_SEED);
   const sites = [];
 
-  // Poisson-ish disc sampling: reject points too close to existing ones
+  // Poisson-ish disc sampling: reject points too close to existing ones.
+  // minDist scales as 1/sqrt(N) so the spacing-to-N relationship stays
+  // sane regardless of N_TERRITORIES — at the original tuning of N=50 the
+  // factor evaluates to 0.07 of the smaller canvas dimension.
   const cx = W / 2, cy = H / 2;
-  const minDist = Math.min(W, H) * 0.07;
+  const minDist = Math.min(W, H) * 0.07 * Math.sqrt(50 / N_TERRITORIES);
   let attempts = 0;
-  while (sites.length < N_TERRITORIES && attempts < 8000) {
+  while (sites.length < N_TERRITORIES && attempts < 20000) {
     attempts++;
     const x = rng() * W;
     const y = rng() * H;

@@ -432,7 +432,7 @@ Don't gate it on a "have I run this once" flag — let it run every container st
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate fortresses but share the Necron green colour. The label on each fortress is the user's `army_name` (falling back to their display name; for guests, their guest name). Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate fortresses but share the Necron green colour. The label on each fortress is the user's `army_name` (falling back to their display name; for guests, their guest name). Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
@@ -440,18 +440,18 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 e
 - `VIRTUAL_W = 1280`, `VIRTUAL_H = 794` — fixed compute resolution. Map is generated at this size and CSS-scaled for display. Critical for cross-device consistency: same canvas dimensions on every device → byte-identical territory geometry and faction allocation. **Never change.**
 - `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** When a faction first plays, its closest land territory by site distance becomes its home.
 - `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
-- `N_TERRITORIES = 50` — total territories on the continent. Changing this changes everyone's map.
+- `N_TERRITORIES = 120` — total territories on the continent. Changing this changes everyone's map. The Poisson-disc `minDist` scales as `1/sqrt(N)` so spacing stays sane at any N (the formula evaluates to the original 0.07 of canvas at N=50).
 - `LLOYD_ITERATIONS = 8` — relaxation passes; more = more even cell sizes.
 - `CELL = 4` — Voronoi/raster sample step in pixels.
 
 ### Render pipeline (`drawTacticalMap`)
 
 1. **Continent silhouette.** `generateContinent` builds a closed polygon by sampling 96 angles around the canvas centre with multi-octave sine noise and a slight horizontal squash. Result: an organic, asymmetric coastline.
-2. **Territory sites.** `generateTerritories` Poisson-disc-samples 50 points inside the polygon; ranks them by minimum spacing.
+2. **Territory sites.** `generateTerritories` Poisson-disc-samples `N_TERRITORIES` points inside the polygon with `minDist` scaled as `1/sqrt(N)` so spacing stays sane at any N.
 3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
 4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
 5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
-6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at` (the earliest banner claims home first), tiebreak by `(player_key, faction_id)` via codepoint comparison. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * 50)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
+6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at` (the earliest banner claims home first), tiebreak by `(player_key, faction_id)` via codepoint comparison. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * N_TERRITORIES)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
 7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
 9. **Fortresses + labels.** Diamond marker with cross-hairs at each home. Primary label = army_name (or display_name fallback) in amber monospace; faction abbreviation drawn smaller below in cyan.
