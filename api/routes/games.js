@@ -168,6 +168,26 @@ function validateGameInput(body) {
   }
 }
 
+// Form takes a free-text name input. If that name (case-insensitive) matches a
+// registered user's display_name, link the player to that user — this is what
+// keeps army_name flowing through to the war map and lets head-to-head /
+// player-winrate stats group correctly. Otherwise the player stays a guest.
+async function resolvePlayerIdentities(players) {
+  for (const p of players) {
+    if (p.userId || !p.guestName) continue;
+    const { rows } = await pool.query(
+      `SELECT id FROM users
+       WHERE LOWER(display_name) = LOWER($1) AND is_active = TRUE
+       LIMIT 1`,
+      [p.guestName.trim()]
+    );
+    if (rows[0]) {
+      p.userId = rows[0].id;
+      p.guestName = null;
+    }
+  }
+}
+
 async function insertPlayerChildren(client, gamePlayerId, p) {
   for (const r of p.rounds || []) {
     await client.query(
@@ -199,6 +219,7 @@ router.post('/', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
+  await resolvePlayerIdentities(req.body.players);
   computeFinalScores(req.body.players);
   const b = req.body;
 
@@ -254,6 +275,7 @@ router.put('/:id', async (req, res) => {
   } catch (e) {
     return res.status(400).json({ error: e.message });
   }
+  await resolvePlayerIdentities(req.body.players);
   computeFinalScores(req.body.players);
   const b = req.body;
 

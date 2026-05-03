@@ -487,3 +487,19 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Secure No Man''s Land'),
   ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Leviathan' ON CONFLICT DO NOTHING;
+
+-- ── One-shot backfill: link guest-name game_players to users ─────
+-- The form takes a free-text player-name input, so when a friend types
+-- their own name (matching their display_name), the player row stored
+-- guest_name=Joe instead of user_id=5. This breaks army_name lookup on
+-- the war map and stops player_winrates / head-to-head from grouping
+-- correctly. Find every game_player with a guest_name that matches a
+-- registered user's display_name (case-insensitive) and re-link it.
+-- Idempotent: re-runs find no rows once already linked.
+UPDATE game_players gp
+SET user_id = u.id, guest_name = NULL
+FROM users u
+WHERE gp.user_id IS NULL
+  AND gp.guest_name IS NOT NULL
+  AND u.is_active = TRUE
+  AND LOWER(u.display_name) = LOWER(gp.guest_name);
