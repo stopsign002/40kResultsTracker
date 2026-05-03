@@ -147,6 +147,19 @@ export async function renderGamesList(state) {
     tbl.appendChild(buildTable(list));
   }
 
+  // Live update: another browser saves a game → our list re-fetches.
+  // The listener self-removes when the view's root is no longer attached
+  // (renderShell replaces the page on every navigation), so we don't need
+  // to track it in app.js or accumulate listeners across routes.
+  const liveHandler = () => {
+    if (!document.body.contains(root)) {
+      document.removeEventListener('live:game.saved', liveHandler);
+      return;
+    }
+    refresh().catch(() => {});
+  };
+  document.addEventListener('live:game.saved', liveHandler);
+
   await refresh();
   return root;
 }

@@ -10,6 +10,7 @@ import gameRoutes from './routes/games.js';
 import statsRoutes from './routes/stats.js';
 import referenceRoutes from './routes/reference.js';
 import warmapRoutes from './routes/warmap.js';
+import eventsRoutes from './routes/events.js';
 
 const PgSession = connectPgSimple(session);
 const app = express();
@@ -51,6 +52,7 @@ app.use('/games', gameRoutes);
 app.use('/stats', statsRoutes);
 app.use('/reference', referenceRoutes);
 app.use('/stats', warmapRoutes);
+app.use('/events', eventsRoutes);
 
 // Standard error response shape: { error: <message>, code?: <string> }.
 // Status code carries the category; message is human-readable.

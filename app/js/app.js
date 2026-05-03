@@ -1,5 +1,6 @@
 import { auth } from './api.js';
 import { el, clear } from './components.js';
+import { startLiveFeed } from './live.js';
 import { renderLogin } from './views/login.js';
 import { renderGamesList } from './views/games-list.js';
 import { renderGameDetail } from './views/game-detail.js';
@@ -148,6 +149,8 @@ async function route() {
       renderShell(null);
       return;
     }
+    // Open the SSE feed once we know we're logged in. Idempotent.
+    startLiveFeed();
     const path = currentPath();
     for (const r of routes) {
       const m = path.match(r.match);

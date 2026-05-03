@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { hashPassword, requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { broadcast } from '../lib/events.js';
 
 const router = Router();
 
@@ -74,6 +75,7 @@ router.patch('/games/:id/visibility', async (req, res) => {
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
   await audit(req, 'game.visibility', { type: 'game', id, payload: { hidden: !!hidden } });
+  broadcast('game.saved', { id, action: 'visibility' });
   res.json(rows[0]);
 });
 
@@ -85,6 +87,7 @@ router.delete('/games/:id', async (req, res) => {
   const { rowCount } = await pool.query('DELETE FROM games WHERE id = $1', [id]);
   if (!rowCount) return res.status(404).json({ error: 'not found' });
   await audit(req, 'game.delete', { type: 'game', id });
+  broadcast('game.saved', { id, action: 'delete' });
   res.json({ ok: true, id });
 });
 
