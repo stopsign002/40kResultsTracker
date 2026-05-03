@@ -69,9 +69,14 @@ Migrations included in this update path so far:
   challenger card scoring became per-round
 - `users.army_name` (nullable TEXT) — added so admins can give friends
   banner names that show on the Theatre of War map
+- `game_players.detachment_name` (nullable TEXT) — added when the
+  detachment input switched from a dropdown to a free-text box
 - Idempotent `UPDATE game_players SET user_id = u.id, guest_name = NULL
   …` — links old games where a typed guest_name matches a registered
   user's display_name
+- Idempotent `UPDATE game_players SET detachment_name = d.name FROM
+  detachments d WHERE detachment_id IS NOT NULL AND detachment_name IS
+  NULL` — copies legacy detachment_id rows into the new free-text column
 
 All run automatically; no manual psql intervention needed.
 

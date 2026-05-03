@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS game_players (
   guest_name      TEXT,
   faction_id      INTEGER REFERENCES factions(id),
   detachment_id   INTEGER REFERENCES detachments(id),
+  detachment_name TEXT,
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -124,6 +125,16 @@ CREATE TABLE IF NOT EXISTS game_players (
   UNIQUE (game_id, seat),
   CHECK (user_id IS NOT NULL OR guest_name IS NOT NULL)
 );
+-- Migration: add detachment_name (free-text) for existing installs that
+-- were created before the detachment input switched from a dropdown.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='detachment_name'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN detachment_name TEXT;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_game_players_game ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_players_user ON game_players(user_id);

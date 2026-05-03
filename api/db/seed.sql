@@ -488,6 +488,18 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Leviathan' ON CONFLICT DO NOTHING;
 
+-- ── Backfill: copy detachment.name into game_players.detachment_name
+-- The detachment input is now a free-text box. Old games saved with a
+-- detachment_id need their name copied over so the display logic stops
+-- depending on a JOIN. Idempotent: rows with detachment_name already set
+-- are skipped.
+UPDATE game_players gp
+SET detachment_name = d.name
+FROM detachments d
+WHERE gp.detachment_name IS NULL
+  AND gp.detachment_id IS NOT NULL
+  AND d.id = gp.detachment_id;
+
 -- ── One-shot backfill: link guest-name game_players to users ─────
 -- The form takes a free-text player-name input, so when a friend types
 -- their own name (matching their display_name), the player row stored

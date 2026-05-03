@@ -162,18 +162,28 @@ export async function renderGameForm(state, gameId) {
     factionSel.value = p.factionId || '';
     factionSel.addEventListener('change', async () => {
       p.factionId = factionSel.value ? parseInt(factionSel.value, 10) : null;
-      p.detachmentId = null;
+      // Faction changed → keep whatever detachment text the user typed; new
+      // datalist will reflect the new faction's seeded detachments.
       if (p.factionId && !detachmentsByFaction[p.factionId]) {
         detachmentsByFaction[p.factionId] = await reference.detachments(p.factionId);
       }
       rerender();
     });
 
-    const detachmentSel = el('select', {}, selectOptions(detachmentsByFaction[p.factionId] || []));
-    detachmentSel.value = p.detachmentId || '';
-    detachmentSel.addEventListener('change', () => {
-      p.detachmentId = detachmentSel.value ? parseInt(detachmentSel.value, 10) : null;
+    const detachmentListId = `detachments-${idx}`;
+    const detachmentInput = el('input', {
+      type: 'text',
+      placeholder: p.factionId ? 'Detachment' : 'Pick a faction first',
+      value: p.detachmentName ?? '',
+      list: detachmentListId,
+      autocomplete: 'off',
     });
+    detachmentInput.addEventListener('input', () => {
+      p.detachmentName = detachmentInput.value || null;
+    });
+    const detachmentDatalist = el('datalist', { id: detachmentListId },
+      (detachmentsByFaction[p.factionId] || []).map(d => el('option', { value: d.name }, ''))
+    );
 
     const wentFirstChk = el('input', { type: 'checkbox' });
     wentFirstChk.checked = !!p.wentFirst;
@@ -208,7 +218,11 @@ export async function renderGameForm(state, gameId) {
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Faction', factionSel),
-        field('Detachment', detachmentSel),
+        el('div', { class: 'form-group' }, [
+          el('label', {}, 'Detachment'),
+          detachmentInput,
+          detachmentDatalist,
+        ]),
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Went First', wentFirstChk, true),
@@ -450,6 +464,7 @@ function makeDraft(existing) {
       guestName: p.guest_name || (p.display_name && p.user_id ? p.display_name : null),
       factionId: p.faction_id,
       detachmentId: p.detachment_id,
+      detachmentName: p.detachment_name,
       armyListCode: p.army_list_code,
       wentFirst: p.went_first,
       isAttacker: p.is_attacker,
@@ -477,7 +492,7 @@ function makeDraft(existing) {
 function emptyPlayer() {
   return {
     userId: null, guestName: null,
-    factionId: null, detachmentId: null,
+    factionId: null, detachmentId: null, detachmentName: null,
     armyListCode: null, wentFirst: false, isAttacker: null,
     manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),

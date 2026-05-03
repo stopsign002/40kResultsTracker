@@ -98,11 +98,10 @@ router.get('/:id', async (req, res) => {
 
   const players = await pool.query(
     `SELECT gp.*, COALESCE(u.display_name, gp.guest_name) AS display_name,
-            f.name AS faction_name, d.name AS detachment_name
+            f.name AS faction_name
      FROM game_players gp
      LEFT JOIN users u ON u.id = gp.user_id
      LEFT JOIN factions f ON f.id = gp.faction_id
-     LEFT JOIN detachments d ON d.id = gp.detachment_id
      WHERE gp.game_id = $1 ORDER BY gp.seat`,
     [id]
   );
@@ -247,12 +246,14 @@ router.post('/', async (req, res) => {
         const gp = await client.query(
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
-             army_list_code, went_first, is_attacker, final_score, result)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             detachment_name, army_list_code, went_first, is_attacker, final_score, result)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            RETURNING id`,
           [
             gameId, seat, p.userId ?? null, p.guestName ?? null,
-            p.factionId ?? null, p.detachmentId ?? null, p.armyListCode ?? null,
+            p.factionId ?? null, p.detachmentId ?? null,
+            (p.detachmentName && p.detachmentName.trim()) || null,
+            p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
           ]
         );
@@ -315,12 +316,14 @@ router.put('/:id', async (req, res) => {
         const gp = await client.query(
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
-             army_list_code, went_first, is_attacker, final_score, result)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             detachment_name, army_list_code, went_first, is_attacker, final_score, result)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            RETURNING id`,
           [
             id, seat, p.userId ?? null, p.guestName ?? null,
-            p.factionId ?? null, p.detachmentId ?? null, p.armyListCode ?? null,
+            p.factionId ?? null, p.detachmentId ?? null,
+            (p.detachmentName && p.detachmentName.trim()) || null,
+            p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
           ]
         );
