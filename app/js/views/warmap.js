@@ -292,11 +292,21 @@ function assignTerritories(sites, units, W, H, adj) {
   // Sort by first_played_at (earliest first), ties broken by player_key+faction_id.
   // The first player to play a faction claims the territory closest to that
   // faction's regional anchor; subsequent players cluster nearby.
+  //
+  // CRITICAL: every comparison and every iteration in this function MUST be
+  // locale-independent and not rely on Object key iteration order — otherwise
+  // two browsers with different default locales pick different home sites
+  // when first_played_at ties, and the whole map shifts. Use codepoint
+  // comparison (`<` / `>`) and iterate the explicit `sorted` array.
   const sorted = [...units].sort((a, b) => {
     const ta = String(a.first_played_at || '');
     const tb = String(b.first_played_at || '');
-    if (ta !== tb) return ta < tb ? -1 : 1;
-    return unitKey(a).localeCompare(unitKey(b));
+    if (ta < tb) return -1;
+    if (ta > tb) return 1;
+    const ka = unitKey(a), kb = unitKey(b);
+    if (ka < kb) return -1;
+    if (ka > kb) return 1;
+    return 0;
   });
 
   const taken = new Set();
@@ -317,15 +327,20 @@ function assignTerritories(sites, units, W, H, adj) {
   // Allocate non-home territories proportional to territory_score (BFS expansion).
   const totalScore = units.reduce((s, u) => s + (u.territory_score || 0.001), 0) || 1;
   const target = {};
-  for (const u of units) {
+  for (const u of sorted) {
     target[unitKey(u)] = Math.max(1, Math.round((u.territory_score || 0.001) / totalScore * sites.length));
   }
 
   const owner = new Array(sites.length).fill(null);
-  for (const [k, id] of Object.entries(homeOf)) owner[id] = k;
-
   const frontier = {};
-  for (const [k, id] of Object.entries(homeOf)) frontier[k] = [id];
+  for (const u of sorted) {
+    const k = unitKey(u);
+    const tid = homeOf[k];
+    if (tid !== undefined) {
+      owner[tid] = k;
+      frontier[k] = [tid];
+    }
+  }
 
   let stuck = 0;
   while (stuck < sorted.length) {
