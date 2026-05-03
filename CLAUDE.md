@@ -24,46 +24,71 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 
 ```
 40kResultsTracker/
-├── CLAUDE.md               ← you are here
-├── DEPLOY.md               server-side install + env recipe
+├── CLAUDE.md               ← you are here (cross-cutting orientation)
+├── DEPLOY.md               server-side install + env recipe + nightly backups cron
 ├── docker-compose.yml      defines the 40k-api service on the shared 'web' network
 ├── caddy.example           drop into ~/sites/base/conf.d/40k.caddy on the host
 ├── .env.example            6 vars; copy to .env on the server
+├── scripts/
+│   ├── README.md           per-script doc
+│   └── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
 ├── api/
+│   ├── README.md           service overview + npm scripts (start, test, typecheck)
 │   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
-│   ├── package.json        ESM module ("type": "module")
+│   ├── package.json        ESM module ("type": "module"); deps: express, pg, bcrypt,
+│   │                       express-session, connect-pg-simple, express-rate-limit
+│   ├── tsconfig.json       editor / `npm run typecheck` only — noEmit, allowJs+checkJs
+│   ├── types.js            shared JSDoc typedefs (PlayerPayload, GamePayload, BannerUnit)
 │   ├── server.js           ENTRY: initSchema → ensureBootstrapAdmin → app.listen
-│   ├── lib/
-│   │   ├── db.js           pg pool, withTx() helper, initSchema() (runs schema.sql + seed.sql)
-│   │   └── auth.js         bcrypt helpers, requireAuth / requireAdmin middleware
+│   ├── lib/                helpers — see api/lib/README.md
+│   │   ├── db.js           pg pool + withTx() generic
+│   │   ├── auth.js         bcrypt helpers, requireAuth / requireAdmin middleware
+│   │   ├── audit.js        fire-and-forget audit log writer
+│   │   ├── events.js       in-process SSE broadcaster (subs Set + broadcast())
+│   │   ├── game-scoring.js computeFinalScores + validateGameInput (pure, tested)
+│   │   └── (no adopt-guest helper — see pitfall #8 for the manual workaround)
 │   ├── routes/             each file: `export default Router()` mounted in server.js
-│   │   ├── auth.js         /auth/*  — login, logout, me, change-password
-│   │   ├── admin.js        /admin/* — user CRUD + game visibility (admin-only)
-│   │   ├── games.js        /games/* — list/get/create/update (HEAVY: contains computeFinalScores + insertPlayerChildren)
-│   │   ├── stats.js        /stats/* — overview + 8 stat endpoints
-│   │   ├── warmap.js       /stats/warmap — single endpoint feeding the war map
-│   │   └── reference.js    /reference/* — factions, detachments, mission packs, player names
-│   └── db/
-│       ├── schema.sql      tables, indexes, view; idempotent (CREATE IF NOT EXISTS + ALTER guard)
-│       └── seed.sql        28 factions + detachments + Pariah Nexus + Leviathan packs (idempotent)
+│   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
+│   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
+│   │   ├── games.js        /games/* — list/get/create/update (HEAVY: insertPlayerChildren)
+│   │   ├── stats.js        /stats/* — overview + 12 stat endpoints (incl. trends, calendar)
+│   │   ├── warmap.js       /stats/warmap — banners feed for the Theatre of War
+│   │   ├── reference.js    /reference/* — factions, detachments, mission packs, names
+│   │   ├── events.js       /events — SSE long-poll for live updates
+│   │   └── seasons.js      /seasons — list + start-new (admin)
+│   ├── db/
+│   │   ├── README.md       schema/seed conventions, idempotency rules, ALTER pattern
+│   │   ├── schema.sql      tables, indexes, view; idempotent (CREATE IF NOT EXISTS + DO $$..ALTER guard)
+│   │   └── seed.sql        28 factions + detachments + Pariah Nexus + Leviathan packs +
+│   │                       Season 1 + guest→user backfill (all idempotent)
+│   └── test/
+│       ├── README.md       how to run + what's covered
+│       └── game-scoring.test.js  11 cases pinning the camelCase payload contract
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
+    ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
     ├── css/style.css       YAAB-matched dark Warhammer theme — see "Critical invariants"
     └── js/
-        ├── app.js          hash router, shell renderer, route table, nav links
-        ├── api.js          fetch wrapper; export objects: api / auth / reference / games / stats / admin
-        ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions() — USE THESE
+        ├── README.md       module roles
+        ├── app.js          hash router, shell renderer, route table, nav links, error boundary
+        ├── api.js          fetch wrapper; exports: api, auth, reference, games, stats, admin, seasons
+        ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions(),
+        │                   confirmModal(), promptModal() — USE THESE
+        ├── live.js         singleton EventSource → 'live:game.saved' CustomEvent on document
         └── views/
-            ├── login.js          public login screen
-            ├── games-list.js     filter panel + paginated game table
-            ├── game-detail.js    single game view
-            ├── game-form.js      ⚠ HEAVIEST file; new game + edit; per-round scoring grid
-            ├── stats.js          KPIs + Chart.js charts; faction drilldown
-            ├── warmap.js         ⚠ Theatre of War canvas — DO NOT TOUCH constants (see invariants)
-            └── admin.js          user management + change-own-password
+            ├── README.md          view convention + how-to recipes
+            ├── login.js           public login screen
+            ├── games-list.js      filter panel + paginated game table + SSE auto-refresh
+            ├── game-detail.js     single game view + admin Hide/Delete buttons
+            ├── game-form.js       ⚠ HEAVIEST file; new game + edit; draft persistence + undo
+            ├── stats.js           KPIs + Chart.js charts; matchup heatmap; calendar; trends
+            ├── warmap.js          ⚠ Theatre of War canvas — DO NOT TOUCH constants (see invariants)
+            ├── admin.js           user management, audit log, seasons, change-own-password
+            ├── player.js          per-player profile (overview + per-faction + streaks)
+            └── profile.js         self-serve "My Profile" — army_name + change password
 ```
 
-High-traffic files when iterating: **`game-form.js`**, **`games.js`**, **`warmap.js`**, **`stats.js`**.
+High-traffic files when iterating: **`game-form.js`**, **`games.js`**, **`warmap.js`**, **`stats.js`**. For module-internal conventions, prefer the directory's `README.md` over scrolling this file.
 
 ---
 
@@ -157,6 +182,26 @@ Why it matters: on the war map, `army_name` only flows through when `gp.user_id`
 
 If you ever want a typed name to **stay** a guest even when it matches a registered user (e.g. a friend-of-a-friend with the same name as a member), you need to bypass `resolvePlayerIdentities` for that player — easiest path: prepend a marker like `"~Bob"` and strip it on display.
 
+**The "I created the user account AFTER they already played as a guest" case.** This actually happens (Sarah played her first game while still a guest, you registered her account a week later). The historical games stay orphaned because `resolvePlayerIdentities` only fires at game-save time. Two fixes, neither involves a code change:
+
+- **Per-user fix:** open each affected game in the form and click Save again. `resolvePlayerIdentities` runs against the now-existing user, rewrites `game_players.user_id`, and `recordBannerFirstSeen` writes the proper `user:<id>` row. This is what one-off cases want.
+- **Bulk fix:** `docker compose restart 40k-api` re-runs `seed.sql` on boot, which contains an idempotent `UPDATE game_players SET user_id = u.id, guest_name = NULL FROM users u WHERE LOWER(u.display_name) = LOWER(gp.guest_name) AND u.is_active = TRUE`. One restart catches every newly-registerable guest at once.
+
+After either fix the orphaned `banner_first_seen` row keyed `'guest:Sarah'` is left behind but is **harmless** — `routes/warmap.js`'s `active` CTE only emits player_keys derived from current `game_players` rows, so the orphan never appears in the rendered map. If clutter ever bothers you:
+
+```sql
+DELETE FROM banner_first_seen b
+WHERE b.player_key LIKE 'guest:%'
+  AND NOT EXISTS (
+    SELECT 1 FROM game_players gp
+    WHERE gp.guest_name IS NOT NULL
+      AND b.player_key = 'guest:' || gp.guest_name
+      AND gp.faction_id = b.faction_id
+  );
+```
+
+If this becomes a frequent operation, build the auto-link into `POST /admin/users` (call into a new `api/lib/adopt-guest.js` helper that runs the same UPDATE plus migrates the `banner_first_seen` rows). Not worth the surface for one-offs.
+
 ---
 
 ## Backend architecture
@@ -164,10 +209,12 @@ If you ever want a typed name to **stay** a guest even when it matches a registe
 ### Boot sequence (`api/server.js`)
 
 1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`)
-2. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
-3. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
-4. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`
-5. `app.listen(PORT)`
+2. Apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min)
+3. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
+4. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
+5. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`
+6. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`
+7. `app.listen(PORT)`
 
 ### Route module convention
 
@@ -253,39 +300,42 @@ Every file in `app/js/views/` exports one async function: `export async function
 Always extend the right export object — never call `fetch` directly from a view:
 
 ```js
-export const auth      = { me, login, logout, changePassword };
+export const auth      = { me, login, logout, changePassword, updateMe };
 export const reference = { factions, detachments, missionPacks, missionDetails, users, playerNames };
 export const games     = { list, get, create, update };
 export const stats     = { overview, factionWinRates, playerWinRates, factionMissionBreakdown,
                             factionDeploymentBreakdown, factionMatchups, headToHead,
-                            firstTurnImpact, secondaryAverages, warmap };
-export const admin     = { users, createUser, updateUser, setVisibility };
+                            firstTurnImpact, secondaryAverages, warmap,
+                            detachmentWinRates, trends, player, calendar };
+export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit };
+export const seasons   = { list, start };
 ```
 
-All requests `credentials: 'same-origin'`; errors throw with `.status` and `.data` on the Error.
+All requests `credentials: 'same-origin'`. Errors throw with `.status`, `.code` (server's `error.code`), and `.data` on the Error. Network failures throw with `status: 0` and `code: 'network'`.
 
 ---
 
 ## HTTP API reference
 
-All routes require an authenticated session unless noted. Responses are JSON. Errors return `{ error: '<message>' }` with appropriate status.
+All routes require an authenticated session unless noted. Responses are JSON. Errors return the uniform shape `{ error: '<message>', code?: '<string>' }` with status from `err.status` (default 500). Login is rate-limited to 20 attempts / IP / 15 min.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/health` | public | `{ ok: true }` |
 | POST | `/auth/login` | public | `{ username, password }` → user object; sets session |
 | POST | `/auth/logout` | session | destroys session |
-| GET | `/auth/me` | auth | current user `{ id, username, displayName, role }` |
+| GET | `/auth/me` | auth | current user `{ id, username, displayName, role, armyName }` |
+| PATCH | `/auth/me` | auth | self-serve update; currently only `{ armyName }` |
 | POST | `/auth/change-password` | auth | `{ currentPassword, newPassword }` |
 | GET | `/reference/factions` | auth | `[{ id, name }]` |
-| GET | `/reference/factions/:id/detachments` | auth | `[{ id, name }]` |
+| GET | `/reference/factions/:id/detachments` | auth | `[{ id, name }]` — UNION of seeded + free-text from past games |
 | GET | `/reference/mission-packs` | auth | `[{ id, name }]` |
 | GET | `/reference/mission-packs/:id/details` | auth | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
 | GET | `/reference/users` | auth | active users `[{ id, username, display_name }]` |
 | GET | `/reference/player-names` | auth | distinct names from past games (for autocomplete) |
-| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `dateFrom`, `dateTo`, `includeHidden`, `limit`, `offset`) |
+| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
 | GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
-| POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js` |
+| POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
 | GET | `/stats/overview` | auth | totals + recent activity |
 | GET | `/stats/faction-winrates` | auth | per-faction W/L/D + win% + avg score |
@@ -296,13 +346,22 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/stats/head-to-head?userA=N&userB=M` | auth | every game between two users |
 | GET | `/stats/first-turn-impact` | auth | win% comparison going first vs second |
 | GET | `/stats/secondary-averages` | auth | per-card pick count + avg score |
-| GET | `/stats/warmap` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_seen_at` |
+| GET | `/stats/detachment-winrates[?factionId=N]` | auth | per-`(faction, detachment_name)` W/L/D + win% |
+| GET | `/stats/trends` | auth | `{ monthlyGames, monthlyAvgScore, factionPopularity }` |
+| GET | `/stats/calendar[?days=365]` | auth | `[{ date, games }]` — fuels the heatmap |
+| GET | `/stats/player/:playerKey` | auth | profile + per-faction + streaks for `'user:<id>'` or `'guest:<name>'` |
+| GET | `/stats/warmap[?season=N]` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_seen_at`. Defaults to active season. |
+| GET | `/seasons` | auth | every season + games count |
+| POST | `/seasons` | admin | `{ name, mapSeed? }` — closes current, opens new (broadcasts `season.changed`) |
 | GET | `/admin/users` | admin | all users including inactive |
 | POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
 | PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
-| PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` |
+| PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` (broadcasts `game.saved`) |
+| DELETE | `/admin/games/:id` | admin | hard delete; cascades to rounds/secondaries/challengers (broadcasts `game.saved`) |
+| GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at |
+| GET | `/events` | auth | Server-Sent Events stream; emits `game.saved`, `season.changed` |
 
-**Total: 28 endpoints** (cross-checked with `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js | wc -l`).
+**Total: 38 endpoints** in `routes/*.js` (cross-check: `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js \| wc -l`), plus `/health` defined inline in `server.js`.
 
 ---
 
@@ -315,19 +374,21 @@ Tables (snake_case throughout):
 | `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active, army_name (optional, shown on the war map) |
 | `session` | express-session storage | sid, sess (json), expire — auto-managed by `connect-pg-simple` |
 | `factions` | parent codex factions | id, name (unique), parent_id (nullable, currently unused) |
-| `detachments` | per-faction detachments — used as autocomplete suggestions only; new games no longer reference this table | id, faction_id, name; UNIQUE (faction_id, name) |
+| `detachments` | seeded per-faction detachments — autocomplete only; UNIONed with free-text `game_players.detachment_name` from past games. Consumed by `/stats/detachment-winrates`. | id, faction_id, name; UNIQUE (faction_id, name) |
 | `mission_packs` | e.g. Pariah Nexus, Leviathan | id, name (unique) |
 | `primary_missions` | e.g. Take and Hold | id, mission_pack_id, name |
 | `deployment_maps` | e.g. Hammer and Anvil | id, mission_pack_id, name |
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
-| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, created_at, updated_at |
+| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, season_id (FK seasons.id), created_at, updated_at |
 | `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's home-fortress immutability depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
+| `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
+| `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
 
 ### View
 
@@ -348,12 +409,16 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | Action | User | Admin | Enforced where |
 |---|---|---|---|
 | Log in | ✓ | ✓ | `POST /auth/login` |
-| View games / stats / war map | ✓ | ✓ | `requireAuth` middleware on all `/games`, `/stats`, `/reference` routes |
+| View games / stats / war map | ✓ | ✓ | `requireAuth` middleware on all `/games`, `/stats`, `/reference`, `/seasons`, `/events` routes |
 | Create / edit games | ✓ | ✓ | `POST/PUT /games` (auth only) |
+| Edit own profile (army_name, password) | ✓ | ✓ | `PATCH /auth/me` + `POST /auth/change-password`; the "My Profile" link in the header session row routes to `/profile` |
 | Hide game from stats | – | ✓ | `requireAdmin` on `PATCH /admin/games/:id/visibility`; the **Hide** button in `game-detail.js` is conditionally rendered for admins only |
+| Delete a game | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation |
 | Manage users | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
+| Manage seasons (start new) | – | ✓ | `requireAdmin` on `POST /seasons`; lives in the Admin → Seasons panel |
+| View audit log | – | ✓ | `requireAdmin` on `GET /admin/audit`; rendered in the Admin → Audit Log panel |
+| Subscribe to live updates | ✓ | ✓ | `requireAuth` on `GET /events`; `app.js` calls `startLiveFeed()` once a session is established |
 | Change own password | ✓ | ✓ | `POST /auth/change-password` |
-| Delete a game | – | – | not implemented; out of scope per spec |
 
 Server enforcement is the source of truth; client gating is a UX convenience only.
 
@@ -427,6 +492,31 @@ WHERE gp.user_id IS NULL
 ```
 
 Don't gate it on a "have I run this once" flag — let it run every container start. PG handles "no matching rows" instantly.
+
+### Linking a guest to a registered user (manual)
+
+Comes up when an admin creates a user account *after* they've already played as a guest. Pure data fix, no code change. See pitfall #8 for the full reasoning. Two paths:
+
+- **One user, surgical:** open each affected game, click Save. `resolvePlayerIdentities` rewrites `game_players.user_id` and `recordBannerFirstSeen` writes the matching `user:<id>` row.
+- **Bulk:** `docker compose restart 40k-api`. The seed.sql backfill `UPDATE` runs and links every guest whose name case-insensitively matches an active user.
+
+Orphan `banner_first_seen` rows keyed `'guest:Name'` are harmless after either fix — they don't render. Cleanup query in pitfall #8 if you want them gone.
+
+### Per-module READMEs
+
+When in doubt, the module's own README is the closer source of truth than this file. They cover module-internal conventions; this file covers cross-cutting orientation.
+
+| Module | README |
+|---|---|
+| Backend service overview | `api/README.md` |
+| Backend helpers (`db`, `auth`, `audit`, `events`, `game-scoring`) | `api/lib/README.md` |
+| Route modules + mount prefixes + auth | `api/routes/README.md` |
+| Schema/seed conventions, idempotency rules, ALTER pattern | `api/db/README.md` |
+| Smoke tests | `api/test/README.md` |
+| Frontend overview, no-build philosophy | `app/README.md` |
+| `app.js` / `api.js` / `components.js` / `live.js` roles | `app/js/README.md` |
+| View module convention + recipes | `app/js/views/README.md` |
+| Backup script + cron | `scripts/README.md` |
 
 ---
 
@@ -529,6 +619,10 @@ The system prompt's general rules apply. Project-specific reminders:
 
 ## When in doubt
 
-- `DEPLOY.md` for infra
+- The directory's own `README.md` for module-internal conventions (see "Per-module READMEs" above)
+- `DEPLOY.md` for infra + nightly backup setup
+- `api/lib/README.md` to find the right helper before writing a new one
+- `api/routes/README.md` for "where does this endpoint live"
+- `api/test/README.md` to add a new smoke test
 - Git log for "when did this change" (`git log --oneline -- path/to/file`)
 - Live YAAB CSS for styling reference (`yetanotherarmybuilder` repo on the user's GitHub) — visit https://github.com/stopsign002/yetanotherarmybuilder
