@@ -468,6 +468,27 @@ td.tabular { font-variant-numeric: tabular-nums; }
   .players-grid { grid-template-columns: 1fr; }
   .form-row.cols-2, .form-row.cols-3, .form-row.cols-4 { grid-template-columns: 1fr; }
 
+  /* Per-round secondary/challenger scoring grid: stack the slots vertically
+     and label each so it's still readable on phone width. The row label
+     (R1/R2/...) becomes a section header. */
+  .player-panel > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  .player-panel > div[style*="grid-template-columns"] > div:first-child {
+    font-size: 14px !important;
+    padding: 10px 0 4px !important;
+    border-top: 1px solid var(--border);
+  }
+  .player-panel > div[style*="grid-template-columns"]:first-of-type > div:first-child {
+    border-top: none;
+  }
+
+  /* Make number inputs in the round grids tap-friendly. */
+  .player-panel input[type="number"] { min-height: 36px; font-size: 16px; }
+  .player-panel select { min-height: 36px; font-size: 14px; }
+
+  /* Stat cards: don't span multiple columns on mobile */
+  .stat-card[style*="grid-column"] { grid-column: auto !important; }
+  .stats-grid { grid-template-columns: 1fr; }
+
   header.topbar {
     flex-wrap: wrap;
     gap: 10px;

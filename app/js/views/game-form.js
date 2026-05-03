@@ -1,5 +1,5 @@
 import { games, reference } from '../api.js';
-import { el, clear, toast, selectOptions } from '../components.js';
+import { el, clear, toast, selectOptions, confirmModal } from '../components.js';
 
 const ROUNDS = [1, 2, 3, 4, 5];
 
@@ -19,8 +19,44 @@ export async function renderGameForm(state, gameId) {
     existing = await games.get(gameId);
   }
 
-  // Working draft state
-  const draft = makeDraft(existing);
+  // Working draft state.
+  // For NEW games, attempt to restore an in-flight draft from localStorage
+  // if one was abandoned recently — saves friends from losing entry mid-fill.
+  // Edit mode never restores from localStorage; it always loads from the DB.
+  let draft = makeDraft(existing);
+  const DRAFT_KEY = 'tg40k:newGameDraft';
+  if (!editing) {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        const hoursOld = (Date.now() - (saved.savedAt || 0)) / 36e5;
+        if (hoursOld < 24 && hasMeaningfulData(saved.draft)) {
+          const restore = await confirmModal({
+            title: 'Restore unsaved game?',
+            body: `You started entering a game ${formatAge(saved.savedAt)} and didn't save. Restore it?`,
+            confirmLabel: 'Restore',
+            cancelLabel: 'Discard',
+          });
+          if (restore) draft = saved.draft;
+          else localStorage.removeItem(DRAFT_KEY);
+        } else {
+          localStorage.removeItem(DRAFT_KEY);
+        }
+      }
+    } catch { /* localStorage unavailable or corrupted: ignore */ }
+  }
+  // Persist on every structural rerender. Saving on keystroke would be
+  // expensive; saving on rerender catches every meaningful change.
+  function persistDraft() {
+    if (editing) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ savedAt: Date.now(), draft }));
+    } catch { /* quota / disabled: silently drop */ }
+  }
+  function clearDraft() {
+    try { localStorage.removeItem(DRAFT_KEY); } catch {}
+  }
 
   let missionDetails = { primaryMissions: [], deploymentMaps: [], missionRules: [], secondaryCards: [], challengerCards: [] };
   if (draft.missionPackId) {
@@ -36,6 +72,7 @@ export async function renderGameForm(state, gameId) {
   }
 
   function rerender() {
+    persistDraft();
     clear(root);
     root.appendChild(buildForm());
   }
@@ -381,13 +418,29 @@ export async function renderGameForm(state, gameId) {
     submit.addEventListener('click', async () => {
       errEl.textContent = '';
       try {
+        // Snapshot for undo. On EDIT the snapshot is the current server state.
+        // On NEW it's just "delete the game we created" via admin (admin only)
+        // OR a no-op for non-admins (we only fire toast saying it saved).
+        const previousSnapshot = editing ? await games.get(gameId) : null;
+        const wasEditing = editing;
         const payload = serializeDraft(draft);
         if (editing) await games.update(gameId, payload);
         else {
           const created = await games.create(payload);
           gameId = created.id;
         }
-        toast('Game saved');
+        clearDraft();
+        if (wasEditing && previousSnapshot) {
+          showUndoToast(`Game saved · `, async () => {
+            try {
+              await games.update(previousSnapshot.id, restorePayload(previousSnapshot));
+              toast('Reverted to previous version');
+              window.__nav('/games/' + previousSnapshot.id);
+            } catch (e) { toast('Undo failed: ' + e.message, 'error'); }
+          });
+        } else {
+          toast('Game saved');
+        }
         window.__nav('/games/' + gameId);
       } catch (e) {
         errEl.textContent = e.message || 'Failed to save';
@@ -396,9 +449,24 @@ export async function renderGameForm(state, gameId) {
 
     const cancel = el('button', { class: 'btn', onClick: () => window.__nav(editing ? '/games/' + gameId : '/games') }, 'Cancel');
 
+    const discardDraft = !editing && hasMeaningfulData(draft) ? el('button', {
+      class: 'btn small',
+      type: 'button',
+      onClick: async () => {
+        const ok = await confirmModal({
+          title: 'Discard draft?',
+          body: 'Throw away the current entry and start fresh.',
+          confirmLabel: 'Discard',
+        });
+        if (!ok) return;
+        clearDraft();
+        location.reload();
+      },
+    }, 'Discard draft') : null;
+
     return el('div', { style: { marginTop: '20px' } }, [
       errEl,
-      el('div', { class: 'btn-group' }, [submit, cancel]),
+      el('div', { class: 'btn-group' }, [submit, cancel, discardDraft].filter(Boolean)),
     ]);
   }
 
@@ -523,4 +591,97 @@ function serializeDraft(d) {
       challengers: (p.challengers || []).filter(c => c.cardId && c.cardName),
     })),
   };
+}
+
+// "Has the user actually entered anything worth saving?" — used to decide
+// whether to offer draft restore on form load and a Discard-draft button.
+function hasMeaningfulData(d) {
+  if (!d || !d.players) return false;
+  if (d.players.some(p => p.guestName || p.factionId)) return true;
+  if (d.players.some(p => (p.rounds || []).some(r => r.primaryScore))) return true;
+  if (d.notes || d.location || d.tournamentName) return true;
+  return false;
+}
+
+function formatAge(ts) {
+  if (!ts) return 'a while ago';
+  const diff = Date.now() - ts;
+  const m = Math.round(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'} ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? '' : 's'} ago`;
+  return 'over a day ago';
+}
+
+// Convert a server `games.get(id)` response back into the camelCase
+// payload shape that PUT /games/:id expects, so we can re-save the
+// pre-edit snapshot when the user hits Undo.
+function restorePayload(g) {
+  return {
+    playedAt: g.played_at?.slice(0, 10),
+    gameFormat: g.game_format,
+    pointsLimit: g.points_limit,
+    missionPackId: g.mission_pack_id,
+    primaryMissionId: g.primary_mission_id,
+    deploymentMapId: g.deployment_map_id,
+    missionRuleId: g.mission_rule_id,
+    turnCount: g.turn_count,
+    endCondition: g.end_condition,
+    tournamentName: g.tournament_name,
+    tournamentRound: g.tournament_round,
+    tournamentTable: g.tournament_table,
+    location: g.location,
+    notes: g.notes,
+    players: g.players.map(p => ({
+      userId: p.user_id,
+      guestName: p.guest_name,
+      factionId: p.faction_id,
+      detachmentId: p.detachment_id,
+      detachmentName: p.detachment_name,
+      armyListCode: p.army_list_code,
+      wentFirst: p.went_first,
+      isAttacker: p.is_attacker,
+      finalScore: p.final_score,
+      result: p.result,
+      manualWinner: p.result === 'win',
+      rounds: (p.rounds || []).map(r => ({
+        roundNumber: r.round_number,
+        primaryScore: r.primary_score,
+        secondaryScore: r.secondary_score,
+        cpRemaining: r.cp_remaining,
+      })),
+      secondaries: (p.secondaries || []).map(s => ({
+        cardId: s.card_id, cardName: s.card_name, roundNumber: s.round_number,
+        score: s.score, wasDiscarded: s.was_discarded,
+      })),
+      challengers: (p.challengers || []).map(c => ({
+        cardId: c.card_id, cardName: c.card_name, roundNumber: c.round_number,
+        completed: c.completed, score: c.score,
+      })),
+    })),
+  };
+}
+
+// Action toast: shows a message with an "Undo" button for ~12 seconds.
+// Reuses the same #toast div as toast(); replaces its contents with an
+// inline form. Click anywhere else and it dismisses normally.
+function showUndoToast(message, onUndo) {
+  const t = document.getElementById('toast');
+  if (!t) return;
+  t.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = message;
+  const btn = document.createElement('button');
+  btn.textContent = 'Undo';
+  btn.style.cssText = 'background: var(--accent); color: var(--accent-on); border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-family: var(--font-display); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; margin-left: 10px;';
+  btn.addEventListener('click', () => {
+    t.classList.remove('show');
+    onUndo();
+  });
+  t.appendChild(span);
+  t.appendChild(btn);
+  t.classList.remove('error');
+  t.classList.add('show');
+  setTimeout(() => { t.classList.remove('show'); t.textContent = ''; }, 12000);
 }
