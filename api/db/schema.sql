@@ -184,6 +184,17 @@ DO $$ BEGIN
 END $$;
 CREATE INDEX IF NOT EXISTS idx_player_challengers_gp ON player_challengers(game_player_id);
 
+-- Persistent first-seen timestamp per (player, faction) banner. Used by
+-- the war map to assign and PRESERVE home fortresses: once a banner has
+-- a row here, its claimed_at never changes — adding/hiding games can't
+-- move existing fortresses. New banners get NOW() on first save.
+CREATE TABLE IF NOT EXISTS banner_first_seen (
+  player_key    TEXT NOT NULL,
+  faction_id    INTEGER NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (player_key, faction_id)
+);
+
 -- Helper view for stats: one row per (game_player) with derived fields
 CREATE OR REPLACE VIEW v_game_player_stats AS
 SELECT

@@ -278,25 +278,25 @@ function buildAdjacency(ownership, GW, GH) {
 
 // ── Faction-to-territory assignment ─────────────────────────────
 // units = [{ player_key, player_name, army_name, faction_id, faction,
-//   games, wins, losses, draws, territory_score, first_played_at }]
+//   games, wins, losses, draws, territory_score, first_seen_at }]
 // Each unique (player, faction) combo is a separate banner: Joe's Necrons
 // and Jane's Necrons hold different territories with their own home.
 function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
 
 
 function assignTerritories(sites, units, W, H, adj) {
-  // Sort by first_played_at (earliest first), ties broken by player_key+faction_id.
+  // Sort by first_seen_at (earliest first), ties broken by player_key+faction_id.
   // The first player to play a faction claims the territory closest to that
   // faction's regional anchor; subsequent players cluster nearby.
   //
   // CRITICAL: every comparison and every iteration in this function MUST be
   // locale-independent and not rely on Object key iteration order — otherwise
   // two browsers with different default locales pick different home sites
-  // when first_played_at ties, and the whole map shifts. Use codepoint
+  // when first_seen_at ties, and the whole map shifts. Use codepoint
   // comparison (`<` / `>`) and iterate the explicit `sorted` array.
   const sorted = [...units].sort((a, b) => {
-    const ta = String(a.first_played_at || '');
-    const tb = String(b.first_played_at || '');
+    const ta = String(a.first_seen_at || '');
+    const tb = String(b.first_seen_at || '');
     if (ta < tb) return -1;
     if (ta > tb) return 1;
     const ka = unitKey(a), kb = unitKey(b);

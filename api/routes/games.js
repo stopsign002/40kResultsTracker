@@ -187,6 +187,22 @@ async function resolvePlayerIdentities(players) {
   }
 }
 
+// First-seen timestamp per (player, faction) banner — locked in on first
+// save and never updated. The war map sorts banners by this to give each
+// banner a stable home fortress that doesn't move when games are added,
+// hidden, edited, or backdated. See CLAUDE.md "Theatre of War internals".
+async function recordBannerFirstSeen(client, p) {
+  if (!p.factionId) return;
+  if (!p.userId && !p.guestName) return;
+  const playerKey = p.userId ? `user:${p.userId}` : `guest:${p.guestName}`;
+  await client.query(
+    `INSERT INTO banner_first_seen (player_key, faction_id)
+     VALUES ($1, $2)
+     ON CONFLICT (player_key, faction_id) DO NOTHING`,
+    [playerKey, p.factionId]
+  );
+}
+
 async function insertPlayerChildren(client, gamePlayerId, p) {
   for (const r of p.rounds || []) {
     await client.query(
@@ -258,6 +274,7 @@ router.post('/', async (req, res) => {
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);
+        await recordBannerFirstSeen(client, p);
       }
       return gameId;
     });
@@ -328,6 +345,7 @@ router.put('/:id', async (req, res) => {
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);
+        await recordBannerFirstSeen(client, p);
       }
     });
     res.json({ id });

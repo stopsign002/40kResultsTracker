@@ -515,3 +515,23 @@ WHERE gp.user_id IS NULL
   AND gp.guest_name IS NOT NULL
   AND u.is_active = TRUE
   AND LOWER(u.display_name) = LOWER(gp.guest_name);
+
+-- ── Backfill: banner_first_seen from existing game data ─────────
+-- One-shot: any (player, faction) banner that already plays in the
+-- system gets its first_seen_at = MIN(played_at). After this single
+-- backfill, NEW banners get NOW() via the games.js save path / the
+-- warmap endpoint's lazy upsert. Existing banners retain their
+-- assigned timestamp forever.
+INSERT INTO banner_first_seen (player_key, faction_id, first_seen_at)
+SELECT
+  CASE WHEN gp.user_id IS NOT NULL
+       THEN 'user:' || gp.user_id::text
+       ELSE 'guest:' || gp.guest_name
+  END                          AS player_key,
+  gp.faction_id,
+  MIN(g.played_at)::timestamptz AS first_seen_at
+FROM game_players gp
+JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+WHERE gp.faction_id IS NOT NULL
+GROUP BY player_key, gp.faction_id
+ON CONFLICT (player_key, faction_id) DO NOTHING;

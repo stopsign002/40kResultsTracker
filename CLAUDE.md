@@ -141,7 +141,7 @@ For real public-reach checks, ask the user to hit it from a phone on cellular.
 
 The Theatre of War map MUST render byte-identically on every browser, OS and locale. This is the only "feature" the user has explicitly demanded for cross-device consistency. Things that quietly break determinism:
 
-- **`String.prototype.localeCompare`** — uses the user's default locale. `'Bob::5'.localeCompare('alice::5')` can return different signs in `tr-TR` vs `en-US`. We hit this exact bug when two banners shared `first_played_at` and the tiebreaker decided who claimed the closer fortress. **Always use codepoint comparison** (`a < b ? -1 : a > b ? 1 : 0`) in any sort that affects rendering.
+- **`String.prototype.localeCompare`** — uses the user's default locale. `'Bob::5'.localeCompare('alice::5')` can return different signs in `tr-TR` vs `en-US`. We hit this exact bug when two banners shared `first_seen_at` and the tiebreaker decided who claimed the closer fortress. **Always use codepoint comparison** (`a < b ? -1 : a > b ? 1 : 0`) in any sort that affects rendering.
 - **Object property iteration** when keys could be integer-like. V8 reorders integer-string keys (`'42'`, `'7'`) before non-integer keys, regardless of insertion order. Our `unitKey` is `${player_key}::${faction_id}` so the `::` makes keys non-integer; iteration is insertion-order. If you ever change `unitKey` to a bare integer, switch to iterating an explicit array (the existing `sorted` array is the canonical order).
 - **`Math.sin/cos`** — implementation-defined per ECMAScript spec. In practice modern V8/SpiderMonkey/JSC produce identical results, but a last-bit difference at a polygon vertex *could* flip a single grid cell's land-mask result. Hasn't bitten us yet; if it does, replace trig with a polynomial approximation.
 
@@ -296,7 +296,7 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/stats/head-to-head?userA=N&userB=M` | auth | every game between two users |
 | GET | `/stats/first-turn-impact` | auth | win% comparison going first vs second |
 | GET | `/stats/secondary-averages` | auth | per-card pick count + avg score |
-| GET | `/stats/warmap` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_played_at` |
+| GET | `/stats/warmap` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_seen_at` |
 | GET | `/admin/users` | admin | all users including inactive |
 | POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
 | PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
@@ -327,6 +327,7 @@ Tables (snake_case throughout):
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
+| `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's home-fortress immutability depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
 
 ### View
 
@@ -450,7 +451,7 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 e
 3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
 4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
 5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
-6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_played_at` (earliest banner claims home first), tiebreak by `(player_key, faction_id)`. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * 50)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
+6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at` (the earliest banner claims home first), tiebreak by `(player_key, faction_id)` via codepoint comparison. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * 50)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
 7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
 9. **Fortresses + labels.** Diamond marker with cross-hairs at each home. Primary label = army_name (or display_name fallback) in amber monospace; faction abbreviation drawn smaller below in cyan.
@@ -470,9 +471,23 @@ Tuning notes: 70% games / 30% win% means high-volume players dominate land but p
 
 ### Why home fortresses can't fall
 
-Each active banner's home is assigned in `assignTerritories` and added to `taken` before any other allocation. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if a banner's `territory_score` would round to 0 territories, they keep their home (`Math.max(1, ...)` floor in target count + the home being claimed first).
+Two layers of guarantee:
 
-The first player to play a faction wins the closest-to-anchor territory permanently — `first_played_at` is sourced from `MIN(g.played_at)` per `(player, faction)` in the SQL, which is monotonically stable. Subsequent players who pick up that faction get the next-nearest free territory in the regional zone. Once a fortress is established it never moves.
+**1. Persistent first-seen timestamps (server-side).** The `banner_first_seen` table holds one row per `(player_key, faction_id)` with a `first_seen_at` set when the banner first saves a game. **That row is never updated** — adding new games, hiding old games, editing a game's `played_at`, even deleting and re-entering all games for a banner can never move it earlier in the order. New banners get `NOW()` on their first save, which is later than every existing banner's `first_seen_at`, so they slot into the back of the order without disturbing anyone.
+
+The earlier (broken) approach used `MIN(played_at)` from the live game data. That's NOT monotonic — backdating a game pulls the banner earlier in the order, and `assignTerritories` then re-runs from scratch giving previously-first banners a different fortress site. Symptom seen in the wild: "me and the Tyranids basically just traded places, even our fortresses moved." Fixed.
+
+**2. Allocation-order determinism (client-side).** `assignTerritories` claims homes in `first_seen_at` order; each banner's home territory is added to `taken` and `owner[id]` BEFORE any other allocation runs. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if a banner's `territory_score` would round to 0 territories, they keep their home (`Math.max(1, ...)` floor in target count + the home being claimed first).
+
+Combined effect: a fortress, once placed, is locked to that banner forever — across game additions, edits, hides, server restarts, browser sessions, and **the introduction of new players or new banners**. New banners always receive `first_seen_at = NOW()`, which sorts after every existing banner; the existing banners' home-claim loops therefore see the exact same set of unclaimed sites as the previous render and pick the same homes.
+
+Borders, on the other hand, WILL shift when new banners appear. `totalScore` changes when a new banner joins, every banner's `target[k]` is recomputed, and the BFS expansion fans out from each home to fill the new targets — pulling from previously neutral or other-banner territory. This is intentional and expected.
+
+### When fortresses CAN move (edge cases worth knowing)
+
+- The continent itself moves if `MAP_SEED`, `VIRTUAL_W/H`, or `LLOYD_ITERATIONS` change — every fortress goes with it.
+- Adding a new entry to `FACTION_HOMES` between two existing entries (rather than appending) shifts every later faction's regional anchor.
+- Truncating `banner_first_seen` makes everyone re-claim from scratch in the seeded backfill order. Don't do this unless you mean it.
 
 ### Recipe: changing what shows on a player's fortress label
 
