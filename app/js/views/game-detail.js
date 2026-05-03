@@ -1,5 +1,5 @@
 import { games, admin } from '../api.js';
-import { el, fmtDate, pill, toast } from '../components.js';
+import { el, fmtDate, pill, toast, confirmModal } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
   const root = el('div', { class: 'fade-in' });
@@ -20,6 +20,23 @@ export async function renderGameDetail(state, gameId) {
             } catch (e) { toast(e.message, 'error'); }
           }
         }, g.hidden_from_stats ? 'Unhide' : 'Hide from stats') : null,
+        state.user?.role === 'admin' ? el('button', {
+          class: 'btn small danger',
+          onClick: async () => {
+            const ok = await confirmModal({
+              title: 'Delete game?',
+              body: `Permanently remove Game #${g.id} and all its rounds, secondaries and challenger entries. This cannot be undone — for normal data hygiene use "Hide from stats" instead.`,
+              danger: true,
+              confirmLabel: 'Delete forever',
+            });
+            if (!ok) return;
+            try {
+              await admin.deleteGame(g.id);
+              toast('Game deleted');
+              window.__nav('/games');
+            } catch (e) { toast(e.message, 'error'); }
+          },
+        }, 'Delete') : null,
         el('a', { class: 'btn primary small', href: `#/games/${g.id}/edit` }, 'Edit'),
       ].filter(Boolean)),
     ]),

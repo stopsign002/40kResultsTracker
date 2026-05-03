@@ -10,7 +10,7 @@ router.use(requireAuth);
 router.get('/', async (req, res) => {
   const {
     playerUserId, playerFaction, opponentFaction, missionPack, primaryMission,
-    deploymentMap, format, dateFrom, dateTo, includeHidden,
+    deploymentMap, format, dateFrom, dateTo, includeHidden, q,
     limit = 100, offset = 0,
   } = req.query;
 
@@ -20,6 +20,23 @@ router.get('/', async (req, res) => {
 
   if (!includeHidden || includeHidden === 'false') {
     where.push(`g.hidden_from_stats = FALSE`);
+  }
+  if (q && q.trim()) {
+    // Free-text search across notes, army_list_code, tournament_name,
+    // and player names (registered or guest). ILIKE is case-insensitive
+    // on the trigram-friendly columns we have available.
+    where.push(`(
+      g.notes ILIKE $${i} OR
+      g.tournament_name ILIKE $${i} OR
+      g.location ILIKE $${i} OR
+      EXISTS (SELECT 1 FROM game_players gp2
+              LEFT JOIN users u2 ON u2.id = gp2.user_id
+              WHERE gp2.game_id = g.id
+              AND (gp2.guest_name ILIKE $${i} OR u2.display_name ILIKE $${i}
+                   OR u2.army_name ILIKE $${i} OR gp2.army_list_code ILIKE $${i}))
+    )`);
+    params.push('%' + q.trim() + '%');
+    i++;
   }
   if (format) { where.push(`g.game_format = $${i++}`); params.push(format); }
   if (missionPack) { where.push(`g.mission_pack_id = $${i++}`); params.push(missionPack); }

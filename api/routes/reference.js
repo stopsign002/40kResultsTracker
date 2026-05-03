@@ -10,11 +10,24 @@ router.get('/factions', async (_req, res) => {
 
 router.get('/factions/:id/detachments', async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  const { rows } = await pool.query(
-    'SELECT id, name FROM detachments WHERE faction_id = $1 ORDER BY name',
-    [id]
-  );
-  res.json(rows);
+  // Union the seeded detachments with any free-text detachment_name strings
+  // that have ever been entered for this faction in a game. Once Joe types
+  // "Custom Crusade" once, everyone else sees it as an autocomplete suggestion.
+  const { rows } = await pool.query(`
+    SELECT name FROM (
+      SELECT name FROM detachments WHERE faction_id = $1
+      UNION
+      SELECT TRIM(gp.detachment_name) AS name
+      FROM game_players gp
+      WHERE gp.faction_id = $1
+        AND gp.detachment_name IS NOT NULL
+        AND TRIM(gp.detachment_name) <> ''
+    ) names
+    ORDER BY name
+  `, [id]);
+  // Same shape as before — id is omitted (no longer meaningful for free-text)
+  // but the client only uses .name from the datalist anyway.
+  res.json(rows.map((r, idx) => ({ id: idx + 1, name: r.name })));
 });
 
 router.get('/mission-packs', async (_req, res) => {

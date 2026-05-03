@@ -44,6 +44,7 @@ export const auth = {
   logout: () => api.post('/auth/logout', {}),
   changePassword: (currentPassword, newPassword) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
+  updateMe: (data) => api.patch('/auth/me', data),
 };
 
 export const reference = {
@@ -90,6 +91,7 @@ export const admin = {
   createUser:   (data) => api.post('/admin/users', data),
   updateUser:   (id, data) => api.patch(`/admin/users/${id}`, data),
   setVisibility:(gameId, hidden) => api.patch(`/admin/games/${gameId}/visibility`, { hidden }),
+  deleteGame:   (gameId) => api.del(`/admin/games/${gameId}`),
 };
 
 function qstr(q) {

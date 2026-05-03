@@ -4,10 +4,24 @@ import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
 const filterState = {
   format: '', missionPack: '', primaryMission: '', deploymentMap: '',
   playerUserId: '', playerFaction: '', opponentFaction: '',
-  dateFrom: '', dateTo: '', includeHidden: 'false',
+  dateFrom: '', dateTo: '', includeHidden: 'false', q: '',
 };
 
+// On entry, copy any matching query-string params from the URL hash so that
+// click-throughs from stats / matchups / faction win-rates pre-populate the
+// filter panel.
+function applyHashParams() {
+  const hash = window.location.hash || '';
+  const qIndex = hash.indexOf('?');
+  if (qIndex < 0) return;
+  const params = new URLSearchParams(hash.slice(qIndex + 1));
+  for (const k of Object.keys(filterState)) {
+    if (params.has(k)) filterState[k] = params.get(k);
+  }
+}
+
 export async function renderGamesList(state) {
+  applyHashParams();
   const root = el('div', { class: 'fade-in' });
 
   const [factions, missionPacks, users] = await Promise.all([
@@ -64,6 +78,27 @@ export async function renderGamesList(state) {
     return el('div', { class: 'form-group' }, [el('label', {}, 'Visibility'), sel]);
   })();
 
+  // #8 free-text search across notes, army-list paste, tournament name,
+  // location, and player names.
+  let searchTimer = null;
+  const searchInput = el('input', {
+    type: 'search',
+    placeholder: 'Search notes / army list / players…',
+    value: filterState.q,
+    autocomplete: 'off',
+  });
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      filterState.q = searchInput.value;
+      refresh();
+    }, 250);
+  });
+  const searchField = el('div', { class: 'form-group', style: { gridColumn: '1 / -1' } }, [
+    el('label', {}, 'Search'),
+    searchInput,
+  ]);
+
   const filterPanel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, [
       el('h2', {}, 'Filters'),
@@ -77,6 +112,7 @@ export async function renderGamesList(state) {
     ]),
     el('div', { class: 'panel-body' }, [
       el('div', { class: 'filters' }, [
+        searchField,
         filterSel('Player', 'playerUserId', users, 'id', 'display_name'),
         filterSel('Faction', 'playerFaction', factions),
         filterSel('Vs Faction', 'opponentFaction', factions),

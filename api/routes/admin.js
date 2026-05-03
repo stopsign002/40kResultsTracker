@@ -73,4 +73,14 @@ router.patch('/games/:id/visibility', async (req, res) => {
   res.json(rows[0]);
 });
 
+// Hard delete a game and all its children. Admin-only, no soft-delete fallback.
+// game_players → game_rounds / player_secondaries / player_challengers cascade
+// from `ON DELETE CASCADE` already in the schema.
+router.delete('/games/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const { rowCount } = await pool.query('DELETE FROM games WHERE id = $1', [id]);
+  if (!rowCount) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true, id });
+});
+
 export default router;

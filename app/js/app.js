@@ -8,6 +8,7 @@ import { renderStats } from './views/stats.js';
 import { renderWarmap } from './views/warmap.js';
 import { renderAdmin } from './views/admin.js';
 import { renderPlayer } from './views/player.js';
+import { renderProfile } from './views/profile.js';
 
 const root = document.getElementById('app');
 
@@ -24,12 +25,15 @@ const routes = [
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
   { match: /^\/stats$/,              handler: () => renderStats(state) },
   { match: /^\/players\/(.+)$/,      handler: (m) => renderPlayer(state, decodeURIComponent(m[1])) },
+  { match: /^\/profile$/,            handler: () => renderProfile(state) },
   { match: /^\/admin$/,              handler: () => renderAdmin(state) },
 ];
 
 function currentPath() {
   const h = window.location.hash || '#/';
-  return h.startsWith('#') ? h.slice(1) : h;
+  const raw = h.startsWith('#') ? h.slice(1) : h;
+  const qIdx = raw.indexOf('?');
+  return qIdx >= 0 ? raw.slice(0, qIdx) : raw;
 }
 
 export function navigate(path) {
@@ -83,7 +87,12 @@ function renderShell(viewNode) {
     navToggle,
     nav,
     el('div', { class: 'session' }, [
-      el('span', { class: 'who' }, state.user.displayName || state.user.username),
+      el('a', {
+        class: 'who',
+        href: '#/profile',
+        title: 'Edit your profile',
+        style: { textDecoration: 'none', cursor: 'pointer' },
+      }, state.user.displayName || state.user.username),
       el('span', { class: 'pill' }, state.user.role),
       el('button', {
         class: 'btn small',
