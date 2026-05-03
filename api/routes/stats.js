@@ -215,4 +215,214 @@ router.get('/secondary-averages', async (_req, res) => {
   res.json(rows);
 });
 
+// ── Per-detachment win rates ─────────────────────────────────
+// Groups game_players by (faction, detachment_name) to surface which
+// detachments actually win. Detachments are free-text now, so unknown
+// or empty values bucket into "(unspecified)".
+router.get('/detachment-winrates', async (req, res) => {
+  const factionId = req.query.factionId ? parseInt(req.query.factionId, 10) : null;
+  const where = ['g.hidden_from_stats = FALSE'];
+  const params = [];
+  let i = 1;
+  if (factionId) { where.push(`gp.faction_id = $${i++}`); params.push(factionId); }
+  const sql = `
+    SELECT
+      f.id                                             AS faction_id,
+      f.name                                           AS faction,
+      COALESCE(NULLIF(TRIM(gp.detachment_name), ''), '(unspecified)') AS detachment,
+      COUNT(*)::int                                    AS games,
+      SUM(CASE WHEN gp.result = 'win'  THEN 1 ELSE 0 END)::int AS wins,
+      SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
+      SUM(CASE WHEN gp.result = 'draw' THEN 1 ELSE 0 END)::int AS draws,
+      ROUND(AVG(gp.final_score)::numeric, 1)           AS avg_score
+    FROM game_players gp
+    JOIN games g ON g.id = gp.game_id
+    JOIN factions f ON f.id = gp.faction_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY f.id, f.name, detachment
+    ORDER BY games DESC, f.name, detachment
+  `;
+  const { rows } = await pool.query(sql, params);
+  for (const r of rows) {
+    r.win_rate = r.games ? Math.round((r.wins / r.games) * 1000) / 10 : 0;
+  }
+  res.json(rows);
+});
+
+// ── Trends over time ────────────────────────────────────────
+// Three series the dashboard can plot: monthly games played, monthly
+// average final score (across all players), and faction popularity
+// (top N factions by total games, with their per-month counts).
+router.get('/trends', async (_req, res) => {
+  const monthlyGames = await pool.query(`
+    SELECT TO_CHAR(date_trunc('month', g.played_at), 'YYYY-MM') AS month,
+           COUNT(*)::int AS games
+    FROM games g
+    WHERE g.hidden_from_stats = FALSE
+    GROUP BY month
+    ORDER BY month
+  `);
+  const monthlyAvgScore = await pool.query(`
+    SELECT TO_CHAR(date_trunc('month', g.played_at), 'YYYY-MM') AS month,
+           ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score
+    FROM games g
+    JOIN game_players gp ON gp.game_id = g.id
+    WHERE g.hidden_from_stats = FALSE
+    GROUP BY month
+    ORDER BY month
+  `);
+  const factionPopularity = await pool.query(`
+    WITH top_factions AS (
+      SELECT f.id, f.name
+      FROM factions f
+      JOIN game_players gp ON gp.faction_id = f.id
+      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+      GROUP BY f.id, f.name
+      ORDER BY COUNT(*) DESC
+      LIMIT 8
+    )
+    SELECT
+      TO_CHAR(date_trunc('month', g.played_at), 'YYYY-MM') AS month,
+      f.id AS faction_id,
+      f.name AS faction,
+      COUNT(*)::int AS games
+    FROM top_factions f
+    JOIN game_players gp ON gp.faction_id = f.id
+    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    GROUP BY month, f.id, f.name
+    ORDER BY month, f.name
+  `);
+  res.json({
+    monthlyGames: monthlyGames.rows,
+    monthlyAvgScore: monthlyAvgScore.rows,
+    factionPopularity: factionPopularity.rows,
+  });
+});
+
+// ── Per-player profile ──────────────────────────────────────
+// :playerKey is either "user:<id>" or "guest:<name>". Returns:
+//   - identity (display name, army name)
+//   - overall win/loss/draw + recent-form streak
+//   - per-faction breakdown
+//   - longest win and loss streaks
+//   - biggest single-game win + loss (by score margin)
+router.get('/player/:playerKey', async (req, res) => {
+  const playerKey = req.params.playerKey;
+  if (!playerKey || playerKey.length > 200) return res.status(400).json({ error: 'invalid player key' });
+
+  const playerKeyExpr = `(CASE WHEN gp.user_id IS NOT NULL
+                              THEN 'user:' || gp.user_id::text
+                              ELSE 'guest:' || gp.guest_name END)`;
+
+  // Identity
+  const idRow = await pool.query(`
+    SELECT
+      ${playerKeyExpr} AS player_key,
+      COALESCE(u.display_name, gp.guest_name) AS player_name,
+      u.army_name
+    FROM game_players gp
+    LEFT JOIN users u ON u.id = gp.user_id
+    WHERE ${playerKeyExpr} = $1
+    LIMIT 1
+  `, [playerKey]);
+  if (!idRow.rows[0]) return res.status(404).json({ error: 'player not found' });
+  const identity = idRow.rows[0];
+
+  // Overall + per-faction
+  const overall = await pool.query(`
+    SELECT
+      COUNT(*)::int AS games,
+      SUM(CASE WHEN gp.result = 'win'  THEN 1 ELSE 0 END)::int AS wins,
+      SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
+      SUM(CASE WHEN gp.result = 'draw' THEN 1 ELSE 0 END)::int AS draws,
+      ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score,
+      MAX(gp.final_score)::int AS best_score
+    FROM game_players gp
+    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    WHERE ${playerKeyExpr} = $1
+  `, [playerKey]);
+
+  const byFaction = await pool.query(`
+    SELECT f.id AS faction_id, f.name AS faction,
+      COUNT(*)::int AS games,
+      SUM(CASE WHEN gp.result = 'win'  THEN 1 ELSE 0 END)::int AS wins,
+      SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
+      SUM(CASE WHEN gp.result = 'draw' THEN 1 ELSE 0 END)::int AS draws
+    FROM game_players gp
+    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN factions f ON f.id = gp.faction_id
+    WHERE ${playerKeyExpr} = $1
+    GROUP BY f.id, f.name
+    ORDER BY games DESC
+  `, [playerKey]);
+  for (const r of byFaction.rows) {
+    r.win_rate = r.games ? Math.round((r.wins / r.games) * 1000) / 10 : 0;
+  }
+
+  // Game-by-game results in order — used to compute streaks client-side
+  // sized but kept simple by computing here.
+  const gameSeq = await pool.query(`
+    SELECT g.id, g.played_at::text AS played_at, gp.result, gp.final_score,
+           opp.final_score AS opp_score
+    FROM game_players gp
+    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN game_players opp ON opp.game_id = g.id AND opp.seat <> gp.seat
+    WHERE ${playerKeyExpr} = $1
+    ORDER BY g.played_at, g.id
+  `, [playerKey]);
+
+  let curStreak = 0;        // signed: positive = current win streak, negative = loss streak
+  let longestWin = 0;
+  let longestLoss = 0;
+  let runWin = 0, runLoss = 0;
+  let biggestWinMargin = 0;
+  let biggestLossMargin = 0;
+  for (const r of gameSeq.rows) {
+    const margin = (r.final_score || 0) - (r.opp_score || 0);
+    if (r.result === 'win') {
+      runWin++; runLoss = 0;
+      if (runWin > longestWin) longestWin = runWin;
+      if (margin > biggestWinMargin) biggestWinMargin = margin;
+    } else if (r.result === 'loss') {
+      runLoss++; runWin = 0;
+      if (runLoss > longestLoss) longestLoss = runLoss;
+      if (-margin > biggestLossMargin) biggestLossMargin = -margin;
+    } else {
+      runWin = 0; runLoss = 0;
+    }
+  }
+  // current streak = most recent result's run
+  const last = gameSeq.rows[gameSeq.rows.length - 1];
+  if (last) {
+    if (last.result === 'win') {
+      let n = 0;
+      for (let i = gameSeq.rows.length - 1; i >= 0 && gameSeq.rows[i].result === 'win'; i--) n++;
+      curStreak = n;
+    } else if (last.result === 'loss') {
+      let n = 0;
+      for (let i = gameSeq.rows.length - 1; i >= 0 && gameSeq.rows[i].result === 'loss'; i--) n++;
+      curStreak = -n;
+    }
+  }
+  const o = overall.rows[0];
+  const win_rate = o.games ? Math.round((o.wins / o.games) * 1000) / 10 : 0;
+
+  res.json({
+    ...identity,
+    games: o.games || 0,
+    wins: o.wins || 0,
+    losses: o.losses || 0,
+    draws: o.draws || 0,
+    win_rate,
+    avg_score: o.avg_score,
+    best_score: o.best_score,
+    current_streak: curStreak,
+    longest_win_streak: longestWin,
+    longest_loss_streak: longestLoss,
+    biggest_win_margin: biggestWinMargin,
+    biggest_loss_margin: biggestLossMargin,
+    by_faction: byFaction.rows,
+  });
+});
+
 export default router;

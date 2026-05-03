@@ -80,6 +80,9 @@ export const stats = {
   firstTurnImpact:        (q) => api.get('/stats/first-turn-impact' + qstr(q)),
   secondaryAverages:      () => api.get('/stats/secondary-averages'),
   warmap:                 () => api.get('/stats/warmap'),
+  detachmentWinRates:     (factionId) => api.get('/stats/detachment-winrates' + (factionId ? '?factionId=' + factionId : '')),
+  trends:                 () => api.get('/stats/trends'),
+  player:                 (playerKey) => api.get('/stats/player/' + encodeURIComponent(playerKey)),
 };
 
 export const admin = {
