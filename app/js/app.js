@@ -44,26 +44,42 @@ function renderShell(viewNode) {
     return;
   }
   const path = currentPath();
-  const navLink = (href, label) => {
-    const a = el('a', { href: '#' + href }, label);
-    const isActive = path === href || (href === '/war' && (path === '/' || path === ''));
-    if (isActive) a.classList.add('active');
-    return a;
-  };
-  const navItems = [
-    navLink('/war', 'Theatre of War'),
-    navLink('/games', 'Games'),
-    navLink('/games/new', 'New Game'),
-    navLink('/stats', 'Stats'),
+  const isActiveHref = (href) =>
+    path === href || (href === '/war' && (path === '/' || path === ''));
+
+  const linkDefs = [
+    { href: '/war',       label: 'Theatre of War' },
+    { href: '/games',     label: 'Games' },
+    { href: '/games/new', label: 'New Game' },
+    { href: '/stats',     label: 'Stats' },
   ];
-  if (state.user.role === 'admin') navItems.push(navLink('/admin', 'Admin'));
+  if (state.user.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });
+
+  const navItems = linkDefs.map(d => {
+    const a = el('a', { href: '#' + d.href }, d.label);
+    if (isActiveHref(d.href)) a.classList.add('active');
+    return a;
+  });
+  const nav = el('nav', { id: 'main-nav' }, navItems);
+
+  const activeDef = linkDefs.find(d => isActiveHref(d.href)) || linkDefs[0];
+  const navToggle = el('button', {
+    type: 'button',
+    class: 'nav-toggle',
+    'aria-label': 'Toggle navigation',
+    onClick: (e) => { e.stopPropagation(); nav.classList.toggle('open'); },
+  }, [
+    el('span', { class: 'nav-toggle-label' }, activeDef.label),
+    el('span', { class: 'nav-toggle-caret' }, '▾'),
+  ]);
 
   const header = el('header', { class: 'topbar' }, [
     el('div', { class: 'brand' }, [
       document.createTextNode('40K'),
       el('span', { class: 'accent' }, 'RESULTS'),
     ]),
-    el('nav', {}, navItems),
+    navToggle,
+    nav,
     el('div', { class: 'session' }, [
       el('span', { class: 'who' }, state.user.displayName || state.user.username),
       el('span', { class: 'pill' }, state.user.role),
@@ -76,6 +92,25 @@ function renderShell(viewNode) {
   const main = el('main', {}, viewNode);
   root.appendChild(header);
   root.appendChild(main);
+}
+
+// One-time wiring: clicking outside the mobile nav, or pressing Escape,
+// closes any open dropdown. Routing changes (hashchange → renderShell)
+// already rebuild the nav fresh without the .open class, so link clicks
+// auto-close.
+if (!window.__navOutsideListenerInstalled) {
+  document.addEventListener('click', (e) => {
+    const nav = document.getElementById('main-nav');
+    if (!nav || !nav.classList.contains('open')) return;
+    if (e.target.closest('.nav-toggle')) return;
+    nav.classList.remove('open');
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const nav = document.getElementById('main-nav');
+    if (nav) nav.classList.remove('open');
+  });
+  window.__navOutsideListenerInstalled = true;
 }
 
 async function route() {
