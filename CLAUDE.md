@@ -390,6 +390,7 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~50 e
 ### Constants (immutable)
 
 - `MAP_SEED = 0xDEAD40` — drives both the continent silhouette and the territory site placement. **Never change.**
+- `VIRTUAL_W = 1280`, `VIRTUAL_H = 794` — fixed compute resolution. Map is generated at this size and CSS-scaled for display. Critical for cross-device consistency: same canvas dimensions on every device → byte-identical territory geometry and faction allocation. **Never change.**
 - `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** When a faction first plays, its closest land territory by site distance becomes its home.
 - `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
 - `N_TERRITORIES = 50` — total territories on the continent. Changing this changes everyone's map.

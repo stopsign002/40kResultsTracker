@@ -21,6 +21,13 @@ const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
 const N_TERRITORIES = 50;
 const LLOYD_ITERATIONS = 8;
 
+// Map is computed at a FIXED virtual resolution so the territory geometry
+// and faction allocation are byte-identical on every device, regardless of
+// how wide the user's browser is. The <canvas> is then CSS-scaled for
+// display. Changing these reshuffles the entire map for everyone.
+const VIRTUAL_W = 1280;
+const VIRTUAL_H = 794;
+
 // ── Boimaggedon faction homes ───────────────────────────────────
 // Roughly the same regional placement as the old galaxy: Imperials centred,
 // Chaos to the west, Tyranids/T'au/Necrons to the east. The continent is
@@ -437,13 +444,17 @@ export async function renderWarmap(_state) {
   const canvas = el('canvas', { id: 'warmap-canvas' });
   canvasWrapper.appendChild(canvas);
 
+  // Always compute at the fixed virtual resolution; CSS scales the rendered
+  // bitmap to fit the container. Two devices with different widths still
+  // see byte-identical territory geometry and faction allocation.
+  canvas.width = VIRTUAL_W;
+  canvas.height = VIRTUAL_H;
+  canvas.style.display = 'block';
+  canvas.style.width = '100%';
+  canvas.style.height = 'auto';
+  canvas.style.maxWidth = VIRTUAL_W + 'px';
   requestAnimationFrame(() => {
-    const W = Math.min(1280, canvasWrapper.clientWidth || 1000);
-    const H = Math.round(W * 0.62);
-    canvas.width = W;
-    canvas.height = H;
-    canvas.style.display = 'block';
-    drawTacticalMap(canvas, factionData, W, H);
+    drawTacticalMap(canvas, factionData, VIRTUAL_W, VIRTUAL_H);
   });
 
   return root;
