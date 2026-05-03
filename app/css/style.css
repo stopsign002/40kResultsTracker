@@ -508,3 +508,71 @@ td.tabular { font-variant-numeric: tabular-nums; }
 
 /* ── Hidden by default helper ─────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── Modal dialog (confirmModal / promptModal) ─────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity .15s ease;
+  pointer-events: none;
+}
+.modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal-dialog {
+  background: var(--panel-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 320px;
+  max-width: 480px;
+  width: calc(100vw - 32px);
+  transform: translateY(8px);
+  transition: transform .15s ease;
+}
+.modal-overlay.show .modal-dialog { transform: translateY(0); }
+.modal-dialog .modal-header { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-dialog .modal-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.modal-dialog .modal-body { padding: 18px; color: var(--text); font-size: 14px; line-height: 1.5; }
+.modal-dialog .modal-body label { margin-bottom: 6px; }
+.modal-dialog .modal-body input { width: 100%; }
+.modal-dialog .modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; }
+
+/* ── Frontend error boundary panel ─────────────────────────── */
+.error-boundary {
+  margin: 60px auto;
+  max-width: 640px;
+  background: var(--panel-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-lg);
+}
+.error-boundary h1 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--danger);
+  margin-top: 0;
+}
+.error-boundary pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 12px;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}

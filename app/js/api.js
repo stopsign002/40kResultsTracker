@@ -1,5 +1,7 @@
 const API_BASE = '/api';
 
+// Server error shape: { error: string, code?: string }.
+// Network failures throw with status=0 and an offline-ish message.
 async function request(method, path, body) {
   const opts = {
     method,
@@ -7,12 +9,21 @@ async function request(method, path, body) {
     credentials: 'same-origin',
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + path, opts);
+  let res;
+  try {
+    res = await fetch(API_BASE + path, opts);
+  } catch (netErr) {
+    const err = new Error('network unreachable');
+    err.status = 0;
+    err.code = 'network';
+    throw err;
+  }
   let data = null;
-  try { data = await res.json(); } catch { /* ignore */ }
+  try { data = await res.json(); } catch { /* response had no JSON body */ }
   if (!res.ok) {
-    const err = new Error(data?.error || res.statusText);
+    const err = new Error(data?.error || res.statusText || `HTTP ${res.status}`);
     err.status = res.status;
+    err.code = data?.code;
     err.data = data;
     throw err;
   }

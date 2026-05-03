@@ -113,26 +113,53 @@ if (!window.__navOutsideListenerInstalled) {
   window.__navOutsideListenerInstalled = true;
 }
 
+function renderErrorBoundary(err) {
+  clear(root);
+  const detail = err?.stack || err?.message || String(err);
+  const panel = el('div', { class: 'error-boundary' }, [
+    el('h1', {}, 'Something broke'),
+    el('p', {}, 'The page hit an unexpected error. Try reloading; if it keeps happening, send the trace below to whoever set this thing up.'),
+    el('pre', {}, detail),
+    el('div', { class: 'btn-group', style: { marginTop: '14px' } }, [
+      el('button', { class: 'btn primary', onClick: () => location.reload() }, 'Reload'),
+      el('a', { class: 'btn', href: '#/' }, 'Home'),
+    ]),
+  ]);
+  root.appendChild(panel);
+}
+
 async function route() {
-  if (!state.user) {
-    try { state.user = await auth.me(); } catch { state.user = null; }
-  }
-  if (!state.user) {
-    renderShell(null);
-    return;
-  }
-  const path = currentPath();
-  for (const r of routes) {
-    const m = path.match(r.match);
-    if (m) {
-      const node = await r.handler(m);
-      renderShell(node);
+  try {
+    if (!state.user) {
+      try { state.user = await auth.me(); } catch { state.user = null; }
+    }
+    if (!state.user) {
+      renderShell(null);
       return;
     }
+    const path = currentPath();
+    for (const r of routes) {
+      const m = path.match(r.match);
+      if (m) {
+        const node = await r.handler(m);
+        renderShell(node);
+        return;
+      }
+    }
+    // Fallback
+    navigate('/games');
+  } catch (err) {
+    console.error('Route handler threw:', err);
+    renderErrorBoundary(err);
   }
-  // Fallback
-  navigate('/games');
 }
+
+// Catch async errors that escape our wrappers (rare but happens with rogue
+// event handlers); show the same friendly panel.
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('Unhandled rejection:', e.reason);
+  if (!document.getElementById('app').firstChild) renderErrorBoundary(e.reason);
+});
 
 window.addEventListener('hashchange', route);
 window.addEventListener('load', route);

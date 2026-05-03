@@ -1,5 +1,5 @@
 import { admin, auth } from '../api.js';
-import { el, clear, toast, pill } from '../components.js';
+import { el, clear, toast, pill, promptModal } from '../components.js';
 
 export async function renderAdmin(state) {
   if (state.user?.role !== 'admin') {
@@ -147,7 +147,12 @@ function buildUsersTable(users, refresh) {
     const editArmy = el('button', {
       class: 'btn small',
       onClick: async () => {
-        const name = prompt(`Army name for "${u.username}" (blank to clear):`, u.army_name || '');
+        const name = await promptModal({
+          title: 'Set army name',
+          label: `Army name for "${u.username}" — leave blank to clear`,
+          defaultValue: u.army_name || '',
+          placeholder: 'House Vosk',
+        });
         if (name === null) return;
         try {
           await admin.updateUser(u.id, { armyName: name.trim() });
@@ -160,7 +165,12 @@ function buildUsersTable(users, refresh) {
     const resetPw = el('button', {
       class: 'btn small',
       onClick: async () => {
-        const newPw = prompt(`Set new password for "${u.username}" (min 8 chars):`);
+        const newPw = await promptModal({
+          title: 'Reset password',
+          label: `New password for "${u.username}" (min 8 chars)`,
+          type: 'password',
+          placeholder: 'min 8 chars',
+        });
         if (!newPw) return;
         try {
           await admin.updateUser(u.id, { password: newPw });
