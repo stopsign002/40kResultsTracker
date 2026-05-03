@@ -7,6 +7,7 @@ import { renderGameForm } from './views/game-form.js';
 import { renderStats } from './views/stats.js';
 import { renderWarmap } from './views/warmap.js';
 import { renderAdmin } from './views/admin.js';
+import { renderPlayer } from './views/player.js';
 
 const root = document.getElementById('app');
 
@@ -22,6 +23,7 @@ const routes = [
   { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
   { match: /^\/stats$/,              handler: () => renderStats(state) },
+  { match: /^\/players\/(.+)$/,      handler: (m) => renderPlayer(state, decodeURIComponent(m[1])) },
   { match: /^\/admin$/,              handler: () => renderAdmin(state) },
 ];
 
