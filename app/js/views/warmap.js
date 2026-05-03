@@ -284,8 +284,8 @@ function buildAdjacency(ownership, GW, GH) {
 function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
 
 function unitLabel(u) {
-  if (u.army_name) return u.army_name;
-  return `${u.player_name} (${abbreviate(u.faction)})`;
+  // Army name first; fall back to the user's display name (or guest name).
+  return u.army_name || u.player_name;
 }
 
 function assignTerritories(sites, units, W, H, adj) {
