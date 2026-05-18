@@ -185,6 +185,75 @@ async function recordBannerFirstSeen(client, p) {
   );
 }
 
+async function resolveLookupId(client, table, packId, name) {
+  if (!name || !packId) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return null;
+  const found = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  if (found.rows[0]) return found.rows[0].id;
+  const inserted = await client.query(
+    `INSERT INTO ${table} (mission_pack_id, name) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING id`,
+    [packId, trimmed]
+  );
+  if (inserted.rows[0]) return inserted.rows[0].id;
+  const again = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  return again.rows[0]?.id ?? null;
+}
+
+async function resolveCardId(client, table, packId, cardType, name) {
+  if (!name || !packId) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return null;
+  const found = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  if (found.rows[0]) return found.rows[0].id;
+  const sql = cardType
+    ? `INSERT INTO ${table} (mission_pack_id, name, card_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id`
+    : `INSERT INTO ${table} (mission_pack_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id`;
+  const params = cardType ? [packId, trimmed, cardType] : [packId, trimmed];
+  const inserted = await client.query(sql, params);
+  if (inserted.rows[0]) return inserted.rows[0].id;
+  const again = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  return again.rows[0]?.id ?? null;
+}
+
+async function resolveGameLookups(client, b) {
+  if (!b.missionPackId) return;
+  if (!b.primaryMissionId && b.primaryMissionName) {
+    b.primaryMissionId = await resolveLookupId(client, 'primary_missions', b.missionPackId, b.primaryMissionName);
+  }
+  if (!b.deploymentMapId && b.deploymentMapName) {
+    b.deploymentMapId = await resolveLookupId(client, 'deployment_maps', b.missionPackId, b.deploymentMapName);
+  }
+  if (!b.missionRuleId && b.missionRuleName) {
+    b.missionRuleId = await resolveLookupId(client, 'mission_rules', b.missionPackId, b.missionRuleName);
+  }
+  for (const p of b.players || []) {
+    for (const s of p.secondaries || []) {
+      if (!s.cardId && s.cardName) {
+        s.cardId = await resolveCardId(client, 'secondary_cards', b.missionPackId, 'tactical', s.cardName);
+      }
+    }
+    for (const c of p.challengers || []) {
+      if (!c.cardId && c.cardName) {
+        c.cardId = await resolveCardId(client, 'challenger_cards', b.missionPackId, null, c.cardName);
+      }
+    }
+  }
+}
+
 async function insertPlayerChildren(client, gamePlayerId, p) {
   for (const r of p.rounds || []) {
     await client.query(
@@ -222,6 +291,7 @@ router.post('/', async (req, res) => {
 
   try {
     const id = await withTx(async (client) => {
+      await resolveGameLookups(client, b);
       // Attach to the currently-active season. NULL is allowed but should
       // only happen for installs that ran with the schema before seasons.
       const activeSeason = await client.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
@@ -289,6 +359,8 @@ router.put('/:id', async (req, res) => {
     await withTx(async (client) => {
       const exists = await client.query('SELECT id FROM games WHERE id = $1', [id]);
       if (!exists.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
+
+      await resolveGameLookups(client, b);
 
       await client.query(
         `UPDATE games SET played_at=$2, game_format=$3, points_limit=$4, mission_pack_id=$5,

@@ -334,6 +334,7 @@ SELECT id, n FROM factions, (VALUES
 INSERT INTO mission_packs (name) VALUES
   ('Pariah Nexus'),
   ('Leviathan'),
+  ('Chapter Approved 2025-26'),
   ('Tempest of War'),
   ('Crusade'),
   ('Open Play'),
@@ -487,6 +488,66 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Secure No Man''s Land'),
   ('Sabotage')
 ) AS s(n) WHERE mission_packs.name = 'Leviathan' ON CONFLICT DO NOTHING;
+
+-- ── Chapter Approved 2025-26 ───────────────────────────────────
+INSERT INTO primary_missions (mission_pack_id, name)
+SELECT id, n FROM mission_packs, (VALUES
+  ('Linchpin'),
+  ('Purge the Foe'),
+  ('Burden of Trust'),
+  ('The Ritual'),
+  ('Hidden Supplies'),
+  ('Unexploded Ordnance'),
+  ('Terraform'),
+  ('Supply Drop'),
+  ('Scorched Earth')
+) AS m(n) WHERE mission_packs.name = 'Chapter Approved 2025-26' ON CONFLICT DO NOTHING;
+
+INSERT INTO deployment_maps (mission_pack_id, name)
+SELECT id, n FROM mission_packs, (VALUES
+  ('Hammer and Anvil'),
+  ('Sweeping Engagement'),
+  ('Dawn of War'),
+  ('Crucible of Battle'),
+  ('Search and Destroy'),
+  ('Tipping Point')
+) AS d(n) WHERE mission_packs.name = 'Chapter Approved 2025-26' ON CONFLICT DO NOTHING;
+
+INSERT INTO secondary_cards (mission_pack_id, name, card_type)
+SELECT id, n, 'tactical' FROM mission_packs, (VALUES
+  ('Cleanse'),
+  ('Behind Enemy Lines'),
+  ('Cull the Horde'),
+  ('Area Denial'),
+  ('Defend Stronghold'),
+  ('A Tempting Target'),
+  ('No Prisoners'),
+  ('Sabotage'),
+  ('Display of Might'),
+  ('Bring it Down'),
+  ('Engage on All Fronts'),
+  ('Recover Assets'),
+  ('Marked for Death'),
+  ('Establish Locus'),
+  ('Storm Hostile Objective'),
+  ('Assassination'),
+  ('Secure No Man''s Land'),
+  ('Extend Battle Lines'),
+  ('Overwhelming Force')
+) AS s(n) WHERE mission_packs.name = 'Chapter Approved 2025-26' ON CONFLICT DO NOTHING;
+
+INSERT INTO challenger_cards (mission_pack_id, name)
+SELECT id, n FROM mission_packs, (VALUES
+  ('Secure Extraction Zone'),
+  ('Zone Defense'),
+  ('Sow Chaos'),
+  ('Attrition'),
+  ('Over the Line'),
+  ('Establish Comms'),
+  ('Dug In'),
+  ('Self Preservation'),
+  ('Focused Effort')
+) AS c(n) WHERE mission_packs.name = 'Chapter Approved 2025-26' ON CONFLICT DO NOTHING;
 
 -- ── Seasons: ensure a default "Season 1" exists and backfill ─────
 -- One-shot: every install gets a Season 1 with the canonical MAP_SEED

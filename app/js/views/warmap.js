@@ -419,6 +419,47 @@ function assignTerritories(sites, units, W, H, adj) {
     }
   }
 
+  // Final pass: fill ALL remaining unclaimed land. Targets are integer-rounded
+  // so the BFS can terminate with neutral cells; pockets can also strand when a
+  // unit's frontier is surrounded by other owners. Walk repeatedly: any
+  // unclaimed territory with an owned neighbour adopts that neighbour's owner.
+  // Deterministic: territory ids iterate in index order, adjacency lists are
+  // built once from grid-order, neighbour iteration picks the first owned one.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let tid = 0; tid < owner.length; tid++) {
+      if (owner[tid] !== null) continue;
+      const neighbours = adj.get(tid);
+      if (!neighbours) continue;
+      for (const nb of neighbours) {
+        if (owner[nb] !== null) {
+          owner[tid] = owner[nb];
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Truly isolated islands (no path to any owned territory): hand to the
+  // banner whose faction anchor sits closest to the site. Same codepoint
+  // tie-break as the home-claim loop above.
+  for (let tid = 0; tid < owner.length; tid++) {
+    if (owner[tid] !== null) continue;
+    let best = Infinity, bestKey = null;
+    for (const u of sorted) {
+      const [hx, hy] = FACTION_HOMES[u.faction] || [0.5, 0.5];
+      const dx = sites[tid].x - hx * W, dy = sites[tid].y - hy * H;
+      const d = dx*dx + dy*dy;
+      const k = unitKey(u);
+      if (d < best || (d === best && (bestKey === null || k < bestKey))) {
+        best = d; bestKey = k;
+      }
+    }
+    if (bestKey !== null) owner[tid] = bestKey;
+  }
+
   return { owner, homeOf };
 }
 
