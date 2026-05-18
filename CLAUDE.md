@@ -99,7 +99,7 @@ These are load-bearing. Changing any of them silently breaks production.
 | Invariant | File | Why it's frozen |
 |---|---|---|
 | `MAP_SEED = 0xDEAD40` | `app/js/views/warmap.js` | The whole Theatre of War is a Voronoi computed from this seed. Change it and every faction's territory boundary jumps to a new shape for everyone, instantly invalidating the visual continuity that's the whole point. |
-| `FACTION_HOMES` positions | `app/js/views/warmap.js` | Each faction's home fortress sits at a hard-coded `[x, y]` in 0..1 space. Editing existing entries shifts that faction's home; reordering can change which Voronoi seed point wins ties. **Append new factions only; never edit or reorder.** |
+| `FACTION_HOMES` positions | `app/js/views/warmap.js` | Each faction's seed anchor sits at a hard-coded `[x, y]` in 0..1 space. Anchors are no longer drawn as fortresses — they're the invisible roots that drive the initial Voronoi assignment. Editing or reordering shifts every banner's seed site and reshapes the whole map. **Append new factions only; never edit or reorder.** |
 | `FACTION_COLOURS` | `app/js/views/warmap.js` | Lore-matched (Blood Angels red, Salamanders green, etc). Treat as the canonical palette. |
 | YAAB CSS variables | `app/css/style.css` | `--bg`, `--panel-bg`, `--accent`, `--font-display`, etc. were copied verbatim from the sister `yetanotherarmybuilder` site to keep visual consistency across the user's properties. Don't redesign — match. |
 | 5 battle rounds | everywhere | `ROUNDS = [1,2,3,4,5]` in `game-form.js`; `CHECK (round_number BETWEEN 1 AND 5)` in `schema.sql` (twice). 10e is a 5-round game. |
@@ -166,11 +166,11 @@ For real public-reach checks, ask the user to hit it from a phone on cellular.
 
 The Theatre of War map MUST render byte-identically on every browser, OS and locale. This is the only "feature" the user has explicitly demanded for cross-device consistency. Things that quietly break determinism:
 
-- **`String.prototype.localeCompare`** — uses the user's default locale. `'Bob::5'.localeCompare('alice::5')` can return different signs in `tr-TR` vs `en-US`. We hit this exact bug when two banners shared `first_seen_at` and the tiebreaker decided who claimed the closer fortress. **Always use codepoint comparison** (`a < b ? -1 : a > b ? 1 : 0`) in any sort that affects rendering.
+- **`String.prototype.localeCompare`** — uses the user's default locale. `'Bob::5'.localeCompare('alice::5')` can return different signs in `tr-TR` vs `en-US`. We hit this exact bug when two banners shared `first_seen_at` and the tiebreaker decided who claimed the closer seed site. **Always use codepoint comparison** (`a < b ? -1 : a > b ? 1 : 0`) in any sort that affects rendering.
 - **Object property iteration** when keys could be integer-like. V8 reorders integer-string keys (`'42'`, `'7'`) before non-integer keys, regardless of insertion order. Our `unitKey` is `${player_key}::${faction_id}` so the `::` makes keys non-integer; iteration is insertion-order. If you ever change `unitKey` to a bare integer, switch to iterating an explicit array (the existing `sorted` array is the canonical order).
 - **`Math.sin/cos`** — implementation-defined per ECMAScript spec. In practice modern V8/SpiderMonkey/JSC produce identical results, but a last-bit difference at a polygon vertex *could* flip a single grid cell's land-mask result. Hasn't bitten us yet; if it does, replace trig with a polynomial approximation.
 
-When adding any new code that affects map output, run through this checklist mentally. The first symptom of a determinism break is "the map looks the same but fortresses are slightly in different places on Sarah's machine."
+When adding any new code that affects map output, run through this checklist mentally. The first symptom of a determinism break is "the map looks the same but territories are slightly differently shaped on Sarah's machine."
 
 ### 8. Player names are free-text but linked at save time
 
@@ -386,7 +386,7 @@ Tables (snake_case throughout):
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
-| `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's home-fortress immutability depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
+| `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
 | `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
 
@@ -440,7 +440,7 @@ Just append to the right `INSERT INTO secondary_cards / challenger_cards` block 
 ### A new faction
 
 1. `api/db/seed.sql` — append to the `INSERT INTO factions (name) VALUES …` block, then add a `INSERT INTO detachments` cross-join for that faction's detachments
-2. `app/js/views/warmap.js` — append to `FACTION_HOMES` (lore-accurate `[x, y]` in 0..1 space) and `FACTION_COLOURS` (canonical hex). **Append, never reorder existing entries.**
+2. `app/js/views/warmap.js` — append to `FACTION_HOMES` (lore-accurate `[x, y]` in 0..1 space — drives the seed site, no longer drawn as a fortress) and `FACTION_COLOURS` (canonical hex). Optionally extend `FACTION_GLYPH` if you want a legend emblem. **Append, never reorder existing entries.**
 3. Restart container
 
 ### A new stats chart
@@ -522,13 +522,13 @@ When in doubt, the module's own README is the closer source of truth than this f
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate fortresses but share the Necron green colour. The label on each fortress is the user's `army_name` (falling back to their display name; for guests, their guest name). Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate regions but share the Necron green colour. Each banner's label (army_name → display_name → guest name) floats at the centroid of its owned cells; no fortress markers are drawn. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
 - `MAP_SEED = 0xDEAD40` — drives both the continent silhouette and the territory site placement. **Never change.**
 - `VIRTUAL_W = 1280`, `VIRTUAL_H = 794` — fixed compute resolution. Map is generated at this size and CSS-scaled for display. Critical for cross-device consistency: same canvas dimensions on every device → byte-identical territory geometry and faction allocation. **Never change.**
-- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** When a faction first plays, its closest land territory by site distance becomes its home.
+- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** Drives the seed site each new banner claims (closest unclaimed Voronoi site to the anchor). Seeds are invisible — they're the stability root, not a drawn fortress.
 - `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
 - `N_TERRITORIES = 120` — total territories on the continent. Changing this changes everyone's map. The Poisson-disc `minDist` scales as `1/sqrt(N)` so spacing stays sane at any N (the formula evaluates to the original 0.07 of canvas at N=50).
 - `LLOYD_ITERATIONS = 8` — relaxation passes; more = more even cell sizes.
@@ -541,10 +541,14 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 
 3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
 4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
 5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
-6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at` (the earliest banner claims home first), tiebreak by `(player_key, faction_id)` via codepoint comparison. For each unit, find the closest unclaimed site to its faction's `FACTION_HOMES` regional anchor — that site becomes its fortress. Then BFS-expands from each home, round-robin between units, until each owns `round(territory_score / total * N_TERRITORIES)` territories. **Same faction, two players → two separate territory clusters in the same general region of the continent**, distinguished by a bold amber war-front border between them.
-7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; unclaimed land = neutral steel; ocean = backdrop.
+6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at`, tiebreak by `(player_key, faction_id)` via codepoint comparison. Four phases:
+   - **Seed claim** — each banner claims the closest unclaimed Voronoi site to its `FACTION_HOMES` anchor. Seeds are invisible roots; they don't get drawn as fortresses.
+   - **Initial fill** — multi-source BFS from all seeds simultaneously. Every land cell ends up owned by the banner whose seed reached it first across the adjacency graph (graph-distance Voronoi). No unclaimed land remains.
+   - **Pressure equalization** — over-target banners cede border cells to under-target neighbours, cascading outward until every banner matches `round(territory_score / total * N_TERRITORIES)` or the geography refuses. A local `flipKeepsContiguous` guard prevents flips that would split a region into islands.
+   - **Same faction, two players** → two separate territory clusters in the same general region of the continent, distinguished by a bold amber war-front border between them.
+7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; ocean = backdrop. (No unclaimed neutral land — the multi-source BFS in step 6 covers everything.)
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
-9. **Fortresses + labels.** Diamond marker with cross-hairs at each home. Primary label = army_name (or display_name fallback) in amber monospace; faction abbreviation drawn smaller below in cyan.
+9. **Labels.** Each banner's label is drawn at the centroid of its owned cells. Primary line = army_name (or display_name fallback) in amber monospace; faction abbreviation in cyan below.
 10. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout.
 
 ### Territory score formula
@@ -552,34 +556,34 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 
 Computed server-side in `api/routes/warmap.js`:
 
 ```js
-const winRate    = wins / games;
-const gameWeight = Math.log1p(games) / Math.log1p(50);   // log-scaled, normalised around 50 games
-const territory_score = Math.min(1, gameWeight * 0.70 + winRate * 0.30);
+const winsWeight   = Math.log1p(wins)            / Math.log1p(totalGames);
+const pointsWeight = Math.log1p(adjusted_points) / Math.log1p(totalGames * 75);
+const territory_score = Math.min(1, winsWeight * 0.66 + pointsWeight * 0.33);
 ```
 
-Tuning notes: 70% games / 30% win% means high-volume players dominate land but pure win-rate still matters. The `log1p / log1p(50)` shape gives early games big returns and diminishing returns past ~50 games. Adjust those constants if the user complains the leaderboard is too lopsided.
+Where `adjusted_points = SUM(final_score * 5 / turn_count)` — i.e., per-game scores normalised to a 5-round equivalent before summing. Saturation thresholds (`log1p(totalGames)` for wins, `log1p(totalGames * 75)` for points) scale with the season so the curve stays meaningful as the season grows.
 
-### Why home fortresses can't fall
+Tuning notes: ~2:1 wins-vs-points weighting means wins dominate but high-scoring losses still earn meaningful land. Adjust those constants in `api/routes/warmap.js` if the leaderboard feels too lopsided. The log shape gives early games big returns and diminishing returns past saturation.
 
-Two layers of guarantee:
+### Why the map stays geographically stable across regens
 
-**1. Persistent first-seen timestamps (server-side).** The `banner_first_seen` table holds one row per `(player_key, faction_id)` with a `first_seen_at` set when the banner first saves a game. **That row is never updated** — adding new games, hiding old games, editing a game's `played_at`, even deleting and re-entering all games for a banner can never move it earlier in the order. New banners get `NOW()` on their first save, which is later than every existing banner's `first_seen_at`, so they slot into the back of the order without disturbing anyone.
+**Persistent first-seen timestamps (server-side).** The `banner_first_seen` table holds one row per `(player_key, faction_id)` with a `first_seen_at` set when the banner first saves a game. **That row is never updated** — adding new games, hiding old games, editing a game's `played_at`, even deleting and re-entering all games for a banner can never move it earlier in the order. New banners get `NOW()` on their first save, which is later than every existing banner's `first_seen_at`, so they slot into the back of the seed-claim order without disturbing anyone.
 
-The earlier (broken) approach used `MIN(played_at)` from the live game data. That's NOT monotonic — backdating a game pulls the banner earlier in the order, and `assignTerritories` then re-runs from scratch giving previously-first banners a different fortress site. Symptom seen in the wild: "me and the Tyranids basically just traded places, even our fortresses moved." Fixed.
+The earlier (broken) approach used `MIN(played_at)` from the live game data. That's NOT monotonic — backdating a game pulls the banner earlier in the order, and `assignTerritories` then re-runs from scratch giving previously-first banners a different seed site. Symptom seen in the wild: "me and the Tyranids basically just traded places, even our territories moved." Fixed.
 
-**2. Allocation-order determinism (client-side).** `assignTerritories` claims homes in `first_seen_at` order; each banner's home territory is added to `taken` and `owner[id]` BEFORE any other allocation runs. The BFS expansion only fills territories where `owner[id] === null`, so a home is never overwritten. Even if a banner's `territory_score` would round to 0 territories, they keep their home (`Math.max(1, ...)` floor in target count + the home being claimed first).
+**Seed-claim determinism (client-side).** `assignTerritories` claims seeds in `first_seen_at` order. Each banner's seed site is the closest unclaimed Voronoi site to its `FACTION_HOMES` anchor at claim time. Because earlier banners always claim first and the candidate site set is unchanged between regens, every existing banner ends up with the exact same seed site as the previous render. New banners always sort later, so they pick from whatever is left — never displacing an existing seed.
 
-Combined effect: a fortress, once placed, is locked to that banner forever — across game additions, edits, hides, server restarts, browser sessions, and **the introduction of new players or new banners**. New banners always receive `first_seen_at = NOW()`, which sorts after every existing banner; the existing banners' home-claim loops therefore see the exact same set of unclaimed sites as the previous render and pick the same homes.
+The pressure-equalization phase that runs after the initial fill is also deterministic (banners iterated in `sorted` order, cells in tid order, neighbours in adjacency-list order), so the same scores + same anchors produce a byte-identical map on every device, every session.
 
-Borders, on the other hand, WILL shift when new banners appear. `totalScore` changes when a new banner joins, every banner's `target[k]` is recomputed, and the BFS expansion fans out from each home to fill the new targets — pulling from previously neutral or other-banner territory. This is intentional and expected.
+What CAN shift between regens: borders move when scores change or banners join/leave, because `totalScore` changes and `target[k]` is recomputed. Same-region behavior holds — a banner's territory grows or shrinks around its seed rather than teleporting elsewhere.
 
-### When fortresses CAN move (edge cases worth knowing)
+### When the map CAN reshape (edge cases worth knowing)
 
-- The continent itself moves if `MAP_SEED`, `VIRTUAL_W/H`, or `LLOYD_ITERATIONS` change — every fortress goes with it.
-- Adding a new entry to `FACTION_HOMES` between two existing entries (rather than appending) shifts every later faction's regional anchor.
-- Truncating `banner_first_seen` makes everyone re-claim from scratch in the seeded backfill order. Don't do this unless you mean it.
+- The continent itself moves if `MAP_SEED`, `VIRTUAL_W/H`, or `LLOYD_ITERATIONS` change — every region goes with it.
+- Adding a new entry to `FACTION_HOMES` between two existing entries (rather than appending) shifts every later faction's seed anchor.
+- Truncating `banner_first_seen` makes every banner re-claim from scratch in the seeded backfill order. Don't do this unless you mean it.
 
-### Recipe: changing what shows on a player's fortress label
+### Recipe: changing what shows on a banner's label
 
 `drawLabels()` resolves the primary label as `u.army_name || u.player_name` inline. To change the displayed text, edit that fallback chain — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
 

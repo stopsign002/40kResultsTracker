@@ -14,9 +14,11 @@ function seededRng(seed) {
 
 const MAP_SEED = 0xDEAD40; // static — same map for everyone forever
 // MAP_SEED, FACTION_HOMES and FACTION_COLOURS are FROZEN. Changing the seed
-// reshapes the continent and territory boundaries; editing or reordering
-// FACTION_HOMES shifts existing homes for every user. Append new factions
-// only. See CLAUDE.md "Critical invariants".
+// reshapes the continent and territory boundaries. FACTION_HOMES anchors are
+// no longer drawn as fortress markers — they're internal seed positions that
+// keep each faction's territory rooted in a stable region across regens.
+// Editing or reordering them still shifts every existing region. Append new
+// factions only. See CLAUDE.md "Critical invariants".
 
 const N_TERRITORIES = 120;
 const LLOYD_ITERATIONS = 8;
@@ -102,9 +104,9 @@ const HUD_FAINT = 'rgba(120, 220, 255, 0.10)';
 const HUD_AMBER = 'rgba(255, 190, 80, 0.95)';
 const HUD_BG    = '#020610';
 
-// ── Faction glyph (single character) drawn over the fortress diamond ──
-// Rendered via canvas fillText so no font work needed beyond the existing
-// monospace stack. Falls back to a dot when a faction isn't mapped.
+// ── Faction glyph (single character) shown in the legend panel ──
+// One-char emblem per faction used in the faction-key popup. Falls back to
+// a dot when a faction isn't mapped.
 const FACTION_GLYPH = {
   // Imperium: aquila-cross
   'Space Marines': '⚔', 'Adeptus Custodes': '✠', 'Adeptus Mechanicus': '⚙',
@@ -335,15 +337,13 @@ function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
 
 
 function assignTerritories(sites, units, W, H, adj) {
-  // Sort by first_seen_at (earliest first), ties broken by player_key+faction_id.
-  // The first player to play a faction claims the territory closest to that
-  // faction's regional anchor; subsequent players cluster nearby.
-  //
-  // CRITICAL: every comparison and every iteration in this function MUST be
-  // locale-independent and not rely on Object key iteration order — otherwise
-  // two browsers with different default locales pick different home sites
-  // when first_seen_at ties, and the whole map shifts. Use codepoint
-  // comparison (`<` / `>`) and iterate the explicit `sorted` array.
+  // Sort units in a fully deterministic order: first_seen_at ASC, then by
+  // unitKey codepoint. Every comparison and every iteration in this function
+  // MUST be locale-independent and must not rely on Object key iteration
+  // order — otherwise two browsers with different default locales pick
+  // different seed sites when first_seen_at ties, and the whole map shifts.
+  // Use codepoint comparison (`<` / `>`) and iterate the explicit `sorted`
+  // array everywhere below.
   const sorted = [...units].sort((a, b) => {
     const ta = String(a.first_seen_at || '');
     const tb = String(b.first_seen_at || '');
@@ -355,8 +355,13 @@ function assignTerritories(sites, units, W, H, adj) {
     return 0;
   });
 
+  // Step 1: pick a seed site per banner — the closest unclaimed Voronoi
+  // site to the banner's FACTION_HOMES anchor, claimed in first_seen_at
+  // order. Seeds are NOT drawn on the map. Their only job is to root the
+  // initial assignment so the geography stays stable when banners are
+  // added or shift in score.
   const taken = new Set();
-  const homeOf = {}; // unitKey -> territoryId
+  const seedOf = {};
   for (const u of sorted) {
     const [hx, hy] = FACTION_HOMES[u.faction] || [0.5, 0.5];
     const tx = hx * W, ty = hy * H;
@@ -364,103 +369,142 @@ function assignTerritories(sites, units, W, H, adj) {
     for (let s = 0; s < sites.length; s++) {
       if (taken.has(s)) continue;
       const dx = sites[s].x - tx, dy = sites[s].y - ty;
-      const d = dx*dx + dy*dy;
+      const d = dx * dx + dy * dy;
       if (d < best) { best = d; bestId = s; }
     }
-    if (bestId >= 0) { homeOf[unitKey(u)] = bestId; taken.add(bestId); }
+    if (bestId >= 0) { seedOf[unitKey(u)] = bestId; taken.add(bestId); }
   }
 
-  // Allocate non-home territories proportional to territory_score (BFS expansion).
+  // Step 2: target cell counts proportional to territory_score, floored at 1
+  // so every banner gets at least one cell.
   const totalScore = units.reduce((s, u) => s + (u.territory_score || 0.001), 0) || 1;
   const target = {};
   for (const u of sorted) {
     target[unitKey(u)] = Math.max(1, Math.round((u.territory_score || 0.001) / totalScore * sites.length));
   }
 
+  // Step 3: multi-source BFS from every seed simultaneously. Each land cell
+  // ends up owned by the banner whose seed reached it first across the
+  // adjacency graph — graph-distance Voronoi over the territory mesh.
+  // Round-robin in `sorted` order keeps it deterministic and avoids the
+  // larger-score-eats-everyone failure mode of priority-by-score growth.
   const owner = new Array(sites.length).fill(null);
-  const frontier = {};
+  const queues = [];
   for (const u of sorted) {
     const k = unitKey(u);
-    const tid = homeOf[k];
-    if (tid !== undefined) {
-      owner[tid] = k;
-      frontier[k] = [tid];
-    }
+    const sid = seedOf[k];
+    if (sid !== undefined) { owner[sid] = k; queues.push([sid]); }
+    else queues.push([]);
   }
-
-  let stuck = 0;
-  while (stuck < sorted.length) {
-    stuck = 0;
-    for (const u of sorted) {
-      const k = unitKey(u);
-      if (!frontier[k]) { stuck++; continue; }
-      const owned = owner.filter(o => o === k).length;
-      if (owned >= target[k]) { stuck++; continue; }
-      const queue = frontier[k];
-      let took = false;
-      while (queue.length) {
-        const tid = queue[0];
-        const neighbours = adj.get(tid);
-        if (!neighbours) { queue.shift(); continue; }
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (let i = 0; i < sorted.length; i++) {
+      const q = queues[i];
+      if (!q.length) continue;
+      const k = unitKey(sorted[i]);
+      while (q.length) {
+        const tid = q[0];
+        const nbrs = adj.get(tid);
+        if (!nbrs) { q.shift(); continue; }
         let found = false;
-        for (const nb of neighbours) {
+        for (const nb of nbrs) {
           if (owner[nb] === null) {
             owner[nb] = k;
-            queue.push(nb);
+            q.push(nb);
             found = true;
-            took = true;
             break;
           }
         }
-        if (!found) { queue.shift(); continue; }
+        if (!found) { q.shift(); continue; }
+        progress = true;
         break;
       }
-      if (!took) stuck++;
     }
   }
 
-  // Final pass: fill ALL remaining unclaimed land. Targets are integer-rounded
-  // so the BFS can terminate with neutral cells; pockets can also strand when a
-  // unit's frontier is surrounded by other owners. Walk repeatedly: any
-  // unclaimed territory with an owned neighbour adopts that neighbour's owner.
-  // Deterministic: territory ids iterate in index order, adjacency lists are
-  // built once from grid-order, neighbour iteration picks the first owned one.
-  let changed = true;
-  while (changed) {
-    changed = false;
+  // Step 4: pressure equalization via greedy best-gain flips. Each iteration
+  // scans the whole map for the single cell-flip with the largest "gain"
+  // (deficit[destination] - deficit[donor]) and applies it, then repeats.
+  // The gain > 1 threshold is what gives cascades: a flip strictly reduces
+  // the sum-of-squared-deficits potential by 2*gain - 2, so any gain >= 2 is
+  // monotone progress. Surplus banners cede to at-target neighbours, who
+  // become over-target and cede to under-target neighbours, rippling across
+  // the map until no pair of adjacent banners differs in deficit by more
+  // than 1.
+  //
+  // Determinism: cells iterated in tid order, neighbours in adjacency-list
+  // order, gain ties broken by first-found (which respects those orders).
+  // The contiguity guard prevents flips that would split a donor region
+  // into islands; if a higher-gain flip fails contiguity, the next-best
+  // valid flip wins this iteration.
+  const counts = {};
+  for (const u of sorted) counts[unitKey(u)] = 0;
+  for (const o of owner) if (o !== null) counts[o]++;
+  const deficitOf = (k) => target[k] - counts[k];
+
+  const maxFlips = sites.length * 8;
+  let flips = 0;
+  while (flips < maxFlips) {
+    let bestGain = 1; // strict >, so threshold for an accepted flip is gain >= 2
+    let bestTid = -1;
+    let bestDest = null;
+    let bestDonor = null;
     for (let tid = 0; tid < owner.length; tid++) {
-      if (owner[tid] !== null) continue;
-      const neighbours = adj.get(tid);
-      if (!neighbours) continue;
-      for (const nb of neighbours) {
-        if (owner[nb] !== null) {
-          owner[tid] = owner[nb];
-          changed = true;
-          break;
-        }
+      const donor = owner[tid];
+      if (donor === null) continue;
+      const nbrs = adj.get(tid);
+      if (!nbrs) continue;
+      const dDonor = deficitOf(donor);
+      for (const nb of nbrs) {
+        const dest = owner[nb];
+        if (dest === null || dest === donor) continue;
+        const gain = deficitOf(dest) - dDonor;
+        if (gain <= bestGain) continue;
+        if (!flipKeepsContiguous(tid, donor, owner, adj)) continue;
+        bestGain = gain;
+        bestTid = tid;
+        bestDest = dest;
+        bestDonor = donor;
       }
     }
+    if (bestTid < 0) break;
+    owner[bestTid] = bestDest;
+    counts[bestDonor]--;
+    counts[bestDest]++;
+    flips++;
   }
 
-  // Truly isolated islands (no path to any owned territory): hand to the
-  // banner whose faction anchor sits closest to the site. Same codepoint
-  // tie-break as the home-claim loop above.
-  for (let tid = 0; tid < owner.length; tid++) {
-    if (owner[tid] !== null) continue;
-    let best = Infinity, bestKey = null;
-    for (const u of sorted) {
-      const [hx, hy] = FACTION_HOMES[u.faction] || [0.5, 0.5];
-      const dx = sites[tid].x - hx * W, dy = sites[tid].y - hy * H;
-      const d = dx*dx + dy*dy;
-      const k = unitKey(u);
-      if (d < best || (d === best && (bestKey === null || k < bestKey))) {
-        best = d; bestKey = k;
-      }
+  return { owner };
+}
+
+// Local contiguity guard for the equalization phase. After hypothetically
+// removing `tid` from `donor`, donor's other cells touching `tid` must still
+// be mutually reachable through donor-owned cells. If a flip would split
+// donor into two clusters, refuse it.
+function flipKeepsContiguous(tid, donor, owner, adj) {
+  const nbrs = adj.get(tid);
+  if (!nbrs) return true;
+  const donorNbrsOfTid = [];
+  for (const nb of nbrs) if (owner[nb] === donor) donorNbrsOfTid.push(nb);
+  if (donorNbrsOfTid.length <= 1) return true;
+  const start = donorNbrsOfTid[0];
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const c = stack.pop();
+    const cn = adj.get(c);
+    if (!cn) continue;
+    for (const m of cn) {
+      if (m === tid) continue;
+      if (owner[m] !== donor) continue;
+      if (seen.has(m)) continue;
+      seen.add(m);
+      stack.push(m);
     }
-    if (bestKey !== null) owner[tid] = bestKey;
   }
-
-  return { owner, homeOf };
+  for (const n of donorNbrsOfTid) if (!seen.has(n)) return false;
+  return true;
 }
 
 // ── Render ──────────────────────────────────────────────────────
@@ -616,22 +660,38 @@ export async function renderWarmap(_state) {
     }
     const ownerKey = mapState.owner[tid];
     const u = ownerKey ? mapState.unitMeta[ownerKey] : null;
+    const tcount = ownerKey ? (mapState.territoryCount[ownerKey] || 0) : 0;
     const name = territoryName(tid, renderSeed);
     const lines = [
       `<div class="t-title">${escapeHtml(name)}</div>`,
       u
         ? `<div class="t-banner">${escapeHtml(u.army_name || u.player_name)}</div>
            <div class="t-faction">${escapeHtml(u.faction)}</div>
-           <div class="t-record">${u.wins}W · ${u.losses}L · ${u.draws}D · ${u.win_rate}%</div>`
+           <div class="t-record">${u.wins}W · ${u.losses}L · ${u.draws}D · ${u.win_rate}%</div>
+           <div class="t-record">${tcount} ${tcount === 1 ? 'territory' : 'territories'}</div>`
         : `<div class="t-banner muted">Unclaimed</div>`,
     ].join('');
     tooltip.innerHTML = lines;
-    // Position relative to the canvasWrapper (the offset parent for
-    // absolutely-positioned children).
-    const wrapperRect = canvasWrapper.getBoundingClientRect();
-    const tx = e.clientX - wrapperRect.left + 12;
-    const ty = e.clientY - wrapperRect.top + 12;
+    // Show first so we can measure dimensions, then place. The wrapper has
+    // overflow:hidden, so anchor below-right by default but flip to the
+    // opposite side of the cursor if that would clip on a narrow viewport.
     tooltip.style.display = 'block';
+    const wrapperRect = canvasWrapper.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+    const margin = 4;
+    const gap = 12;
+    const localX = e.clientX - wrapperRect.left;
+    const localY = e.clientY - wrapperRect.top;
+    let tx = localX + gap;
+    if (tx + tipRect.width > wrapperRect.width - margin) {
+      tx = localX - tipRect.width - gap;
+    }
+    if (tx < margin) tx = margin;
+    let ty = localY + gap;
+    if (ty + tipRect.height > wrapperRect.height - margin) {
+      ty = localY - tipRect.height - gap;
+    }
+    if (ty < margin) ty = margin;
     tooltip.style.left = tx + 'px';
     tooltip.style.top = ty + 'px';
   });
@@ -685,11 +745,15 @@ function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   const polygon = generateContinent(W, H, seed);
   const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon, seed);
   const adj = buildAdjacency(ownership, GW, GH);
-  const { owner, homeOf } = assignTerritories(sites, units, W, H, adj);
+  const { owner } = assignTerritories(sites, units, W, H, adj);
 
   // Lookup tables: unitKey -> { faction, label }
   const unitMeta = {};
   for (const u of units) unitMeta[unitKey(u)] = u;
+
+  // Per-banner final territory count (read by the hover tooltip).
+  const territoryCount = {};
+  for (const o of owner) if (o !== null) territoryCount[o] = (territoryCount[o] || 0) + 1;
 
   // ── Step 2: paint territories ────────────────────────────────
   paintTerritories(ctx, ownership, owner, unitMeta, GW, GH, CELL, W, H);
@@ -698,12 +762,8 @@ function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   drawCoastline(ctx, polygon);
   drawBorders(ctx, ownership, owner, GW, GH, CELL);
 
-  // ── Step 4: home fortress markers + labels ───────────────────
-  for (const [k, tid] of Object.entries(homeOf)) {
-    const u = unitMeta[k];
-    drawFortress(ctx, sites[tid].x, sites[tid].y, FACTION_COLOURS[u?.faction] || '#fff', FACTION_GLYPH[u?.faction]);
-  }
-  drawLabels(ctx, sites, unitMeta, homeOf);
+  // ── Step 4: banner labels at each region's densest cell ────
+  drawLabels(ctx, sites, units, owner, adj);
 
   // ── Step 5: HUD chrome ───────────────────────────────────────
   drawScanlines(ctx, W, H);
@@ -712,15 +772,16 @@ function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   drawReadout(ctx, W, H, units, sites.length);
 
   // Return state for the hover/tooltip handler set up in renderWarmap.
-  return { ownership, owner, unitMeta, GW, GH, CELL, sites };
+  return { ownership, owner, unitMeta, territoryCount, GW, GH, CELL, sites };
 }
 
 function drawBackdrop(ctx, W, H) {
-  // Deep navy with radial vignette
-  const bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  // Deep navy with a gentle radial darken — the gradient extends past the
+  // canvas corners so the perimeter doesn't fade hard to near-black, which
+  // previously made the edges read as a thick dark border framing the grid.
+  const bg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 1.1);
   bg.addColorStop(0, '#0a1828');
-  bg.addColorStop(0.7, '#040a16');
-  bg.addColorStop(1, HUD_BG);
+  bg.addColorStop(1, '#061222');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
@@ -817,75 +878,76 @@ function drawSegment(ctx, x1, y1, x2, y2, sameFaction) {
   ctx.stroke();
 }
 
-function drawFortress(ctx, cx, cy, col, glyph) {
+function drawLabels(ctx, sites, units, owner, adj) {
   ctx.save();
-  ctx.translate(cx, cy);
-  // Diamond marker, slightly larger than territory border
-  ctx.shadowColor = col;
-  ctx.shadowBlur = 10;
-  ctx.fillStyle = col;
-  ctx.beginPath();
-  ctx.moveTo(0, -10);
-  ctx.lineTo(10, 0);
-  ctx.lineTo(0, 10);
-  ctx.lineTo(-10, 0);
-  ctx.closePath();
-  ctx.fill();
-  ctx.shadowBlur = 0;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
 
-  // Cross-hairs (outside the diamond)
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.moveTo(-13, 0); ctx.lineTo(-11, 0);
-  ctx.moveTo(11, 0);  ctx.lineTo(13, 0);
-  ctx.moveTo(0, -13); ctx.lineTo(0, -11);
-  ctx.moveTo(0, 11);  ctx.lineTo(0, 13);
-  ctx.stroke();
+  // Place each banner's label on its densest cell — the owned cell with
+  // the highest "neighbourhood weight" inside its own region. Density is
+  // measured as Σ 1/(1+hop) over every other same-owner cell reachable
+  // through same-owner cells only. That naturally favours the centre of
+  // the largest cluster, ignores thin tendrils, and steers clear of
+  // coasts (since coastal cells have fewer nearby same-owner cells).
+  for (const u of units) {
+    const k = unitKey(u);
+    const tid = findDensestCell(k, owner, adj);
+    if (tid < 0) continue;
+    const cx = sites[tid].x;
+    const cy = sites[tid].y;
+    const primary = u.army_name || u.player_name;
+    const secondary = abbreviate(u.faction);
 
-  // Faction glyph centred in the diamond. Falls back to a small white dot.
-  if (glyph) {
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '700 12px "Consolas", "Segoe UI Symbol", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(glyph, 0, 1);
-  } else {
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.font = '700 12px "Consolas", "Monaco", monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText(primary, cx + 1, cy - 5);
+    ctx.fillStyle = 'rgba(255, 230, 160, 0.95)';
+    ctx.fillText(primary, cx, cy - 6);
+
+    ctx.font = '500 9px "Consolas", "Monaco", monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText(secondary, cx + 1, cy + 7);
+    ctx.fillStyle = 'rgba(180, 220, 255, 0.85)';
+    ctx.fillText(secondary, cx, cy + 6);
   }
   ctx.restore();
 }
 
-function drawLabels(ctx, sites, unitMeta, homeOf) {
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (const [k, tid] of Object.entries(homeOf)) {
-    const s = sites[tid];
-    const u = unitMeta[k];
-    if (!u) continue;
-    // Primary label = army name OR player name; secondary = faction abbreviation
-    const primary = u.army_name || u.player_name;
-    const secondary = abbreviate(u.faction);
-
-    // Primary line
-    ctx.font = '700 12px "Consolas", "Monaco", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.85)';
-    ctx.fillText(primary, s.x + 1, s.y + 19);
-    ctx.fillStyle = 'rgba(255, 230, 160, 0.95)';
-    ctx.fillText(primary, s.x, s.y + 18);
-
-    // Secondary (faction) line
-    ctx.font = '500 9px "Consolas", "Monaco", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.85)';
-    ctx.fillText(secondary, s.x + 1, s.y + 31);
-    ctx.fillStyle = 'rgba(180, 220, 255, 0.85)';
-    ctx.fillText(secondary, s.x, s.y + 30);
+// For each k-owned cell, BFS through the k-region only, weighting each
+// other k-cell at hop distance d by 1/(1+d). The cell with the highest
+// total weight is the densest spot in the region. For ties, the lowest
+// tid wins (deterministic).
+function findDensestCell(k, owner, adj) {
+  let bestId = -1;
+  let bestScore = -1;
+  for (let c = 0; c < owner.length; c++) {
+    if (owner[c] !== k) continue;
+    const dist = new Map();
+    dist.set(c, 0);
+    let frontier = [c];
+    while (frontier.length) {
+      const next = [];
+      for (const cell of frontier) {
+        const d = dist.get(cell);
+        const nbrs = adj.get(cell);
+        if (!nbrs) continue;
+        for (const nb of nbrs) {
+          if (dist.has(nb)) continue;
+          if (owner[nb] !== k) continue;
+          dist.set(nb, d + 1);
+          next.push(nb);
+        }
+      }
+      frontier = next;
+    }
+    let score = 0;
+    for (const d of dist.values()) score += 1 / (1 + d);
+    if (score > bestScore) {
+      bestScore = score;
+      bestId = c;
+    }
   }
-  ctx.restore();
+  return bestId;
 }
 
 function drawScanlines(ctx, W, H) {
@@ -966,10 +1028,14 @@ function drawReadout(ctx, W, H, units, territoryCount) {
     `> PLAYERS: ${playersActive}`,
     `> STATUS: ${'●'} ENGAGED`,
   ];
-  let y = H - 60;
+  // Stack upward from the bottom margin so every line stays on-canvas
+  // regardless of how many entries the readout grows to.
+  const lineH = 13;
+  const bottomMargin = 14;
+  let y = H - bottomMargin - (lines.length - 1) * lineH;
   for (const line of lines) {
     ctx.fillText(line, W - 24, y);
-    y += 13;
+    y += lineH;
   }
   ctx.restore();
 }

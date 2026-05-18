@@ -90,7 +90,7 @@ router.get('/warmap', async (req, res) => {
     const winRate = r.games > 0 ? r.wins / r.games : 0;
     const winsWeight   = Math.log1p(r.wins)             / winsSat;
     const pointsWeight = Math.log1p(r.adjusted_points)  / pointsSat;
-    r.territory_score = Math.min(1, winsWeight * 0.60 + pointsWeight * 0.40);
+    r.territory_score = Math.min(1, winsWeight * 0.66 + pointsWeight * 0.33);
     r.win_rate = r.games > 0 ? Math.round(winRate * 1000) / 10 : 0;
   }
 
