@@ -13,7 +13,7 @@ const router = Router();
 // ── List games with filters ───────────────────────────────────
 router.get('/', async (req, res) => {
   const {
-    playerUserId, playerFaction, opponentFaction, missionPack, primaryMission,
+    playerUserId, playerKey, playerFaction, opponentFaction, missionPack, primaryMission,
     deploymentMap, format, dateFrom, dateTo, includeHidden, q,
     limit = 100, offset = 0,
   } = req.query;
@@ -51,6 +51,15 @@ router.get('/', async (req, res) => {
   if (playerUserId) {
     where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.user_id = $${i++})`);
     params.push(playerUserId);
+  }
+  if (playerKey) {
+    if (String(playerKey).startsWith('user:')) {
+      where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.user_id = $${i++})`);
+      params.push(parseInt(String(playerKey).slice(5), 10));
+    } else if (String(playerKey).startsWith('guest:')) {
+      where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.guest_name = $${i++})`);
+      params.push(String(playerKey).slice(6));
+    }
   }
   if (playerFaction) {
     where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.faction_id = $${i++})`);

@@ -73,4 +73,24 @@ router.get('/player-names', async (_req, res) => {
   res.json(rows.map(r => r.name));
 });
 
+// Unified player picker: every entity that has ever appeared in a game,
+// whether a registered user or a free-text guest. `key` is the canonical
+// player_key used by the war map and accepted by /games?playerKey=.
+router.get('/players', async (_req, res) => {
+  const { rows } = await pool.query(`
+    SELECT 'user:' || u.id::text AS key, u.display_name AS label
+      FROM users u
+     WHERE u.is_active = TRUE
+       AND EXISTS (SELECT 1 FROM game_players gp WHERE gp.user_id = u.id)
+    UNION ALL
+    SELECT DISTINCT 'guest:' || gp.guest_name AS key, gp.guest_name AS label
+      FROM game_players gp
+     WHERE gp.user_id IS NULL
+       AND gp.guest_name IS NOT NULL
+       AND gp.guest_name <> ''
+    ORDER BY label
+  `);
+  res.json(rows);
+});
+
 export default router;
