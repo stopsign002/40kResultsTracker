@@ -550,6 +550,9 @@ export async function renderWarmap(_state) {
     display: 'flex',
     justifyContent: 'center',
     boxShadow: '0 0 40px rgba(120,220,255,0.05) inset',
+    width: '100%',
+    maxWidth: VIRTUAL_W + 'px',
+    margin: '0 auto',
   } }, loadingEl);
 
   // Season picker — only shown if more than one season exists. The picker
@@ -832,18 +835,10 @@ function paintTerritories(ctx, ownership, owner, unitMeta, GW, GH, CELL, W, H) {
 }
 
 function drawCoastline(ctx, polygon) {
-  // Clip to the continent interior first so the glow can only bleed inward.
-  // Without this the 6px shadowBlur shows past the silhouette on the left
-  // and right edges of the map.
+  // Outer glow
   ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(polygon[0][0], polygon[0][1]);
-  for (let i = 1; i < polygon.length; i++) ctx.lineTo(polygon[i][0], polygon[i][1]);
-  ctx.closePath();
-  ctx.clip();
-
   ctx.strokeStyle = HUD_CYAN;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 1.5;
   ctx.shadowColor = 'rgba(120, 220, 255, 0.9)';
   ctx.shadowBlur = 6;
   ctx.beginPath();
