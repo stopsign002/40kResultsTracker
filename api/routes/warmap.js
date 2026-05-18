@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
 
 const router = Router();
-router.use(requireAuth);
 
 // Returns per-(player, faction) records that drive war map territory.
 // Each unique (player_key, faction_id) is its own banner: Joe's Necrons and

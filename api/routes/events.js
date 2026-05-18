@@ -1,11 +1,10 @@
 // @ts-check
 import { Router } from 'express';
-import { requireAuth } from '../lib/auth.js';
 import { addSubscriber } from '../lib/events.js';
 
 const router = Router();
 
-router.get('/', requireAuth, (req, res) => {
+router.get('/', (req, res) => {
   // SSE handshake. trust proxy is on globally so client IP / proto are honoured.
   res.set({
     'Content-Type': 'text/event-stream',
@@ -21,7 +20,7 @@ router.get('/', requireAuth, (req, res) => {
     try { res.write(`: ping\n\n`); } catch { /* dead, ignored */ }
   }, 25000);
 
-  const cleanup = addSubscriber({ res, userId: req.session.userId });
+  const cleanup = addSubscriber({ res, userId: req.session?.userId ?? null });
   req.on('close', () => { clearInterval(hb); cleanup(); res.end(); });
 });
 

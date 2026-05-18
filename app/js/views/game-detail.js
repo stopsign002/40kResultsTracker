@@ -37,7 +37,7 @@ export async function renderGameDetail(state, gameId) {
             } catch (e) { toast(e.message, 'error'); }
           },
         }, 'Delete') : null,
-        el('a', { class: 'btn primary small', href: `#/games/${g.id}/edit` }, 'Edit'),
+        state.user ? el('a', { class: 'btn primary small', href: `#/games/${g.id}/edit` }, 'Edit') : null,
       ].filter(Boolean)),
     ]),
     el('div', { class: 'panel-body' }, [buildMeta(g)]),

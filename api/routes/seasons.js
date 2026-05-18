@@ -1,14 +1,14 @@
 // @ts-check
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
-import { requireAuth, requireAdmin } from '../lib/auth.js';
+import { requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 
 const router = Router();
 
-// Public to logged-in users — every view that picks a season needs the list
-router.get('/', requireAuth, async (_req, res) => {
+// Public — every view that picks a season needs the list
+router.get('/', async (_req, res) => {
   const { rows } = await pool.query(`
     SELECT s.id, s.name, s.map_seed::text AS map_seed, s.started_at, s.ended_at, s.is_active,
       (SELECT COUNT(*)::int FROM games g WHERE g.season_id = s.id) AS games

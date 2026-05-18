@@ -18,15 +18,17 @@ function comboField(items, currentId, currentName, onChange, opts = {}) {
   const datalist = el('datalist', { id: listId },
     items.map(i => el('option', { value: i.name }, ''))
   );
+  let lastResolved = initial;
   const resolve = () => {
     const v = (inp.value || '').trim();
+    if (v === lastResolved) return;
+    lastResolved = v;
     if (!v) return onChange(null, null);
     const match = items.find(i => i.name.toLowerCase() === v.toLowerCase());
     if (match) onChange(match.id, match.name);
     else onChange(null, v);
   };
   inp.addEventListener('change', resolve);
-  inp.addEventListener('blur', resolve);
   return el('span', { style: { display: 'inline-block', width: '100%' } }, [inp, datalist]);
 }
 

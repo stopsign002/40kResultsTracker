@@ -7,7 +7,8 @@ import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
 
 const router = Router();
 
-router.use(requireAuth);
+// Reads are public so unauthenticated visitors can browse. Writes
+// (POST /, PUT /:id) still call requireAuth inline below.
 
 // ── List games with filters ───────────────────────────────────
 router.get('/', async (req, res) => {
@@ -279,7 +280,7 @@ async function insertPlayerChildren(client, gamePlayerId, p) {
 }
 
 // ── Create game ───────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     validateGameInput(req.body);
   } catch (e) {
@@ -344,7 +345,7 @@ router.post('/', async (req, res) => {
 });
 
 // ── Update game (any logged-in user) ──────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
     validateGameInput(req.body);
