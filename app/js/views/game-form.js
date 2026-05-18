@@ -340,10 +340,13 @@ export async function renderGameForm(state, gameId) {
         value: entry?.score ?? 0,
         style: { width: '70px', textAlign: 'center' },
       });
-      const cardSel = comboField(missionDetails.secondaryCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName ?? null),
+      const cardSel = comboField(missionDetails.secondaryCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName === 'Unspecified' ? null : (entry?.cardName ?? null)),
         (id, name) => {
           if (!id && !name) {
-            if (entry) { const i = player.secondaries.indexOf(entry); if (i >= 0) player.secondaries.splice(i, 1); }
+            if (entry) {
+              if (entry.score > 0) { entry.cardId = null; entry.cardName = 'Unspecified'; }
+              else { const i = player.secondaries.indexOf(entry); if (i >= 0) player.secondaries.splice(i, 1); }
+            }
             rerender();
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
@@ -354,7 +357,17 @@ export async function renderGameForm(state, gameId) {
         }, { placeholder: '—' });
       scoreInp.addEventListener('change', () => {
         const v = parseInt(scoreInp.value, 10) || 0;
-        if (entry) entry.score = v;
+        if (entry) {
+          entry.score = v;
+          if (v === 0 && (!entry.cardName || entry.cardName === 'Unspecified')) {
+            const i = player.secondaries.indexOf(entry);
+            if (i >= 0) player.secondaries.splice(i, 1);
+            rerender();
+          }
+        } else if (v > 0) {
+          player.secondaries.push({ cardId: null, cardName: 'Unspecified', roundNumber: rn, score: v });
+          rerender();
+        }
       });
       return el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 70px', gap: '4px' } }, [cardSel, scoreInp]);
     }
@@ -366,10 +379,13 @@ export async function renderGameForm(state, gameId) {
         value: entry?.score ?? 0,
         style: { width: '70px', textAlign: 'center' },
       });
-      const cardSel = comboField(missionDetails.challengerCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName ?? null),
+      const cardSel = comboField(missionDetails.challengerCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName === 'Unspecified' ? null : (entry?.cardName ?? null)),
         (id, name) => {
           if (!id && !name) {
-            if (entry) { const i = player.challengers.indexOf(entry); if (i >= 0) player.challengers.splice(i, 1); }
+            if (entry) {
+              if (entry.score > 0) { entry.cardId = null; entry.cardName = 'Unspecified'; }
+              else { const i = player.challengers.indexOf(entry); if (i >= 0) player.challengers.splice(i, 1); }
+            }
             rerender();
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
@@ -380,7 +396,17 @@ export async function renderGameForm(state, gameId) {
         }, { placeholder: '—' });
       scoreInp.addEventListener('change', () => {
         const v = parseInt(scoreInp.value, 10) || 0;
-        if (entry) entry.score = v;
+        if (entry) {
+          entry.score = v;
+          if (v === 0 && (!entry.cardName || entry.cardName === 'Unspecified')) {
+            const i = player.challengers.indexOf(entry);
+            if (i >= 0) player.challengers.splice(i, 1);
+            rerender();
+          }
+        } else if (v > 0) {
+          player.challengers.push({ cardId: null, cardName: 'Unspecified', roundNumber: rn, completed: true, score: v });
+          rerender();
+        }
       });
       return el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 70px', gap: '4px' } }, [cardSel, scoreInp]);
     }
