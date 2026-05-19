@@ -86,7 +86,13 @@ export const stats = {
   headToHead:             (a, b) => api.get(`/stats/head-to-head?userA=${a}&userB=${b}`),
   firstTurnImpact:        (q) => api.get('/stats/first-turn-impact' + qstr(q)),
   secondaryAverages:      () => api.get('/stats/secondary-averages'),
-  warmap:                 (seasonId) => api.get('/stats/warmap' + (seasonId ? '?season=' + seasonId : '')),
+  warmap:                 (seasonId, throughGameId) => {
+                            const params = [];
+                            if (seasonId)       params.push('season=' + seasonId);
+                            if (throughGameId)  params.push('through_game_id=' + throughGameId);
+                            return api.get('/stats/warmap' + (params.length ? '?' + params.join('&') : ''));
+                          },
+  warmapTimeline:         (seasonId) => api.get('/stats/warmap-timeline' + (seasonId ? '?season=' + seasonId : '')),
   detachmentWinRates:     (factionId) => api.get('/stats/detachment-winrates' + (factionId ? '?factionId=' + factionId : '')),
   trends:                 () => api.get('/stats/trends'),
   player:                 (playerKey) => api.get('/stats/player/' + encodeURIComponent(playerKey)),

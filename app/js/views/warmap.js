@@ -328,6 +328,128 @@ function buildAdjacency(ownership, GW, GH) {
   return adj;
 }
 
+// ── Sub-territory subdivision ────────────────────────────────────
+// Each parent province is sliced into K=10 sub-cells via a mini Voronoi
+// seeded from MAP_SEED ^ parent_id. The parent geometry (and named
+// territories) stays exactly as before; the sub-cell mesh is what BFS
+// expansion and per-banner ownership operate on, giving fluid war fronts
+// while keeping the lore-geographic parent provinces intact.
+const SUB_PER_PARENT = 10;
+
+function generateSubTerritories(parentOwnership, parentSites, GW, GH, CELL, seed = MAP_SEED) {
+  const NParent = parentSites.length;
+  const K = SUB_PER_PARENT;
+  const NSub = NParent * K;
+
+  // Collect grid cells per parent (in deterministic gy,gx scan order).
+  const cellsByParent = Array.from({ length: NParent }, () => []);
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
+      const p = parentOwnership[gy * GW + gx];
+      if (p < 0) continue;
+      cellsByParent[p].push(gy * GW + gx);
+    }
+  }
+
+  // For each parent, place K sub-sites via reservoir sampling its cells,
+  // then relax twice within the parent so the sub-sites spread evenly.
+  const subSites = new Array(NSub);
+  const subsInParent = new Array(NParent);
+  for (let p = 0; p < NParent; p++) {
+    const cells = cellsByParent[p];
+    const rng = seededRng(seed ^ ((p + 1) * 2654435761));
+    const picks = reservoirSample(cells, K, rng);
+    subsInParent[p] = [];
+    for (let i = 0; i < picks.length; i++) {
+      const cellIdx = picks[i];
+      const gx = cellIdx % GW;
+      const gy = Math.floor(cellIdx / GW);
+      const sid = p * K + i;
+      subSites[sid] = { x: gx * CELL + CELL / 2, y: gy * CELL + CELL / 2 };
+      subsInParent[p].push(sid);
+    }
+    // Two Lloyd's relaxation passes, constrained to this parent's cells.
+    for (let iter = 0; iter < 2; iter++) {
+      const sums = subsInParent[p].map(() => ({ x: 0, y: 0, n: 0 }));
+      for (const cellIdx of cells) {
+        const gx = cellIdx % GW;
+        const gy = Math.floor(cellIdx / GW);
+        const px = gx * CELL + CELL / 2, py = gy * CELL + CELL / 2;
+        let best = Infinity, bestLocal = 0;
+        for (let i = 0; i < subsInParent[p].length; i++) {
+          const sid = subsInParent[p][i];
+          const dx = px - subSites[sid].x, dy = py - subSites[sid].y;
+          const d = dx * dx + dy * dy;
+          if (d < best) { best = d; bestLocal = i; }
+        }
+        sums[bestLocal].x += px;
+        sums[bestLocal].y += py;
+        sums[bestLocal].n++;
+      }
+      for (let i = 0; i < subsInParent[p].length; i++) {
+        if (sums[i].n > 0) {
+          const sid = subsInParent[p][i];
+          subSites[sid].x = sums[i].x / sums[i].n;
+          subSites[sid].y = sums[i].y / sums[i].n;
+        }
+      }
+    }
+    // If a tiny edge parent had fewer than K cells, subsInParent[p] is short
+    // and the trailing subSites slots stay undefined. Callers must check.
+  }
+
+  // Sub-ownership grid: for each land cell, pick the nearest sub-site of
+  // its parent (sub-cells never cross parent boundaries).
+  const subOwnership = new Int32Array(GW * GH);
+  const parentOfSub = new Int32Array(NSub);
+  for (let p = 0; p < NParent; p++) {
+    for (let i = 0; i < K; i++) parentOfSub[p * K + i] = p;
+  }
+  for (let gy = 0; gy < GH; gy++) {
+    for (let gx = 0; gx < GW; gx++) {
+      const p = parentOwnership[gy * GW + gx];
+      if (p < 0) { subOwnership[gy * GW + gx] = -1; continue; }
+      const px = gx * CELL + CELL / 2, py = gy * CELL + CELL / 2;
+      const subs = subsInParent[p];
+      let best = Infinity, bestId = subs[0];
+      for (const sid of subs) {
+        const dx = px - subSites[sid].x, dy = py - subSites[sid].y;
+        const d = dx * dx + dy * dy;
+        if (d < best) { best = d; bestId = sid; }
+      }
+      subOwnership[gy * GW + gx] = bestId;
+    }
+  }
+
+  // Sub-adjacency, same grid-edge scan as buildAdjacency.
+  const subAdj = new Map();
+  const addSub = (a, b) => {
+    if (!subAdj.has(a)) subAdj.set(a, new Set());
+    subAdj.get(a).add(b);
+  };
+  for (let gy = 0; gy < GH - 1; gy++) {
+    for (let gx = 0; gx < GW - 1; gx++) {
+      const a = subOwnership[gy * GW + gx];
+      const b = subOwnership[gy * GW + gx + 1];
+      const c = subOwnership[(gy + 1) * GW + gx];
+      if (a >= 0 && b >= 0 && a !== b) { addSub(a, b); addSub(b, a); }
+      if (a >= 0 && c >= 0 && a !== c) { addSub(a, c); addSub(c, a); }
+    }
+  }
+
+  return { subSites, subOwnership, parentOfSub, subsInParent, subAdj };
+}
+
+function reservoirSample(arr, k, rng) {
+  if (arr.length <= k) return arr.slice();
+  const out = arr.slice(0, k);
+  for (let i = k; i < arr.length; i++) {
+    const j = Math.floor(rng() * (i + 1));
+    if (j < k) out[j] = arr[i];
+  }
+  return out;
+}
+
 // ── Faction-to-territory assignment ─────────────────────────────
 // units = [{ player_key, player_name, army_name, faction_id, faction,
 //   games, wins, losses, draws, territory_score, first_seen_at }]
@@ -336,14 +458,10 @@ function buildAdjacency(ownership, GW, GH) {
 function unitKey(u) { return `${u.player_key}::${u.faction_id}`; }
 
 
-function assignTerritories(sites, units, W, H, adj) {
+function assignTerritories(subSites, parentOfSub, subsInParent, units, W, H, parentAdj, subAdj) {
   // Sort units in a fully deterministic order: first_seen_at ASC, then by
-  // unitKey codepoint. Every comparison and every iteration in this function
-  // MUST be locale-independent and must not rely on Object key iteration
-  // order — otherwise two browsers with different default locales pick
-  // different seed sites when first_seen_at ties, and the whole map shifts.
-  // Use codepoint comparison (`<` / `>`) and iterate the explicit `sorted`
-  // array everywhere below.
+  // unitKey codepoint. Every comparison and iteration below MUST be
+  // locale-independent and must not rely on Object key iteration order.
   const sorted = [...units].sort((a, b) => {
     const ta = String(a.first_seen_at || '');
     const tb = String(b.first_seen_at || '');
@@ -355,12 +473,12 @@ function assignTerritories(sites, units, W, H, adj) {
     return 0;
   });
 
-  // Step 1: pick a seed site per banner — the closest unclaimed Voronoi
-  // site to the banner's FACTION_HOMES anchor, claimed in first_seen_at
-  // order. Seeds are NOT drawn on the map. Their only job is to root the
-  // initial assignment so the geography stays stable when banners are
-  // added or shift in score.
-  const taken = new Set();
+  const NSub = subSites.length;
+
+  // Step 1: pick a seed sub-cell per banner — closest unclaimed sub-site to
+  // the banner's anchor, claimed in first_seen_at order. Determines the
+  // banner's home parent province.
+  const takenSub = new Set();
   const seedOf = {};
   for (const u of sorted) {
     const fallback = FACTION_HOMES[u.faction] || [0.5, 0.5];
@@ -368,94 +486,155 @@ function assignTerritories(sites, units, W, H, adj) {
     const hy = u.anchor_y != null ? Number(u.anchor_y) : fallback[1];
     const tx = hx * W, ty = hy * H;
     let best = Infinity, bestId = -1;
-    for (let s = 0; s < sites.length; s++) {
-      if (taken.has(s)) continue;
-      const dx = sites[s].x - tx, dy = sites[s].y - ty;
+    for (let s = 0; s < NSub; s++) {
+      const site = subSites[s];
+      if (!site) continue;
+      if (takenSub.has(s)) continue;
+      const dx = site.x - tx, dy = site.y - ty;
       const d = dx * dx + dy * dy;
       if (d < best) { best = d; bestId = s; }
     }
-    if (bestId >= 0) { seedOf[unitKey(u)] = bestId; taken.add(bestId); }
+    if (bestId >= 0) { seedOf[unitKey(u)] = bestId; takenSub.add(bestId); }
   }
 
-  // Step 2: target cell counts proportional to territory_score, floored at 1
-  // so every banner gets at least one cell.
+  // Step 2: per-banner target sub-cell count, proportional to territory_score.
   const totalScore = units.reduce((s, u) => s + (u.territory_score || 0.001), 0) || 1;
   const target = {};
   for (const u of sorted) {
-    target[unitKey(u)] = Math.max(1, Math.round((u.territory_score || 0.001) / totalScore * sites.length));
+    target[unitKey(u)] = Math.max(1, Math.round((u.territory_score || 0.001) / totalScore * NSub));
   }
 
-  // Step 3: multi-source BFS from every seed simultaneously. Each land cell
-  // ends up owned by the banner whose seed reached it first across the
-  // adjacency graph — graph-distance Voronoi over the territory mesh.
-  // Round-robin in `sorted` order keeps it deterministic and avoids the
-  // larger-score-eats-everyone failure mode of priority-by-score growth.
-  const owner = new Array(sites.length).fill(null);
-  const queues = [];
+  // Step 3: parent-priority round-robin expansion. Each banner claims one
+  // sub-cell per turn, preferring to finish the parent province they're
+  // currently filling before opening a new one. The result: clusters of
+  // fully-owned provinces (organic shape, inherited from the parent Voronoi)
+  // plus a partial conquest on the war front, instead of disk-shaped regions.
+  const owner = new Array(NSub).fill(null);
+  const claimed = {};
+  const pendingParents = {};
+  const pendingSeen = {};
+  const claimedParents = {};
+  const activeIdx = {};
+
   for (const u of sorted) {
     const k = unitKey(u);
     const sid = seedOf[k];
-    if (sid !== undefined) { owner[sid] = k; queues.push([sid]); }
-    else queues.push([]);
+    if (sid === undefined) continue;
+    const homeParent = parentOfSub[sid];
+    owner[sid] = k;
+    claimed[k] = 1;
+    pendingParents[k] = [homeParent];
+    pendingSeen[k] = new Set([homeParent]);
+    claimedParents[k] = new Set([homeParent]);
+    activeIdx[k] = 0;
   }
+
+  const MAX_OUTER = NSub * 4;
   let progress = true;
-  while (progress) {
+  let iters = 0;
+  while (progress && iters++ < MAX_OUTER) {
     progress = false;
-    for (let i = 0; i < sorted.length; i++) {
-      const q = queues[i];
-      if (!q.length) continue;
-      const k = unitKey(sorted[i]);
-      while (q.length) {
-        const tid = q[0];
-        const nbrs = adj.get(tid);
-        if (!nbrs) { q.shift(); continue; }
-        let found = false;
-        for (const nb of nbrs) {
-          if (owner[nb] === null) {
-            owner[nb] = k;
-            q.push(nb);
-            found = true;
-            break;
+    for (const u of sorted) {
+      const k = unitKey(u);
+      if ((claimed[k] || 0) >= target[k]) continue;
+
+      let nextSub = -1;
+      let parentList = pendingParents[k];
+      let idx = activeIdx[k];
+
+      // Try to claim a sub-cell of the active parent (or a later pending
+      // parent if the active is exhausted). Sub-cell must be adjacent to
+      // one of our existing claims so growth stays contiguous.
+      while (idx < parentList.length) {
+        const activeP = parentList[idx];
+        const subs = subsInParent[activeP] || [];
+        for (const sid of subs) {
+          if (owner[sid] !== null) continue;
+          const nbrs = subAdj.get(sid);
+          if (!nbrs) continue;
+          let touchesOurs = false;
+          for (const nb of nbrs) {
+            if (owner[nb] === k) { touchesOurs = true; break; }
+          }
+          if (touchesOurs) { nextSub = sid; break; }
+        }
+        if (nextSub >= 0) break;
+        idx++;
+      }
+
+      if (nextSub < 0) {
+        // Pending parents exhausted: discover newly-adjacent parents and
+        // re-try next turn. Loop the parent adjacency from every parent
+        // we've claimed any sub-cell of.
+        let added = false;
+        for (const cp of claimedParents[k]) {
+          const pNbrs = parentAdj.get(cp);
+          if (!pNbrs) continue;
+          for (const pn of pNbrs) {
+            if (pendingSeen[k].has(pn)) continue;
+            parentList.push(pn);
+            pendingSeen[k].add(pn);
+            added = true;
           }
         }
-        if (!found) { q.shift(); continue; }
-        progress = true;
-        break;
+        if (added) progress = true;
+        continue;
+      }
+
+      owner[nextSub] = k;
+      claimed[k] = (claimed[k] || 0) + 1;
+      claimedParents[k].add(parentOfSub[nextSub]);
+      activeIdx[k] = idx;
+      progress = true;
+    }
+  }
+
+  // Step 4: fill any unclaimed land via adjacency adoption — covers pockets
+  // BFS couldn't reach (rare, but possible if a parent is isolated from all
+  // banners' frontiers).
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let sid = 0; sid < NSub; sid++) {
+      if (owner[sid] !== null) continue;
+      const nbrs = subAdj.get(sid);
+      if (!nbrs) continue;
+      for (const nb of nbrs) {
+        if (owner[nb] !== null) {
+          owner[sid] = owner[nb];
+          changed = true;
+          break;
+        }
       }
     }
   }
 
-  // Step 4: pressure equalization via greedy best-gain flips. Each iteration
-  // scans the whole map for the single cell-flip with the largest "gain"
-  // (deficit[destination] - deficit[donor]) and applies it, then repeats.
-  // The gain > 1 threshold is what gives cascades: a flip strictly reduces
-  // the sum-of-squared-deficits potential by 2*gain - 2, so any gain >= 2 is
-  // monotone progress. Surplus banners cede to at-target neighbours, who
-  // become over-target and cede to under-target neighbours, rippling across
-  // the map until no pair of adjacent banners differs in deficit by more
-  // than 1.
-  //
-  // Determinism: cells iterated in tid order, neighbours in adjacency-list
-  // order, gain ties broken by first-found (which respects those orders).
-  // The contiguity guard prevents flips that would split a donor region
-  // into islands; if a higher-gain flip fails contiguity, the next-best
-  // valid flip wins this iteration.
+  // Step 5: pressure equalization at sub-cell granularity. Each iteration
+  // finds the single boundary flip (sub-cell donor -> neighbour banner)
+  // with the largest gain = deficit[dest] - deficit[donor] and applies it,
+  // provided gain >= 2 and the flip wouldn't split donor's region. The
+  // gain threshold makes Σ deficit² strictly decrease per flip (ΔΦ =
+  // -2*gain + 2 <= -2 for gain >= 2), so cascades converge: an over-target
+  // banner cedes to an at-target neighbour, which then becomes surplus and
+  // donates forward, rippling all the way to whichever banner is
+  // furthest under-target. Determinism: sub-cells iterated in tid order,
+  // neighbours in adjacency-list order, gain ties broken by first-found.
   const counts = {};
   for (const u of sorted) counts[unitKey(u)] = 0;
   for (const o of owner) if (o !== null) counts[o]++;
   const deficitOf = (k) => target[k] - counts[k];
 
-  const maxFlips = sites.length * 8;
+  const maxFlips = NSub * 8;
   let flips = 0;
   while (flips < maxFlips) {
-    let bestGain = 1; // strict >, so threshold for an accepted flip is gain >= 2
+    let bestGain = 1;
     let bestTid = -1;
     let bestDest = null;
     let bestDonor = null;
-    for (let tid = 0; tid < owner.length; tid++) {
+    for (let tid = 0; tid < NSub; tid++) {
       const donor = owner[tid];
       if (donor === null) continue;
-      const nbrs = adj.get(tid);
+      const nbrs = subAdj.get(tid);
       if (!nbrs) continue;
       const dDonor = deficitOf(donor);
       for (const nb of nbrs) {
@@ -463,7 +642,20 @@ function assignTerritories(sites, units, W, H, adj) {
         if (dest === null || dest === donor) continue;
         const gain = deficitOf(dest) - dDonor;
         if (gain <= bestGain) continue;
-        if (!flipKeepsContiguous(tid, donor, owner, adj)) continue;
+        // Anti-tendril guard: require at least 2 of tid's neighbours to
+        // already be owned by dest. Flips thicken an existing border
+        // rather than extruding a one-cell-wide string deep into donor
+        // territory. A cell with only one dest-neighbour means the flip
+        // would create (or continue) a tendril; skip it.
+        let destSupport = 0;
+        for (const nb2 of nbrs) {
+          if (owner[nb2] === dest) {
+            destSupport++;
+            if (destSupport >= 2) break;
+          }
+        }
+        if (destSupport < 2) continue;
+        if (!flipKeepsContiguous(tid, donor, owner, subAdj)) continue;
         bestGain = gain;
         bestTid = tid;
         bestDest = dest;
@@ -593,11 +785,14 @@ export async function renderWarmap(_state) {
   if (seasonPicker) root.appendChild(seasonPicker);
   root.appendChild(canvasWrapper);
 
-  const units = await stats.warmap(selectedSeasonId);
+  const [timeline, initialUnits] = await Promise.all([
+    stats.warmapTimeline(selectedSeasonId).catch(() => []),
+    stats.warmap(selectedSeasonId),
+  ]);
 
   clear(canvasWrapper);
 
-  if (!units.length) {
+  if (!timeline.length) {
     canvasWrapper.appendChild(el('div', {
       class: 'muted',
       style: {
@@ -645,10 +840,110 @@ export async function renderWarmap(_state) {
   const renderSeed = seasonObj?.map_seed ? Number(seasonObj.map_seed) : MAP_SEED;
 
   let mapState = null;
-  requestAnimationFrame(() => {
+
+  // ── Time-travel slider + play button ─────────────────────────
+  // Renders the map at any checkpoint in the season's chronological game
+  // order. idx N = state of the map after the (N+1)th game played. idx
+  // (timeline.length - 1) = current/live state. Same MAP_SEED and same
+  // banner data → same map, so historical snapshots are deterministic.
+  const playBtn = el('button', { type: 'button', style: {
+    background: 'rgba(120,220,255,0.10)',
+    color: 'rgba(120,220,255,0.95)',
+    border: '1px solid rgba(120,220,255,0.55)',
+    borderRadius: '50%',
+    width: '32px',
+    height: '32px',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '12px',
+    padding: '0',
+    lineHeight: '30px',
+    flexShrink: '0',
+  } }, '▶');
+  const slider = el('input', { type: 'range',
+    min: '0',
+    max: String(timeline.length - 1),
+    value: String(timeline.length - 1),
+    style: { flex: '1', accentColor: 'rgba(120,220,255,0.7)' },
+  });
+  const checkpointLabel = el('div', { style: {
+    marginTop: '6px',
+    color: 'var(--text-muted)',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    fontSize: '10px',
+    fontFamily: 'var(--font-mono)',
+    minHeight: '1.4em',
+  } });
+  const timeControls = el('div', { style: {
+    marginTop: '10px',
+    padding: '10px 14px',
+    background: 'rgba(2,6,16,0.75)',
+    border: '1px solid rgba(120,220,255,0.20)',
+    borderRadius: 'var(--radius-lg)',
+  } }, [
+    el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [playBtn, slider]),
+    checkpointLabel,
+  ]);
+  if (timeline.length > 1) root.appendChild(timeControls);
+
+  function updateCheckpointLabel(idx) {
+    const g = timeline[idx];
+    if (!g) { checkpointLabel.textContent = ''; return; }
+    const date = (g.played_at || '').slice(0, 10);
+    const isLast = idx === timeline.length - 1;
+    const tag = isLast ? '  ·  LIVE' : '';
+    const p1 = `${g.p1_name || 'P1'} (${abbreviate(g.p1_faction || '?')})`;
+    const p2 = `${g.p2_name || 'P2'} (${abbreviate(g.p2_faction || '?')})`;
+    checkpointLabel.textContent =
+      `GAME ${idx + 1} / ${timeline.length}  ·  ${date}  ·  ${p1} vs ${p2}${tag}`;
+  }
+
+  let renderToken = 0;
+  async function renderAt(idx, presetUnits) {
+    const myToken = ++renderToken;
+    updateCheckpointLabel(idx);
+    let units = presetUnits;
+    if (!units) {
+      const gameId = timeline[idx]?.id;
+      try { units = await stats.warmap(selectedSeasonId, gameId); }
+      catch { return; }
+      if (myToken !== renderToken) return; // user moved on
+    }
+    if (!units.length) return;
     mapState = drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H, renderSeed);
     populateLegend(legendPanel, mapState);
+  }
+
+  let playInterval = null;
+  function stopPlay() {
+    if (playInterval) clearInterval(playInterval);
+    playInterval = null;
+    playBtn.textContent = '▶';
+  }
+  function startPlay() {
+    if (playInterval) return;
+    if (parseInt(slider.value, 10) >= timeline.length - 1) {
+      // Already at the end — rewind so play has somewhere to go.
+      slider.value = '0';
+      renderAt(0);
+    }
+    playBtn.textContent = '⏸';
+    playInterval = setInterval(() => {
+      const cur = parseInt(slider.value, 10);
+      if (cur >= timeline.length - 1) { stopPlay(); return; }
+      const next = cur + 1;
+      slider.value = String(next);
+      renderAt(next);
+    }, 600);
+  }
+  playBtn.addEventListener('click', () => { if (playInterval) stopPlay(); else startPlay(); });
+  slider.addEventListener('input', () => {
+    stopPlay();
+    renderAt(parseInt(slider.value, 10));
   });
+
+  requestAnimationFrame(() => renderAt(timeline.length - 1, initialUnits));
 
   // ── Hover tooltip ──────────────────────────────────────────
   canvas.addEventListener('mousemove', (e) => {
@@ -658,15 +953,18 @@ export async function renderWarmap(_state) {
     const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
     const gx = Math.floor(sx / mapState.CELL);
     const gy = Math.floor(sy / mapState.CELL);
-    const tid = mapState.ownership[gy * mapState.GW + gx];
-    if (tid == null || tid < 0) {
+    const sid = mapState.subOwnership[gy * mapState.GW + gx];
+    if (sid == null || sid < 0) {
       tooltip.style.display = 'none';
       return;
     }
-    const ownerKey = mapState.owner[tid];
+    const pid = mapState.parentOfSub[sid];
+    const ownerKey = mapState.owner[sid];
     const u = ownerKey ? mapState.unitMeta[ownerKey] : null;
     const tcount = ownerKey ? (mapState.territoryCount[ownerKey] || 0) : 0;
-    const name = territoryName(tid, renderSeed);
+    const name = territoryName(pid, renderSeed);
+    const provOwners = mapState.provinceOwners[pid];
+    const contested = provOwners && provOwners.size > 1;
     const lines = [
       `<div class="t-title">${escapeHtml(name)}</div>`,
       u
@@ -675,6 +973,7 @@ export async function renderWarmap(_state) {
            <div class="t-record">${u.wins}W · ${u.losses}L · ${u.draws}D · ${u.win_rate}%</div>
            <div class="t-record">${tcount} ${tcount === 1 ? 'territory' : 'territories'}</div>`
         : `<div class="t-banner muted">Unclaimed</div>`,
+      contested ? `<div class="t-record" style="color: rgba(255, 190, 80, 0.9)">· contested (${provOwners.size} banners)</div>` : '',
     ].join('');
     tooltip.innerHTML = lines;
     // Show first so we can measure dimensions, then place. The wrapper has
@@ -746,38 +1045,62 @@ function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   // ── Step 0: backdrop with vignette + grid ───────────────────
   drawBackdrop(ctx, W, H);
 
-  // ── Step 1: continent + territories ─────────────────────────
+  // ── Step 1: continent + parent territories + sub-cells ──────
   const polygon = generateContinent(W, H, seed);
-  const { sites, ownership, GW, GH, CELL } = generateTerritories(W, H, polygon, seed);
-  const adj = buildAdjacency(ownership, GW, GH);
-  const { owner } = assignTerritories(sites, units, W, H, adj);
+  const { sites: parentSites, ownership: parentOwnership, GW, GH, CELL } =
+    generateTerritories(W, H, polygon, seed);
+  const parentAdj = buildAdjacency(parentOwnership, GW, GH);
+  const { subSites, subOwnership, parentOfSub, subsInParent, subAdj } =
+    generateSubTerritories(parentOwnership, parentSites, GW, GH, CELL, seed);
+  const { owner } = assignTerritories(subSites, parentOfSub, subsInParent,
+    units, W, H, parentAdj, subAdj);
 
   // Lookup tables: unitKey -> { faction, label }
   const unitMeta = {};
   for (const u of units) unitMeta[unitKey(u)] = u;
 
-  // Per-banner final territory count (read by the hover tooltip).
+  // Per-parent sub-cell ownership tally → majority owner per province (used
+  // for the "territories" count and for the contested-province tooltip note).
+  const NParent = parentSites.length;
+  const provinceMajority = new Array(NParent).fill(null);
+  const provinceOwners = new Array(NParent);
+  for (let p = 0; p < NParent; p++) {
+    const counts = new Map();
+    for (const sid of subsInParent[p]) {
+      const o = owner[sid];
+      if (!o) continue;
+      counts.set(o, (counts.get(o) || 0) + 1);
+    }
+    provinceOwners[p] = counts;
+    let bestOwner = null, bestCount = -1;
+    for (const [k, c] of counts) {
+      if (c > bestCount) { bestCount = c; bestOwner = k; }
+    }
+    provinceMajority[p] = bestOwner;
+  }
   const territoryCount = {};
-  for (const o of owner) if (o !== null) territoryCount[o] = (territoryCount[o] || 0) + 1;
+  for (const k of provinceMajority) if (k) territoryCount[k] = (territoryCount[k] || 0) + 1;
 
   // ── Step 2: paint territories ────────────────────────────────
-  paintTerritories(ctx, ownership, owner, unitMeta, GW, GH, CELL, W, H);
+  paintTerritories(ctx, subOwnership, owner, unitMeta, GW, GH, CELL, W, H);
 
   // ── Step 3: territory borders + coastline ────────────────────
   drawCoastline(ctx, polygon);
-  drawBorders(ctx, ownership, owner, GW, GH, CELL);
+  drawBorders(ctx, parentOwnership, subOwnership, owner, GW, GH, CELL);
 
-  // ── Step 4: banner labels at each region's densest cell ────
-  drawLabels(ctx, sites, units, owner, adj);
+  // ── Step 4: banner labels at each region's densest sub-cell ──
+  drawLabels(ctx, subSites, units, owner, subAdj);
 
   // ── Step 5: HUD chrome ───────────────────────────────────────
   drawScanlines(ctx, W, H);
   drawCornerBrackets(ctx, W, H);
   drawCompass(ctx, 50, H - 60);
-  drawReadout(ctx, W, H, units, sites.length);
+  drawReadout(ctx, W, H, units, NParent);
 
-  // Return state for the hover/tooltip handler set up in renderWarmap.
-  return { ownership, owner, unitMeta, territoryCount, GW, GH, CELL, sites };
+  return {
+    parentOwnership, subOwnership, owner, parentOfSub, provinceOwners,
+    unitMeta, territoryCount, GW, GH, CELL, subSites,
+  };
 }
 
 function drawBackdrop(ctx, W, H) {
@@ -851,29 +1174,53 @@ function drawCoastline(ctx, polygon) {
   ctx.restore();
 }
 
-function drawBorders(ctx, ownership, owner, GW, GH, CELL) {
+function drawBorders(ctx, parentOwnership, subOwnership, owner, GW, GH, CELL) {
+  // Three tiers:
+  //  - Same parent + same banner: no line (interior of a uniformly-held province).
+  //  - Different parent + same banner: faint cyan province grid line.
+  //  - Same parent + different banner: medium amber contested-province line.
+  //  - Different parent + different banner: bold amber war front.
   for (let gy = 0; gy < GH - 1; gy++) {
     for (let gx = 0; gx < GW - 1; gx++) {
-      const a = ownership[gy * GW + gx];
-      const b = ownership[gy * GW + gx + 1];
-      const c = ownership[(gy + 1) * GW + gx];
-      if (a < 0) continue;
+      const i = gy * GW + gx;
+      const pa = parentOwnership[i];
+      const pb = parentOwnership[i + 1];
+      const pc = parentOwnership[i + GW];
+      const sa = subOwnership[i];
+      const sb = subOwnership[i + 1];
+      const sc = subOwnership[i + GW];
 
-      if (b >= 0 && a !== b) drawSegment(ctx, (gx+1)*CELL, gy*CELL, (gx+1)*CELL, (gy+1)*CELL,
-        owner[a] === owner[b]);
-      if (c >= 0 && a !== c) drawSegment(ctx, gx*CELL, (gy+1)*CELL, (gx+1)*CELL, (gy+1)*CELL,
-        owner[a] === owner[c]);
+      if (pa >= 0 && pb >= 0 && sa !== sb) {
+        const sameParent = pa === pb;
+        const sameBanner = owner[sa] === owner[sb] && owner[sa] !== null;
+        if (!(sameParent && sameBanner)) {
+          drawSegment(ctx, (gx + 1) * CELL, gy * CELL, (gx + 1) * CELL, (gy + 1) * CELL,
+            sameParent, sameBanner);
+        }
+      }
+      if (pa >= 0 && pc >= 0 && sa !== sc) {
+        const sameParent = pa === pc;
+        const sameBanner = owner[sa] === owner[sc] && owner[sa] !== null;
+        if (!(sameParent && sameBanner)) {
+          drawSegment(ctx, gx * CELL, (gy + 1) * CELL, (gx + 1) * CELL, (gy + 1) * CELL,
+            sameParent, sameBanner);
+        }
+      }
     }
   }
 }
 
-function drawSegment(ctx, x1, y1, x2, y2, sameFaction) {
-  // Inner-faction territory border = thin cyan
-  // Cross-faction border = bold amber (war front)
-  if (sameFaction) {
-    ctx.strokeStyle = 'rgba(120, 220, 255, 0.45)';
-    ctx.lineWidth = 0.6;
+function drawSegment(ctx, x1, y1, x2, y2, sameParent, sameBanner) {
+  if (sameBanner) {
+    // Province grid line — visible but quiet so it reads as geography.
+    ctx.strokeStyle = 'rgba(120, 220, 255, 0.22)';
+    ctx.lineWidth = 0.5;
+  } else if (sameParent) {
+    // Contested province — banner boundary inside a single province.
+    ctx.strokeStyle = 'rgba(255, 190, 80, 0.65)';
+    ctx.lineWidth = 1.0;
   } else {
+    // Cross-province war front.
     ctx.strokeStyle = HUD_AMBER;
     ctx.lineWidth = 1.6;
   }

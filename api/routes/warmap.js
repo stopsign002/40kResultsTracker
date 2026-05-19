@@ -24,6 +24,18 @@ router.get('/warmap', async (req, res) => {
   }
   const seasonFilter = seasonId ? `AND g.season_id = ${seasonId}` : '';
 
+  // Optional ?through_game_id=<id>. When provided, restricts the aggregation
+  // to games at or before that game in chronological order (played_at ASC,
+  // id ASC tiebreak). Drives the war-map time-travel slider. Banners whose
+  // earliest played game falls after the cutoff simply have zero rows in
+  // the `active` CTE and are excluded from the result.
+  const throughGameId = req.query.through_game_id
+    ? parseInt(String(req.query.through_game_id), 10)
+    : null;
+  const throughFilter = throughGameId
+    ? `AND (g.played_at, g.id) <= (SELECT played_at, id FROM games WHERE id = ${throughGameId})`
+    : '';
+
   // Lazy backfill: cover any banner that exists in game_players but for
   // some reason isn't in banner_first_seen yet (e.g. an admin-inserted
   // game, a row from before this column existed, or the games.js save
@@ -52,7 +64,7 @@ router.get('/warmap', async (req, res) => {
         gp.user_id, gp.guest_name, gp.faction_id, gp.result, gp.final_score,
         g.turn_count
       FROM game_players gp
-      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE ${seasonFilter}
+      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE ${seasonFilter} ${throughFilter}
       WHERE gp.faction_id IS NOT NULL
     )
     SELECT
@@ -83,7 +95,7 @@ router.get('/warmap', async (req, res) => {
 
   const totalGamesRow = await pool.query(
     `SELECT COUNT(*)::int AS total_games FROM games g
-      WHERE g.hidden_from_stats = FALSE ${seasonFilter}`
+      WHERE g.hidden_from_stats = FALSE ${seasonFilter} ${throughFilter}`
   );
   const totalGames = Math.max(1, totalGamesRow.rows[0]?.total_games ?? 1);
   const winsSat   = Math.log1p(totalGames);
@@ -97,6 +109,39 @@ router.get('/warmap', async (req, res) => {
     r.win_rate = r.games > 0 ? Math.round(winRate * 1000) / 10 : 0;
   }
 
+  res.json(rows);
+});
+
+// Ordered list of games in a season — drives the war-map time-travel
+// slider. Returns enough metadata to label each slider tick (date,
+// players, factions, who won) without a second round-trip.
+router.get('/warmap-timeline', async (req, res) => {
+  let seasonId = req.query.season ? parseInt(String(req.query.season), 10) : null;
+  if (!seasonId) {
+    const r = await pool.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
+    seasonId = r.rows[0]?.id ?? null;
+  }
+  const seasonFilter = seasonId ? `AND g.season_id = ${seasonId}` : '';
+
+  const { rows } = await pool.query(`
+    SELECT
+      g.id,
+      g.played_at::text                              AS played_at,
+      COALESCE(u1.display_name, gp1.guest_name)      AS p1_name,
+      COALESCE(u2.display_name, gp2.guest_name)      AS p2_name,
+      f1.name                                        AS p1_faction,
+      f2.name                                        AS p2_faction,
+      gp1.result                                     AS p1_result
+    FROM games g
+    LEFT JOIN game_players gp1 ON gp1.game_id = g.id AND gp1.seat = 1
+    LEFT JOIN game_players gp2 ON gp2.game_id = g.id AND gp2.seat = 2
+    LEFT JOIN factions f1 ON f1.id = gp1.faction_id
+    LEFT JOIN factions f2 ON f2.id = gp2.faction_id
+    LEFT JOIN users   u1 ON u1.id = gp1.user_id
+    LEFT JOIN users   u2 ON u2.id = gp2.user_id
+    WHERE g.hidden_from_stats = FALSE ${seasonFilter}
+    ORDER BY g.played_at ASC, g.id ASC
+  `);
   res.json(rows);
 });
 
