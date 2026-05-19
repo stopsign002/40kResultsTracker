@@ -196,23 +196,18 @@ async function recordBannerFirstSeen(client, p) {
   );
   if (existing.rows[0]) return;
 
-  // First banner of this faction → NULL anchor (frontend falls back to
-  // FACTION_HOMES). Second or later → pick a spare anchor away from every
-  // banner already on the map.
-  const otherBanners = await client.query(
+  // Look at every banner already on the map (any faction). If there are
+  // any, this new banner picks the spare anchor maximally far from all of
+  // them so newcomers spawn in fresh territory instead of crammed in next
+  // to existing players. Only the very first banner of the season (no
+  // neighbours yet) falls back to its FACTION_HOMES lore anchor.
+  const allClaims = await client.query(
     `SELECT b.anchor_x, b.anchor_y, f.name AS faction
        FROM banner_first_seen b
-       JOIN factions f ON f.id = b.faction_id
-      WHERE b.faction_id = $1`,
-    [p.factionId]
+       JOIN factions f ON f.id = b.faction_id`
   );
   let anchorX = null, anchorY = null;
-  if (otherBanners.rows.length > 0) {
-    const allClaims = await client.query(
-      `SELECT b.anchor_x, b.anchor_y, f.name AS faction
-         FROM banner_first_seen b
-         JOIN factions f ON f.id = b.faction_id`
-    );
+  if (allClaims.rows.length > 0) {
     const claimed = allClaims.rows.map(r => {
       if (r.anchor_x != null) return [Number(r.anchor_x), Number(r.anchor_y)];
       return FACTION_HOMES[r.faction] ?? [0.5, 0.5];
