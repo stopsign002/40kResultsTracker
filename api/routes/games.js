@@ -4,6 +4,7 @@ import { requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
+import { FACTION_HOMES, chooseSpareAnchor } from '../lib/faction-anchors.js';
 
 const router = Router();
 
@@ -187,11 +188,43 @@ async function recordBannerFirstSeen(client, p) {
   if (!p.factionId) return;
   if (!p.userId && !p.guestName) return;
   const playerKey = p.userId ? `user:${p.userId}` : `guest:${p.guestName}`;
-  await client.query(
-    `INSERT INTO banner_first_seen (player_key, faction_id)
-     VALUES ($1, $2)
-     ON CONFLICT (player_key, faction_id) DO NOTHING`,
+
+  // Skip the anchor work if this banner already exists.
+  const existing = await client.query(
+    `SELECT 1 FROM banner_first_seen WHERE player_key = $1 AND faction_id = $2`,
     [playerKey, p.factionId]
+  );
+  if (existing.rows[0]) return;
+
+  // First banner of this faction → NULL anchor (frontend falls back to
+  // FACTION_HOMES). Second or later → pick a spare anchor away from every
+  // banner already on the map.
+  const otherBanners = await client.query(
+    `SELECT b.anchor_x, b.anchor_y, f.name AS faction
+       FROM banner_first_seen b
+       JOIN factions f ON f.id = b.faction_id
+      WHERE b.faction_id = $1`,
+    [p.factionId]
+  );
+  let anchorX = null, anchorY = null;
+  if (otherBanners.rows.length > 0) {
+    const allClaims = await client.query(
+      `SELECT b.anchor_x, b.anchor_y, f.name AS faction
+         FROM banner_first_seen b
+         JOIN factions f ON f.id = b.faction_id`
+    );
+    const claimed = allClaims.rows.map(r => {
+      if (r.anchor_x != null) return [Number(r.anchor_x), Number(r.anchor_y)];
+      return FACTION_HOMES[r.faction] ?? [0.5, 0.5];
+    });
+    [anchorX, anchorY] = chooseSpareAnchor(claimed);
+  }
+
+  await client.query(
+    `INSERT INTO banner_first_seen (player_key, faction_id, anchor_x, anchor_y)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (player_key, faction_id) DO NOTHING`,
+    [playerKey, p.factionId, anchorX, anchorY]
   );
 }
 

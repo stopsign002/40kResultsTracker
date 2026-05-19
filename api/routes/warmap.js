@@ -68,13 +68,16 @@ router.get('/warmap', async (req, res) => {
       ROUND(AVG(ab.final_score)::numeric, 1)               AS avg_score,
       SUM(ab.final_score * 5.0 / GREATEST(COALESCE(ab.turn_count, 5), 1))::float
                                                            AS adjusted_points,
-      bfs.first_seen_at::text                              AS first_seen_at
+      bfs.first_seen_at::text                              AS first_seen_at,
+      bfs.anchor_x                                         AS anchor_x,
+      bfs.anchor_y                                         AS anchor_y
     FROM active ab
     JOIN factions f ON f.id = ab.faction_id
     LEFT JOIN users u ON u.id = ab.user_id
     JOIN banner_first_seen bfs
       ON bfs.player_key = ab.player_key AND bfs.faction_id = ab.faction_id
-    GROUP BY ab.player_key, player_name, u.army_name, f.id, f.name, bfs.first_seen_at
+    GROUP BY ab.player_key, player_name, u.army_name, f.id, f.name,
+             bfs.first_seen_at, bfs.anchor_x, bfs.anchor_y
     ORDER BY bfs.first_seen_at, ab.player_key, f.id
   `);
 

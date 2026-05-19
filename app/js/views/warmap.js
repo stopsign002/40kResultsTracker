@@ -363,7 +363,9 @@ function assignTerritories(sites, units, W, H, adj) {
   const taken = new Set();
   const seedOf = {};
   for (const u of sorted) {
-    const [hx, hy] = FACTION_HOMES[u.faction] || [0.5, 0.5];
+    const fallback = FACTION_HOMES[u.faction] || [0.5, 0.5];
+    const hx = u.anchor_x != null ? Number(u.anchor_x) : fallback[0];
+    const hy = u.anchor_y != null ? Number(u.anchor_y) : fallback[1];
     const tx = hx * W, ty = hy * H;
     let best = Infinity, bestId = -1;
     for (let s = 0; s < sites.length; s++) {
