@@ -785,11 +785,14 @@ export async function renderWarmap(_state) {
   if (seasonPicker) root.appendChild(seasonPicker);
   root.appendChild(canvasWrapper);
 
-  const units = await stats.warmap(selectedSeasonId);
+  const [timeline, initialUnits] = await Promise.all([
+    stats.warmapTimeline(selectedSeasonId).catch(() => []),
+    stats.warmap(selectedSeasonId),
+  ]);
 
   clear(canvasWrapper);
 
-  if (!units.length) {
+  if (!timeline.length) {
     canvasWrapper.appendChild(el('div', {
       class: 'muted',
       style: {
@@ -837,10 +840,110 @@ export async function renderWarmap(_state) {
   const renderSeed = seasonObj?.map_seed ? Number(seasonObj.map_seed) : MAP_SEED;
 
   let mapState = null;
-  requestAnimationFrame(() => {
+
+  // ── Time-travel slider + play button ─────────────────────────
+  // Renders the map at any checkpoint in the season's chronological game
+  // order. idx N = state of the map after the (N+1)th game played. idx
+  // (timeline.length - 1) = current/live state. Same MAP_SEED and same
+  // banner data → same map, so historical snapshots are deterministic.
+  const playBtn = el('button', { type: 'button', style: {
+    background: 'rgba(120,220,255,0.10)',
+    color: 'rgba(120,220,255,0.95)',
+    border: '1px solid rgba(120,220,255,0.55)',
+    borderRadius: '50%',
+    width: '32px',
+    height: '32px',
+    cursor: 'pointer',
+    fontFamily: 'var(--font-mono)',
+    fontSize: '12px',
+    padding: '0',
+    lineHeight: '30px',
+    flexShrink: '0',
+  } }, '▶');
+  const slider = el('input', { type: 'range',
+    min: '0',
+    max: String(timeline.length - 1),
+    value: String(timeline.length - 1),
+    style: { flex: '1', accentColor: 'rgba(120,220,255,0.7)' },
+  });
+  const checkpointLabel = el('div', { style: {
+    marginTop: '6px',
+    color: 'var(--text-muted)',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    fontSize: '10px',
+    fontFamily: 'var(--font-mono)',
+    minHeight: '1.4em',
+  } });
+  const timeControls = el('div', { style: {
+    marginTop: '10px',
+    padding: '10px 14px',
+    background: 'rgba(2,6,16,0.75)',
+    border: '1px solid rgba(120,220,255,0.20)',
+    borderRadius: 'var(--radius-lg)',
+  } }, [
+    el('div', { style: { display: 'flex', alignItems: 'center', gap: '10px' } }, [playBtn, slider]),
+    checkpointLabel,
+  ]);
+  if (timeline.length > 1) root.appendChild(timeControls);
+
+  function updateCheckpointLabel(idx) {
+    const g = timeline[idx];
+    if (!g) { checkpointLabel.textContent = ''; return; }
+    const date = (g.played_at || '').slice(0, 10);
+    const isLast = idx === timeline.length - 1;
+    const tag = isLast ? '  ·  LIVE' : '';
+    const p1 = `${g.p1_name || 'P1'} (${abbreviate(g.p1_faction || '?')})`;
+    const p2 = `${g.p2_name || 'P2'} (${abbreviate(g.p2_faction || '?')})`;
+    checkpointLabel.textContent =
+      `GAME ${idx + 1} / ${timeline.length}  ·  ${date}  ·  ${p1} vs ${p2}${tag}`;
+  }
+
+  let renderToken = 0;
+  async function renderAt(idx, presetUnits) {
+    const myToken = ++renderToken;
+    updateCheckpointLabel(idx);
+    let units = presetUnits;
+    if (!units) {
+      const gameId = timeline[idx]?.id;
+      try { units = await stats.warmap(selectedSeasonId, gameId); }
+      catch { return; }
+      if (myToken !== renderToken) return; // user moved on
+    }
+    if (!units.length) return;
     mapState = drawTacticalMap(canvas, units, VIRTUAL_W, VIRTUAL_H, renderSeed);
     populateLegend(legendPanel, mapState);
+  }
+
+  let playInterval = null;
+  function stopPlay() {
+    if (playInterval) clearInterval(playInterval);
+    playInterval = null;
+    playBtn.textContent = '▶';
+  }
+  function startPlay() {
+    if (playInterval) return;
+    if (parseInt(slider.value, 10) >= timeline.length - 1) {
+      // Already at the end — rewind so play has somewhere to go.
+      slider.value = '0';
+      renderAt(0);
+    }
+    playBtn.textContent = '⏸';
+    playInterval = setInterval(() => {
+      const cur = parseInt(slider.value, 10);
+      if (cur >= timeline.length - 1) { stopPlay(); return; }
+      const next = cur + 1;
+      slider.value = String(next);
+      renderAt(next);
+    }, 600);
+  }
+  playBtn.addEventListener('click', () => { if (playInterval) stopPlay(); else startPlay(); });
+  slider.addEventListener('input', () => {
+    stopPlay();
+    renderAt(parseInt(slider.value, 10));
   });
+
+  requestAnimationFrame(() => renderAt(timeline.length - 1, initialUnits));
 
   // ── Hover tooltip ──────────────────────────────────────────
   canvas.addEventListener('mousemove', (e) => {
