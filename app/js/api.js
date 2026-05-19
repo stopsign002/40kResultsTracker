@@ -1,5 +1,7 @@
 const API_BASE = '/api';
 
+// Server error shape: { error: string, code?: string }.
+// Network failures throw with status=0 and an offline-ish message.
 async function request(method, path, body) {
   const opts = {
     method,
@@ -7,12 +9,21 @@ async function request(method, path, body) {
     credentials: 'same-origin',
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
-  const res = await fetch(API_BASE + path, opts);
+  let res;
+  try {
+    res = await fetch(API_BASE + path, opts);
+  } catch (netErr) {
+    const err = new Error('network unreachable');
+    err.status = 0;
+    err.code = 'network';
+    throw err;
+  }
   let data = null;
-  try { data = await res.json(); } catch { /* ignore */ }
+  try { data = await res.json(); } catch { /* response had no JSON body */ }
   if (!res.ok) {
-    const err = new Error(data?.error || res.statusText);
+    const err = new Error(data?.error || res.statusText || `HTTP ${res.status}`);
     err.status = res.status;
+    err.code = data?.code;
     err.data = data;
     throw err;
   }
@@ -33,6 +44,12 @@ export const auth = {
   logout: () => api.post('/auth/logout', {}),
   changePassword: (currentPassword, newPassword) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
+  updateMe: (data) => api.patch('/auth/me', data),
+};
+
+export const seasons = {
+  list:   () => api.get('/seasons'),
+  start:  (data) => api.post('/seasons', data),
 };
 
 export const reference = {
@@ -41,6 +58,8 @@ export const reference = {
   missionPacks:    () => api.get('/reference/mission-packs'),
   missionDetails:  (packId) => api.get(`/reference/mission-packs/${packId}/details`),
   users:           () => api.get('/reference/users'),
+  players:         () => api.get('/reference/players'),
+  playerNames:     () => api.get('/reference/player-names'),
 };
 
 export const games = {
@@ -67,6 +86,17 @@ export const stats = {
   headToHead:             (a, b) => api.get(`/stats/head-to-head?userA=${a}&userB=${b}`),
   firstTurnImpact:        (q) => api.get('/stats/first-turn-impact' + qstr(q)),
   secondaryAverages:      () => api.get('/stats/secondary-averages'),
+  warmap:                 (seasonId, throughGameId) => {
+                            const params = [];
+                            if (seasonId)       params.push('season=' + seasonId);
+                            if (throughGameId)  params.push('through_game_id=' + throughGameId);
+                            return api.get('/stats/warmap' + (params.length ? '?' + params.join('&') : ''));
+                          },
+  warmapTimeline:         (seasonId) => api.get('/stats/warmap-timeline' + (seasonId ? '?season=' + seasonId : '')),
+  detachmentWinRates:     (factionId) => api.get('/stats/detachment-winrates' + (factionId ? '?factionId=' + factionId : '')),
+  trends:                 () => api.get('/stats/trends'),
+  player:                 (playerKey) => api.get('/stats/player/' + encodeURIComponent(playerKey)),
+  calendar:               (days) => api.get('/stats/calendar' + (days ? '?days=' + days : '')),
 };
 
 export const admin = {
@@ -74,6 +104,8 @@ export const admin = {
   createUser:   (data) => api.post('/admin/users', data),
   updateUser:   (id, data) => api.patch(`/admin/users/${id}`, data),
   setVisibility:(gameId, hidden) => api.patch(`/admin/games/${gameId}/visibility`, { hidden }),
+  deleteGame:   (gameId) => api.del(`/admin/games/${gameId}`),
+  audit:        (limit) => api.get('/admin/audit' + (limit ? '?limit=' + limit : '')),
 };
 
 function qstr(q) {

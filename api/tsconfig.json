@@ -1,0 +1,19 @@
+{
+  "//": "Type-checking only — no emit, no build step. The project remains pure JS at runtime; this just lets editors and `npm run typecheck` catch the obvious bugs (the camelCase / snake_case payload shape, undefined imports, typos). Files opt in via `// @ts-check` at the top.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
+  },
+  "include": ["**/*.js"],
+  "exclude": ["node_modules"]
+}

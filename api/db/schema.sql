@@ -7,8 +7,18 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  army_name     TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Migration: add army_name if upgrading from earlier schema
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='users' AND column_name='army_name'
+  ) THEN
+    ALTER TABLE users ADD COLUMN army_name TEXT;
+  END IF;
+END $$;
 
 -- Session store (connect-pg-simple)
 CREATE TABLE IF NOT EXISTS "session" (
@@ -106,6 +116,7 @@ CREATE TABLE IF NOT EXISTS game_players (
   guest_name      TEXT,
   faction_id      INTEGER REFERENCES factions(id),
   detachment_id   INTEGER REFERENCES detachments(id),
+  detachment_name TEXT,
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -114,6 +125,16 @@ CREATE TABLE IF NOT EXISTS game_players (
   UNIQUE (game_id, seat),
   CHECK (user_id IS NOT NULL OR guest_name IS NOT NULL)
 );
+-- Migration: add detachment_name (free-text) for existing installs that
+-- were created before the detachment input switched from a dropdown.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='detachment_name'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN detachment_name TEXT;
+  END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_game_players_game ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_players_user ON game_players(user_id);
@@ -148,10 +169,84 @@ CREATE TABLE IF NOT EXISTS player_challengers (
   game_player_id  INTEGER NOT NULL REFERENCES game_players(id) ON DELETE CASCADE,
   card_id         INTEGER REFERENCES challenger_cards(id),
   card_name       TEXT NOT NULL,
+  round_number    INTEGER CHECK (round_number BETWEEN 1 AND 5),
   completed       BOOLEAN NOT NULL DEFAULT FALSE,
   score           INTEGER NOT NULL DEFAULT 0
 );
+-- Migration: add round_number if upgrading from initial schema
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='player_challengers' AND column_name='round_number'
+  ) THEN
+    ALTER TABLE player_challengers ADD COLUMN round_number INTEGER CHECK (round_number BETWEEN 1 AND 5);
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_player_challengers_gp ON player_challengers(game_player_id);
+
+-- Seasons: each game belongs to a season, the war map can render any
+-- archived season's state, and admins can start a new season at any time.
+-- Initial migration creates "Season 1" and assigns every existing game to it.
+CREATE TABLE IF NOT EXISTS seasons (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  map_seed    BIGINT NOT NULL,                  -- drives war map geometry per season
+  started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at    TIMESTAMPTZ,                      -- NULL = currently active
+  is_active   BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Only one active season at a time
+CREATE UNIQUE INDEX IF NOT EXISTS idx_seasons_only_one_active
+  ON seasons (is_active) WHERE is_active = TRUE;
+
+-- Migration: add season_id to games if upgrading from earlier schema.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='games' AND column_name='season_id'
+  ) THEN
+    ALTER TABLE games ADD COLUMN season_id INTEGER REFERENCES seasons(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_games_season ON games(season_id);
+
+-- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id              SERIAL PRIMARY KEY,
+  actor_user_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_username  TEXT,
+  action          TEXT NOT NULL,
+  target_type     TEXT,
+  target_id       INTEGER,
+  payload         JSONB,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created  ON audit_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_actor    ON audit_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_log_target   ON audit_log(target_type, target_id);
+
+-- Persistent first-seen timestamp per (player, faction) banner. Used by
+-- the war map to assign and PRESERVE home fortresses: once a banner has
+-- a row here, its claimed_at never changes — adding/hiding games can't
+-- move existing fortresses. New banners get NOW() on first save.
+CREATE TABLE IF NOT EXISTS banner_first_seen (
+  player_key    TEXT NOT NULL,
+  faction_id    INTEGER NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (player_key, faction_id)
+);
+-- Migration: per-banner anchor (overrides FACTION_HOMES for displaced banners
+-- — i.e. the 2nd+ player of a faction). NULL means "use the faction default".
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='banner_first_seen' AND column_name='anchor_x'
+  ) THEN
+    ALTER TABLE banner_first_seen ADD COLUMN anchor_x REAL;
+    ALTER TABLE banner_first_seen ADD COLUMN anchor_y REAL;
+  END IF;
+END $$;
 
 -- Helper view for stats: one row per (game_player) with derived fields
 CREATE OR REPLACE VIEW v_game_player_stats AS

@@ -55,3 +55,70 @@ export function selectOptions(items, valueKey = 'id', labelKey = 'name', include
   }
   return opts;
 }
+
+// Replacement for native confirm() / prompt() that matches the project's
+// dark Warhammer aesthetic. Returns a Promise that resolves to:
+//   confirm: true | false
+//   prompt:  string | null  (null on cancel)
+// Usage:
+//   await confirmModal({ title, body, danger: true })
+//   await promptModal({ title, label, defaultValue, placeholder })
+
+function buildModal({ title, body, footer, onClose }) {
+  const overlay = el('div', { class: 'modal-overlay' });
+  const dialog = el('div', { class: 'modal-dialog', role: 'dialog' }, [
+    el('div', { class: 'modal-header' }, el('h2', {}, title)),
+    el('div', { class: 'modal-body' }, body),
+    el('div', { class: 'modal-footer' }, footer),
+  ]);
+  overlay.appendChild(dialog);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) onClose(); });
+  document.addEventListener('keydown', escListener);
+  function escListener(e) { if (e.key === 'Escape') onClose(); }
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  return {
+    close: () => {
+      document.removeEventListener('keydown', escListener);
+      overlay.classList.remove('show');
+      setTimeout(() => overlay.remove(), 150);
+    },
+  };
+}
+
+export function confirmModal({ title = 'Confirm', body = '', danger = false, confirmLabel = 'Confirm', cancelLabel = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    let modal;
+    const cancelBtn = el('button', { class: 'btn', type: 'button', onClick: () => { modal.close(); resolve(false); } }, cancelLabel);
+    const confirmBtn = el('button', { class: `btn ${danger ? 'danger' : 'primary'}`, type: 'button', onClick: () => { modal.close(); resolve(true); } }, confirmLabel);
+    modal = buildModal({
+      title,
+      body: el('div', {}, body),
+      footer: el('div', { class: 'btn-group', style: { justifyContent: 'flex-end', width: '100%' } }, [cancelBtn, confirmBtn]),
+      onClose: () => { modal.close(); resolve(false); },
+    });
+    setTimeout(() => confirmBtn.focus(), 100);
+  });
+}
+
+export function promptModal({ title = 'Enter value', label = '', defaultValue = '', placeholder = '', confirmLabel = 'OK', cancelLabel = 'Cancel', type = 'text' } = {}) {
+  return new Promise((resolve) => {
+    let modal;
+    const input = el('input', { type, value: defaultValue, placeholder, autocomplete: 'off' });
+    const submit = () => { modal.close(); resolve(input.value); };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    const cancelBtn = el('button', { class: 'btn', type: 'button', onClick: () => { modal.close(); resolve(null); } }, cancelLabel);
+    const confirmBtn = el('button', { class: 'btn primary', type: 'button', onClick: submit }, confirmLabel);
+    const body = el('div', {}, [
+      label ? el('label', { style: { marginBottom: '6px' } }, label) : null,
+      input,
+    ].filter(Boolean));
+    modal = buildModal({
+      title,
+      body,
+      footer: el('div', { class: 'btn-group', style: { justifyContent: 'flex-end', width: '100%' } }, [cancelBtn, confirmBtn]),
+      onClose: () => { modal.close(); resolve(null); },
+    });
+    setTimeout(() => input.focus(), 100);
+  });
+}

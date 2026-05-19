@@ -431,12 +431,254 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .fade-in { animation: fade-in .25s ease both; }
 
 /* ── Responsive (basic — not optimized per spec) ─────────── */
+/* ── Mobile nav toggle (hidden on desktop) ─────────────────── */
+.nav-toggle {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+.nav-toggle .nav-toggle-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-toggle .nav-toggle-caret {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.nav-toggle:hover { background: var(--card-hover); border-color: var(--accent); color: var(--accent); }
+.nav-toggle:hover .nav-toggle-caret { color: var(--accent); }
+
 @media (max-width: 700px) {
   .players-grid { grid-template-columns: 1fr; }
   .form-row.cols-2, .form-row.cols-3, .form-row.cols-4 { grid-template-columns: 1fr; }
-  header.topbar { flex-wrap: wrap; gap: 10px; }
-  header.topbar nav { width: 100%; overflow-x: auto; }
+
+  /* Per-round secondary/challenger scoring grid: stack the slots vertically
+     and label each so it's still readable on phone width. The row label
+     (R1/R2/...) becomes a section header. */
+  .player-panel > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  .player-panel > div[style*="grid-template-columns"] > div:first-child {
+    font-size: 14px !important;
+    padding: 10px 0 4px !important;
+    border-top: 1px solid var(--border);
+  }
+  .player-panel > div[style*="grid-template-columns"]:first-of-type > div:first-child {
+    border-top: none;
+  }
+
+  /* Make number inputs in the round grids tap-friendly. */
+  .player-panel input[type="number"] { min-height: 36px; font-size: 16px; }
+  .player-panel select { min-height: 36px; font-size: 14px; }
+
+  /* Stat cards: don't span multiple columns on mobile */
+  .stat-card[style*="grid-column"] { grid-column: auto !important; }
+  .stats-grid { grid-template-columns: 1fr; }
+
+  header.topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    position: relative;
+    align-items: center;
+  }
+  header.topbar .brand { flex-shrink: 0; }
+  header.topbar .session { flex-shrink: 0; }
+  .nav-toggle { display: flex; order: 3; flex-basis: 100%; }
+  header.topbar nav {
+    display: none;
+    order: 4;
+    flex-basis: 100%;
+    flex-direction: column;
+    gap: 0;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+  }
+  header.topbar nav.open { display: flex; }
+  header.topbar nav a {
+    border-radius: 0;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    font-size: 14px;
+  }
+  header.topbar nav a:last-child { border-bottom: none; }
+  header.topbar nav a.active {
+    background: var(--accent);
+    color: var(--accent-on);
+    border-color: var(--accent);
+  }
 }
 
 /* ── Hidden by default helper ─────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── Modal dialog (confirmModal / promptModal) ─────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity .15s ease;
+  pointer-events: none;
+}
+.modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal-dialog {
+  background: var(--panel-bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 320px;
+  max-width: 480px;
+  width: calc(100vw - 32px);
+  transform: translateY(8px);
+  transition: transform .15s ease;
+}
+.modal-overlay.show .modal-dialog { transform: translateY(0); }
+.modal-dialog .modal-header { padding: 14px 18px; border-bottom: 1px solid var(--border); }
+.modal-dialog .modal-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+.modal-dialog .modal-body { padding: 18px; color: var(--text); font-size: 14px; line-height: 1.5; }
+.modal-dialog .modal-body label { margin-bottom: 6px; }
+.modal-dialog .modal-body input { width: 100%; }
+.modal-dialog .modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; }
+
+/* ── Theatre of War tooltip + legend ──────────────────────── */
+.warmap-tooltip {
+  position: absolute;
+  z-index: 30;
+  background: rgba(2, 6, 16, 0.94);
+  border: 1px solid rgba(120, 220, 255, 0.45);
+  box-shadow: 0 0 12px rgba(120, 220, 255, 0.2), 0 4px 16px rgba(0, 0, 0, 0.6);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  pointer-events: none;
+  min-width: 180px;
+}
+.warmap-tooltip .t-title {
+  color: rgba(120, 220, 255, 0.95);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.warmap-tooltip .t-banner { color: rgba(255, 230, 160, 0.95); font-weight: 700; font-size: 13px; }
+.warmap-tooltip .t-banner.muted { color: var(--text-muted); font-style: italic; font-weight: 400; }
+.warmap-tooltip .t-faction { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.warmap-tooltip .t-record { color: var(--text); margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+.warmap-legend-toggle {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(2, 6, 16, 0.85);
+  color: rgba(120, 220, 255, 0.9);
+  border: 1px solid rgba(120, 220, 255, 0.5);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: 0 0 8px rgba(120, 220, 255, 0.25);
+}
+.warmap-legend-toggle:hover { background: rgba(120, 220, 255, 0.15); }
+.warmap-legend-panel {
+  position: absolute;
+  bottom: 56px;
+  left: 14px;
+  z-index: 25;
+  max-width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: rgba(2, 6, 16, 0.96);
+  border: 1px solid rgba(120, 220, 255, 0.45);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.warmap-legend-panel .legend-title {
+  color: rgba(120, 220, 255, 0.9);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  margin-bottom: 8px;
+  font-size: 10px;
+}
+.warmap-legend-panel .legend-row {
+  display: grid;
+  grid-template-columns: 14px 14px 70px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(120, 220, 255, 0.08);
+}
+.warmap-legend-panel .legend-row:last-child { border-bottom: none; }
+.warmap-legend-panel .legend-swatch { width: 14px; height: 14px; border: 1px solid rgba(120, 220, 255, 0.4); }
+.warmap-legend-panel .legend-glyph { color: rgba(255, 230, 160, 0.9); text-align: center; font-weight: 700; }
+.warmap-legend-panel .legend-abbrev { color: rgba(255, 230, 160, 0.85); font-weight: 700; }
+.warmap-legend-panel .legend-name { color: var(--text); }
+
+/* ── Frontend error boundary panel ─────────────────────────── */
+.error-boundary {
+  margin: 60px auto;
+  max-width: 640px;
+  background: var(--panel-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  box-shadow: var(--shadow-lg);
+}
+.error-boundary h1 {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--danger);
+  margin-top: 0;
+}
+.error-boundary pre {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 12px;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
