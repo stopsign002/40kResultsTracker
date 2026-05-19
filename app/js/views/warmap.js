@@ -609,7 +609,96 @@ function assignTerritories(subSites, parentOfSub, subsInParent, units, W, H, par
     }
   }
 
+  // Step 5: pressure equalization at sub-cell granularity. Each iteration
+  // finds the single boundary flip (sub-cell donor -> neighbour banner)
+  // with the largest gain = deficit[dest] - deficit[donor] and applies it,
+  // provided gain >= 2 and the flip wouldn't split donor's region. The
+  // gain threshold makes Σ deficit² strictly decrease per flip (ΔΦ =
+  // -2*gain + 2 <= -2 for gain >= 2), so cascades converge: an over-target
+  // banner cedes to an at-target neighbour, which then becomes surplus and
+  // donates forward, rippling all the way to whichever banner is
+  // furthest under-target. Determinism: sub-cells iterated in tid order,
+  // neighbours in adjacency-list order, gain ties broken by first-found.
+  const counts = {};
+  for (const u of sorted) counts[unitKey(u)] = 0;
+  for (const o of owner) if (o !== null) counts[o]++;
+  const deficitOf = (k) => target[k] - counts[k];
+
+  const maxFlips = NSub * 8;
+  let flips = 0;
+  while (flips < maxFlips) {
+    let bestGain = 1;
+    let bestTid = -1;
+    let bestDest = null;
+    let bestDonor = null;
+    for (let tid = 0; tid < NSub; tid++) {
+      const donor = owner[tid];
+      if (donor === null) continue;
+      const nbrs = subAdj.get(tid);
+      if (!nbrs) continue;
+      const dDonor = deficitOf(donor);
+      for (const nb of nbrs) {
+        const dest = owner[nb];
+        if (dest === null || dest === donor) continue;
+        const gain = deficitOf(dest) - dDonor;
+        if (gain <= bestGain) continue;
+        // Anti-tendril guard: require at least 2 of tid's neighbours to
+        // already be owned by dest. Flips thicken an existing border
+        // rather than extruding a one-cell-wide string deep into donor
+        // territory. A cell with only one dest-neighbour means the flip
+        // would create (or continue) a tendril; skip it.
+        let destSupport = 0;
+        for (const nb2 of nbrs) {
+          if (owner[nb2] === dest) {
+            destSupport++;
+            if (destSupport >= 2) break;
+          }
+        }
+        if (destSupport < 2) continue;
+        if (!flipKeepsContiguous(tid, donor, owner, subAdj)) continue;
+        bestGain = gain;
+        bestTid = tid;
+        bestDest = dest;
+        bestDonor = donor;
+      }
+    }
+    if (bestTid < 0) break;
+    owner[bestTid] = bestDest;
+    counts[bestDonor]--;
+    counts[bestDest]++;
+    flips++;
+  }
+
   return { owner };
+}
+
+// Local contiguity guard for the equalization phase. After hypothetically
+// removing `tid` from `donor`, donor's other cells touching `tid` must still
+// be mutually reachable through donor-owned cells. If a flip would split
+// donor into two clusters, refuse it.
+function flipKeepsContiguous(tid, donor, owner, adj) {
+  const nbrs = adj.get(tid);
+  if (!nbrs) return true;
+  const donorNbrsOfTid = [];
+  for (const nb of nbrs) if (owner[nb] === donor) donorNbrsOfTid.push(nb);
+  if (donorNbrsOfTid.length <= 1) return true;
+  const start = donorNbrsOfTid[0];
+  const seen = new Set([start]);
+  const stack = [start];
+  while (stack.length) {
+    const c = stack.pop();
+    const cn = adj.get(c);
+    if (!cn) continue;
+    for (const m of cn) {
+      if (m === tid) continue;
+      if (owner[m] !== donor) continue;
+      if (seen.has(m)) continue;
+      seen.add(m);
+      stack.push(m);
+    }
+  }
+  for (const n of donorNbrsOfTid) if (!seen.has(n)) return false;
+  return true;
 }
 
 // ── Render ──────────────────────────────────────────────────────
