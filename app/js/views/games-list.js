@@ -3,7 +3,7 @@ import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
 
 const filterState = {
   format: '', missionPack: '', primaryMission: '', deploymentMap: '',
-  playerUserId: '', playerFaction: '', opponentFaction: '',
+  playerKey: '', playerFaction: '', opponentFaction: '',
   dateFrom: '', dateTo: '', includeHidden: 'false', q: '',
 };
 
@@ -24,10 +24,10 @@ export async function renderGamesList(state) {
   applyHashParams();
   const root = el('div', { class: 'fade-in' });
 
-  const [factions, missionPacks, users] = await Promise.all([
+  const [factions, missionPacks, players] = await Promise.all([
     reference.factions(),
     reference.missionPacks(),
-    reference.users(),
+    reference.players(),
   ]);
 
   let primaryMissions = [];
@@ -113,7 +113,7 @@ export async function renderGamesList(state) {
     el('div', { class: 'panel-body' }, [
       el('div', { class: 'filters' }, [
         searchField,
-        filterSel('Player', 'playerUserId', users, 'id', 'display_name'),
+        filterSel('Player', 'playerKey', players, 'key', 'label'),
         filterSel('Faction', 'playerFaction', factions),
         filterSel('Vs Faction', 'opponentFaction', factions),
         formatSel,
@@ -130,8 +130,8 @@ export async function renderGamesList(state) {
   const tablePanel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, [
       el('h2', {}, 'Games'),
-      el('a', { class: 'btn primary small', href: '#/games/new' }, 'New Game'),
-    ]),
+      state.user ? el('a', { class: 'btn primary small', href: '#/games/new' }, 'New Game') : null,
+    ].filter(Boolean)),
     el('div', { class: 'panel-body' }, [el('div', { id: 'games-table' }, 'Loading…')]),
   ]);
 

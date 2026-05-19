@@ -4,15 +4,17 @@ import { requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
+import { FACTION_HOMES, chooseSpareAnchor } from '../lib/faction-anchors.js';
 
 const router = Router();
 
-router.use(requireAuth);
+// Reads are public so unauthenticated visitors can browse. Writes
+// (POST /, PUT /:id) still call requireAuth inline below.
 
 // ── List games with filters ───────────────────────────────────
 router.get('/', async (req, res) => {
   const {
-    playerUserId, playerFaction, opponentFaction, missionPack, primaryMission,
+    playerUserId, playerKey, playerFaction, opponentFaction, missionPack, primaryMission,
     deploymentMap, format, dateFrom, dateTo, includeHidden, q,
     limit = 100, offset = 0,
   } = req.query;
@@ -50,6 +52,15 @@ router.get('/', async (req, res) => {
   if (playerUserId) {
     where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.user_id = $${i++})`);
     params.push(playerUserId);
+  }
+  if (playerKey) {
+    if (String(playerKey).startsWith('user:')) {
+      where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.user_id = $${i++})`);
+      params.push(parseInt(String(playerKey).slice(5), 10));
+    } else if (String(playerKey).startsWith('guest:')) {
+      where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.guest_name = $${i++})`);
+      params.push(String(playerKey).slice(6));
+    }
   }
   if (playerFaction) {
     where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.faction_id = $${i++})`);
@@ -177,12 +188,113 @@ async function recordBannerFirstSeen(client, p) {
   if (!p.factionId) return;
   if (!p.userId && !p.guestName) return;
   const playerKey = p.userId ? `user:${p.userId}` : `guest:${p.guestName}`;
-  await client.query(
-    `INSERT INTO banner_first_seen (player_key, faction_id)
-     VALUES ($1, $2)
-     ON CONFLICT (player_key, faction_id) DO NOTHING`,
+
+  // Skip the anchor work if this banner already exists.
+  const existing = await client.query(
+    `SELECT 1 FROM banner_first_seen WHERE player_key = $1 AND faction_id = $2`,
     [playerKey, p.factionId]
   );
+  if (existing.rows[0]) return;
+
+  // First banner of this faction → NULL anchor (frontend falls back to
+  // FACTION_HOMES). Second or later → pick a spare anchor away from every
+  // banner already on the map.
+  const otherBanners = await client.query(
+    `SELECT b.anchor_x, b.anchor_y, f.name AS faction
+       FROM banner_first_seen b
+       JOIN factions f ON f.id = b.faction_id
+      WHERE b.faction_id = $1`,
+    [p.factionId]
+  );
+  let anchorX = null, anchorY = null;
+  if (otherBanners.rows.length > 0) {
+    const allClaims = await client.query(
+      `SELECT b.anchor_x, b.anchor_y, f.name AS faction
+         FROM banner_first_seen b
+         JOIN factions f ON f.id = b.faction_id`
+    );
+    const claimed = allClaims.rows.map(r => {
+      if (r.anchor_x != null) return [Number(r.anchor_x), Number(r.anchor_y)];
+      return FACTION_HOMES[r.faction] ?? [0.5, 0.5];
+    });
+    [anchorX, anchorY] = chooseSpareAnchor(claimed);
+  }
+
+  await client.query(
+    `INSERT INTO banner_first_seen (player_key, faction_id, anchor_x, anchor_y)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (player_key, faction_id) DO NOTHING`,
+    [playerKey, p.factionId, anchorX, anchorY]
+  );
+}
+
+async function resolveLookupId(client, table, packId, name) {
+  if (!name || !packId) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return null;
+  const found = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  if (found.rows[0]) return found.rows[0].id;
+  const inserted = await client.query(
+    `INSERT INTO ${table} (mission_pack_id, name) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING RETURNING id`,
+    [packId, trimmed]
+  );
+  if (inserted.rows[0]) return inserted.rows[0].id;
+  const again = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  return again.rows[0]?.id ?? null;
+}
+
+async function resolveCardId(client, table, packId, cardType, name) {
+  if (!name || !packId) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return null;
+  const found = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  if (found.rows[0]) return found.rows[0].id;
+  const sql = cardType
+    ? `INSERT INTO ${table} (mission_pack_id, name, card_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id`
+    : `INSERT INTO ${table} (mission_pack_id, name) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING id`;
+  const params = cardType ? [packId, trimmed, cardType] : [packId, trimmed];
+  const inserted = await client.query(sql, params);
+  if (inserted.rows[0]) return inserted.rows[0].id;
+  const again = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  return again.rows[0]?.id ?? null;
+}
+
+async function resolveGameLookups(client, b) {
+  if (!b.missionPackId) return;
+  if (!b.primaryMissionId && b.primaryMissionName) {
+    b.primaryMissionId = await resolveLookupId(client, 'primary_missions', b.missionPackId, b.primaryMissionName);
+  }
+  if (!b.deploymentMapId && b.deploymentMapName) {
+    b.deploymentMapId = await resolveLookupId(client, 'deployment_maps', b.missionPackId, b.deploymentMapName);
+  }
+  if (!b.missionRuleId && b.missionRuleName) {
+    b.missionRuleId = await resolveLookupId(client, 'mission_rules', b.missionPackId, b.missionRuleName);
+  }
+  for (const p of b.players || []) {
+    for (const s of p.secondaries || []) {
+      if (!s.cardId && s.cardName) {
+        s.cardId = await resolveCardId(client, 'secondary_cards', b.missionPackId, 'tactical', s.cardName);
+      }
+    }
+    for (const c of p.challengers || []) {
+      if (!c.cardId && c.cardName) {
+        c.cardId = await resolveCardId(client, 'challenger_cards', b.missionPackId, null, c.cardName);
+      }
+    }
+  }
 }
 
 async function insertPlayerChildren(client, gamePlayerId, p) {
@@ -210,7 +322,7 @@ async function insertPlayerChildren(client, gamePlayerId, p) {
 }
 
 // ── Create game ───────────────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', requireAuth, async (req, res) => {
   try {
     validateGameInput(req.body);
   } catch (e) {
@@ -222,6 +334,7 @@ router.post('/', async (req, res) => {
 
   try {
     const id = await withTx(async (client) => {
+      await resolveGameLookups(client, b);
       // Attach to the currently-active season. NULL is allowed but should
       // only happen for installs that ran with the schema before seasons.
       const activeSeason = await client.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
@@ -274,7 +387,7 @@ router.post('/', async (req, res) => {
 });
 
 // ── Update game (any logged-in user) ──────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   try {
     validateGameInput(req.body);
@@ -289,6 +402,8 @@ router.put('/:id', async (req, res) => {
     await withTx(async (client) => {
       const exists = await client.query('SELECT id FROM games WHERE id = $1', [id]);
       if (!exists.rows[0]) throw Object.assign(new Error('not found'), { status: 404 });
+
+      await resolveGameLookups(client, b);
 
       await client.query(
         `UPDATE games SET played_at=$2, game_format=$3, points_limit=$4, mission_pack_id=$5,

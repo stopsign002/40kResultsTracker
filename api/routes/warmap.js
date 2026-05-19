@@ -1,9 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
 
 const router = Router();
-router.use(requireAuth);
 
 // Returns per-(player, faction) records that drive war map territory.
 // Each unique (player_key, faction_id) is its own banner: Joe's Necrons and
@@ -51,7 +49,8 @@ router.get('/warmap', async (req, res) => {
              THEN 'user:' || gp.user_id::text
              ELSE 'guest:' || gp.guest_name
         END AS player_key,
-        gp.user_id, gp.guest_name, gp.faction_id, gp.result, gp.final_score
+        gp.user_id, gp.guest_name, gp.faction_id, gp.result, gp.final_score,
+        g.turn_count
       FROM game_players gp
       JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE ${seasonFilter}
       WHERE gp.faction_id IS NOT NULL
@@ -67,20 +66,34 @@ router.get('/warmap', async (req, res) => {
       SUM(CASE WHEN ab.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
       SUM(CASE WHEN ab.result = 'draw' THEN 1 ELSE 0 END)::int AS draws,
       ROUND(AVG(ab.final_score)::numeric, 1)               AS avg_score,
-      bfs.first_seen_at::text                              AS first_seen_at
+      SUM(ab.final_score * 5.0 / GREATEST(COALESCE(ab.turn_count, 5), 1))::float
+                                                           AS adjusted_points,
+      bfs.first_seen_at::text                              AS first_seen_at,
+      bfs.anchor_x                                         AS anchor_x,
+      bfs.anchor_y                                         AS anchor_y
     FROM active ab
     JOIN factions f ON f.id = ab.faction_id
     LEFT JOIN users u ON u.id = ab.user_id
     JOIN banner_first_seen bfs
       ON bfs.player_key = ab.player_key AND bfs.faction_id = ab.faction_id
-    GROUP BY ab.player_key, player_name, u.army_name, f.id, f.name, bfs.first_seen_at
+    GROUP BY ab.player_key, player_name, u.army_name, f.id, f.name,
+             bfs.first_seen_at, bfs.anchor_x, bfs.anchor_y
     ORDER BY bfs.first_seen_at, ab.player_key, f.id
   `);
 
+  const totalGamesRow = await pool.query(
+    `SELECT COUNT(*)::int AS total_games FROM games g
+      WHERE g.hidden_from_stats = FALSE ${seasonFilter}`
+  );
+  const totalGames = Math.max(1, totalGamesRow.rows[0]?.total_games ?? 1);
+  const winsSat   = Math.log1p(totalGames);
+  const pointsSat = Math.log1p(totalGames * 75);
+
   for (const r of rows) {
     const winRate = r.games > 0 ? r.wins / r.games : 0;
-    const gameWeight = Math.log1p(r.games) / Math.log1p(50); // diminishing past ~50 games
-    r.territory_score = Math.min(1, gameWeight * 0.70 + winRate * 0.30);
+    const winsWeight   = Math.log1p(r.wins)             / winsSat;
+    const pointsWeight = Math.log1p(r.adjusted_points)  / pointsSat;
+    r.territory_score = Math.min(1, winsWeight * 0.66 + pointsWeight * 0.33);
     r.win_rate = r.games > 0 ? Math.round(winRate * 1000) / 10 : 0;
   }
 

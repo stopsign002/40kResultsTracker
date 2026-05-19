@@ -21,13 +21,14 @@ const routes = [
   { match: /^\/$/,                   handler: () => renderWarmap(state) },
   { match: /^\/war$/,                handler: () => renderWarmap(state) },
   { match: /^\/games$/,              handler: () => renderGamesList(state) },
-  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null) },
-  { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
+  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null),               requireAuth: true },
+  { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)), requireAuth: true },
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
   { match: /^\/stats$/,              handler: () => renderStats(state) },
   { match: /^\/players\/(.+)$/,      handler: (m) => renderPlayer(state, decodeURIComponent(m[1])) },
-  { match: /^\/profile$/,            handler: () => renderProfile(state) },
-  { match: /^\/admin$/,              handler: () => renderAdmin(state) },
+  { match: /^\/profile$/,            handler: () => renderProfile(state),     requireAuth: true },
+  { match: /^\/admin$/,              handler: () => renderAdmin(state),       requireAdmin: true },
+  { match: /^\/login$/,              handler: () => renderLogin(state, () => navigate('/')) },
 ];
 
 function currentPath() {
@@ -43,24 +44,17 @@ export function navigate(path) {
 
 function renderShell(viewNode) {
   clear(root);
-  if (!state.user) {
-    root.appendChild(renderLogin(state, async () => {
-      state.user = await auth.me();
-      route();
-    }));
-    return;
-  }
   const path = currentPath();
   const isActiveHref = (href) =>
     path === href || (href === '/war' && (path === '/' || path === ''));
 
   const linkDefs = [
-    { href: '/war',       label: 'Theatre of War' },
-    { href: '/games',     label: 'Games' },
-    { href: '/games/new', label: 'New Game' },
-    { href: '/stats',     label: 'Stats' },
+    { href: '/war',   label: 'Theatre of War' },
+    { href: '/games', label: 'Games' },
+    { href: '/stats', label: 'Stats' },
   ];
-  if (state.user.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });
+  if (state.user) linkDefs.push({ href: '/games/new', label: 'New Game' });
+  if (state.user?.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });
 
   const navItems = linkDefs.map(d => {
     const a = el('a', { href: '#' + d.href }, d.label);
@@ -80,6 +74,24 @@ function renderShell(viewNode) {
     el('span', { class: 'nav-toggle-caret' }, '▾'),
   ]);
 
+  const sessionArea = state.user
+    ? el('div', { class: 'session' }, [
+        el('a', {
+          class: 'who',
+          href: '#/profile',
+          title: 'Edit your profile',
+          style: { textDecoration: 'none', cursor: 'pointer' },
+        }, state.user.displayName || state.user.username),
+        el('span', { class: 'pill' }, state.user.role),
+        el('button', {
+          class: 'btn small',
+          onClick: async () => { await auth.logout(); state.user = null; navigate('/'); route(); },
+        }, 'Log out'),
+      ])
+    : el('div', { class: 'session' }, [
+        el('a', { class: 'btn primary small', href: '#/login' }, 'Sign In'),
+      ]);
+
   const header = el('header', { class: 'topbar' }, [
     el('div', { class: 'brand' }, [
       document.createTextNode('40K'),
@@ -87,19 +99,7 @@ function renderShell(viewNode) {
     ]),
     navToggle,
     nav,
-    el('div', { class: 'session' }, [
-      el('a', {
-        class: 'who',
-        href: '#/profile',
-        title: 'Edit your profile',
-        style: { textDecoration: 'none', cursor: 'pointer' },
-      }, state.user.displayName || state.user.username),
-      el('span', { class: 'pill' }, state.user.role),
-      el('button', {
-        class: 'btn small',
-        onClick: async () => { await auth.logout(); state.user = null; navigate('/'); route(); },
-      }, 'Log out'),
-    ]),
+    sessionArea,
   ]);
   const main = el('main', {}, viewNode);
   root.appendChild(header);
@@ -145,23 +145,21 @@ async function route() {
     if (!state.user) {
       try { state.user = await auth.me(); } catch { state.user = null; }
     }
-    if (!state.user) {
-      renderShell(null);
-      return;
-    }
-    // Open the SSE feed once we know we're logged in. Idempotent.
     startLiveFeed();
     const path = currentPath();
     for (const r of routes) {
       const m = path.match(r.match);
-      if (m) {
-        const node = await r.handler(m);
-        renderShell(node);
+      if (!m) continue;
+      if ((r.requireAuth && !state.user) || (r.requireAdmin && state.user?.role !== 'admin')) {
+        navigate('/login');
         return;
       }
+      const node = await r.handler(m);
+      renderShell(node);
+      return;
     }
     // Fallback
-    navigate('/games');
+    navigate(state.user ? '/games' : '/');
   } catch (err) {
     console.error('Route handler threw:', err);
     renderErrorBoundary(err);

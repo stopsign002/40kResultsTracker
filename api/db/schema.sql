@@ -236,6 +236,17 @@ CREATE TABLE IF NOT EXISTS banner_first_seen (
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (player_key, faction_id)
 );
+-- Migration: per-banner anchor (overrides FACTION_HOMES for displaced banners
+-- — i.e. the 2nd+ player of a faction). NULL means "use the faction default".
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='banner_first_seen' AND column_name='anchor_x'
+  ) THEN
+    ALTER TABLE banner_first_seen ADD COLUMN anchor_x REAL;
+    ALTER TABLE banner_first_seen ADD COLUMN anchor_y REAL;
+  END IF;
+END $$;
 
 -- Helper view for stats: one row per (game_player) with derived fields
 CREATE OR REPLACE VIEW v_game_player_stats AS

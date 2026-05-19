@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
 
 const router = Router();
 
-router.use(requireAuth);
+// Public reads — anyone can browse stats.
 
 // Helper: shared filter clauses
 function buildFilters(q, startIndex = 1) {
