@@ -302,6 +302,7 @@ td.tabular { font-variant-numeric: tabular-nums; }
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+  margin-bottom: 20px;
 }
 .player-panel {
   background: var(--card-bg);
