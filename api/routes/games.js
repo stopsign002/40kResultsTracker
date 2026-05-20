@@ -5,8 +5,50 @@ import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
 import { FACTION_HOMES, chooseSpareAnchor } from '../lib/faction-anchors.js';
+import { notify } from '../lib/mail.js';
 
 const router = Router();
+
+// Fire-and-forget "new game logged" email. Queries a compact summary then
+// hands off to the mailer; any failure is logged, never surfaced to the API.
+async function notifyGameLogged(id) {
+  try {
+    const players = (await pool.query(
+      `SELECT gp.seat,
+              COALESCE(u.display_name, gp.guest_name) AS player,
+              f.name AS faction, gp.final_score, gp.result
+         FROM game_players gp
+         LEFT JOIN users u    ON u.id = gp.user_id
+         LEFT JOIN factions f ON f.id = gp.faction_id
+        WHERE gp.game_id = $1
+        ORDER BY gp.seat`, [id])).rows;
+    if (players.length < 2) return;
+    const g = (await pool.query(
+      `SELECT g.played_at::text AS played_at, pm.name AS mission, mp.name AS pack
+         FROM games g
+         LEFT JOIN primary_missions pm ON pm.id = g.primary_mission_id
+         LEFT JOIN mission_packs    mp ON mp.id = g.mission_pack_id
+        WHERE g.id = $1`, [id])).rows[0] || {};
+    const [p1, p2] = players;
+    const line = (p) => `  ${p.player || '—'} (${p.faction || '?'}) — ${p.final_score ?? 0}${p.result ? ' [' + p.result.toUpperCase() + ']' : ''}`;
+    const winner = players.find((p) => p.result === 'win');
+    const subject = `[40k] New game: ${p1.player || 'P1'} vs ${p2.player || 'P2'}`;
+    const text =
+`A new game was logged on the 40k tracker.
+
+${line(p1)}
+${line(p2)}
+
+Mission: ${g.mission || '—'}${g.pack ? ' (' + g.pack + ')' : ''}
+Date: ${(g.played_at || '').slice(0, 10)}
+${winner ? 'Winner: ' + winner.player : 'Result: draw'}
+
+View: https://40k.thewheeliebois.com/#/games/${id}`;
+    notify(subject, text);
+  } catch (e) {
+    console.error('[notifyGameLogged] failed:', e.message);
+  }
+}
 
 // Reads are public so unauthenticated visitors can browse. Writes
 // (POST /, PUT /:id) still call requireAuth inline below.
@@ -375,6 +417,7 @@ router.post('/', requireAuth, async (req, res) => {
     await audit(req, 'game.create', { type: 'game', id, payload: { playedAt: b.playedAt, players: b.players.map(p => ({ name: p.userId ? `user:${p.userId}` : `guest:${p.guestName}`, factionId: p.factionId })) } });
     broadcast('game.saved', { id, action: 'create' });
     res.json({ id });
+    notifyGameLogged(id); // fire-and-forget; runs after the response is sent
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'failed to create game', detail: e.message });
