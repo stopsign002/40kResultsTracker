@@ -45,6 +45,8 @@ export async function renderGameDetail(state, gameId) {
 
   const players = el('div', { class: 'players-grid' }, g.players.map(p => buildPlayerCard(p, g)));
 
+  const progression = buildProgressionPanel(g);
+
   const notes = g.notes ? el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, el('h2', {}, 'Notes')),
     el('div', { class: 'panel-body' }, el('pre', { style: { whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 } }, g.notes)),
@@ -52,8 +54,84 @@ export async function renderGameDetail(state, gameId) {
 
   root.appendChild(header);
   root.appendChild(players);
+  if (progression) root.appendChild(progression);
   if (notes) root.appendChild(notes);
   return root;
+}
+
+// Per-seat line colours for the progression chart.
+const PROGRESSION_COLOURS = ['#5dade2', '#f39c12'];
+
+// Cumulative per-round score line chart — shows how each player's total
+// climbed round by round so you can read the shape of the game.
+function buildProgressionPanel(g) {
+  const hasRoundData = (g.players || []).some(p =>
+    (p.rounds || []).some(r => (r.primary_score || 0) + (r.secondary_score || 0) > 0));
+  if (!hasRoundData || typeof Chart === 'undefined') return null;
+
+  const canvas = el('canvas', { height: '260' });
+  const panel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, el('h2', {}, 'Score Progression')),
+    el('div', { class: 'panel-body' }, canvas),
+  ]);
+  requestAnimationFrame(() => drawProgression(canvas, g));
+  return panel;
+}
+
+function drawProgression(canvas, g) {
+  let maxRound = 0;
+  for (const p of g.players || []) {
+    for (const r of p.rounds || []) {
+      if (r.round_number > maxRound) maxRound = r.round_number;
+    }
+  }
+  if (maxRound < 1) maxRound = 5;
+
+  const rounds = [];
+  for (let n = 1; n <= maxRound; n++) rounds.push(n);
+  const labels = ['Start', ...rounds.map(n => `R${n}`)];
+
+  const datasets = (g.players || []).map((p, idx) => {
+    let cum = 0;
+    const data = rounds.map(rn => {
+      const r = (p.rounds || []).find(x => x.round_number === rn);
+      if (r) cum += (r.primary_score || 0) + (r.secondary_score || 0);
+      return cum;
+    });
+    const colour = PROGRESSION_COLOURS[idx % PROGRESSION_COLOURS.length];
+    return {
+      label: p.display_name || p.guest_name || `Player ${idx + 1}`,
+      data: [0, ...data],
+      borderColor: colour,
+      backgroundColor: colour,
+      pointRadius: 3,
+      tension: 0.25,
+      fill: false,
+    };
+  });
+
+  new Chart(canvas, {
+    type: 'line',
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      animation: { duration: 600 },
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: '#a8a8a8' }, grid: { color: '#3a3a44' } },
+        y: {
+          beginAtZero: true,
+          ticks: { color: '#a8a8a8' },
+          grid: { color: '#3a3a44' },
+          title: { display: true, text: 'Cumulative score', color: '#a8a8a8' },
+        },
+      },
+      plugins: {
+        legend: { labels: { color: '#e0e0e0' } },
+        tooltip: { backgroundColor: '#22222a', borderColor: '#ffffff', borderWidth: 1 },
+      },
+    },
+  });
 }
 
 function buildMeta(g) {
