@@ -24,6 +24,7 @@ INSERT INTO factions (name) VALUES
   ('Leagues of Votann'),
   ('Necrons'),
   ('Orks'),
+  ('Salamanders'),
   ('Space Marines'),
   ('Space Wolves'),
   ('T''au Empire'),
@@ -278,6 +279,19 @@ SELECT id, n FROM factions, (VALUES
   ('Vanguard Spearhead'),
   ('Librarius Conclave')
 ) AS d(n) WHERE factions.name = 'Space Marines' ON CONFLICT DO NOTHING;
+
+-- Salamanders (Space Marines chapter — shares the SM detachment roster)
+INSERT INTO detachments (faction_id, name)
+SELECT id, n FROM factions, (VALUES
+  ('Gladius Task Force'),
+  ('Anvil Siege Force'),
+  ('Stormlance Task Force'),
+  ('1st Company Task Force'),
+  ('Firestorm Assault Force'),
+  ('Ironstorm Spearhead'),
+  ('Vanguard Spearhead'),
+  ('Librarius Conclave')
+) AS d(n) WHERE factions.name = 'Salamanders' ON CONFLICT DO NOTHING;
 
 -- Space Wolves
 INSERT INTO detachments (faction_id, name)
