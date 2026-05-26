@@ -69,23 +69,29 @@ function buildProgressionPanel(g) {
     (p.rounds || []).some(r => (r.primary_score || 0) + (r.secondary_score || 0) > 0));
   if (!hasRoundData || typeof Chart === 'undefined') return null;
 
-  const canvas = el('canvas', { height: '260' });
+  const canvas = el('canvas', {});
+  const chartBox = el('div', { style: { position: 'relative', height: '280px' } }, canvas);
   const panel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, el('h2', {}, 'Score Progression')),
-    el('div', { class: 'panel-body' }, canvas),
+    el('div', { class: 'panel-body' }, chartBox),
   ]);
   requestAnimationFrame(() => drawProgression(canvas, g));
   return panel;
 }
 
 function drawProgression(canvas, g) {
-  let maxRound = 0;
-  for (const p of g.players || []) {
-    for (const r of p.rounds || []) {
-      if (r.round_number > maxRound) maxRound = r.round_number;
+  let maxRound = g.turn_count;
+  if (!Number.isInteger(maxRound) || maxRound < 1 || maxRound > 5) {
+    maxRound = 0;
+    for (const p of g.players || []) {
+      for (const r of p.rounds || []) {
+        if ((r.primary_score || 0) + (r.secondary_score || 0) > 0 && r.round_number > maxRound) {
+          maxRound = r.round_number;
+        }
+      }
     }
+    if (maxRound < 1) maxRound = 5;
   }
-  if (maxRound < 1) maxRound = 5;
 
   const rounds = [];
   for (let n = 1; n <= maxRound; n++) rounds.push(n);
@@ -115,6 +121,7 @@ function drawProgression(canvas, g) {
     data: { labels, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       animation: { duration: 600 },
       interaction: { mode: 'index', intersect: false },
       scales: {
