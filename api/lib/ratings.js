@@ -16,7 +16,7 @@ const DISPLAY_CENTER = 500;          // a 1500 rating shows as this on the 0–1
 const DISPLAY_SCALE = 0.8;           // points of display per point of rating
 const PROVISIONAL_GAMES = 5;         // fewer games than this → "provisional"
 const PROVISIONAL_RD = 150;          // or RD above this → "provisional"
-const RANK_FLOOR_K = 1.5;            // leaderboard ranks by rating − K·RD (confidence floor)
+const RANK_FLOOR_K = 1.1;            // leaderboard ranks by rating − K·RD (confidence floor)
 const STALE_RD = 10;                 // RD added per idle 30-day period (leaderboard freshness)
 
 /** Map a raw rating (mean estimate) onto the 0–1000 dial. */
