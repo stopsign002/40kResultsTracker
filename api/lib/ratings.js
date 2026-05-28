@@ -18,6 +18,7 @@ const PROVISIONAL_GAMES = 5;         // fewer games than this → "provisional"
 const PROVISIONAL_RD = 150;          // or RD above this → "provisional"
 const RANK_FLOOR_K = 1.1;            // leaderboard ranks by rating − K·RD (confidence floor)
 const STALE_RD = 10;                 // RD added per idle 30-day period (leaderboard freshness)
+const RECENCY_HALF_LIFE_DAYS = 182;  // whole-history: a game's weight halves every ~6 months (set huge to disable)
 
 /** Map a raw rating (mean estimate) onto the 0–1000 dial. */
 export function displayRating(rating) {
@@ -80,6 +81,11 @@ function daysBetween(a, b) {
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 
+/** Time-based recency weight for a game played on `gameDay`, viewed from `refDate`. */
+function recencyWeight(gameDay, refDate) {
+  return Math.pow(0.5, daysBetween(gameDay, refDate) / RECENCY_HALF_LIFE_DAYS);
+}
+
 // Glicko-2 (forward/causal): chronological per-DAY batches; same-day games rate
 // against pre-day ratings, idle gaps inflate RD by elapsed time. History gets a
 // point on each day the player actually played (rating only moves when you play).
@@ -125,16 +131,20 @@ function runWHR(games) {
   const state = new Map();
   const hist = new Map();
   const dates = [...new Set(games.map(g => g.day))].sort();
+  // Each fit weights games by recency relative to its reference date: the
+  // windowed point at date `d` is judged "as of d"; the leaderboard fit (all
+  // games) is judged as of the latest game date.
   for (const d of dates) {
     const through = [];
-    for (const g of games) if (g.day <= d) through.push({ a: g.a, b: g.b, s: g.sa });
+    for (const g of games) if (g.day <= d) through.push({ a: g.a, b: g.b, s: g.sa, w: recencyWeight(g.day, d) });
     const fit = fitGlobal(through);
     for (const [uid, v] of fit) {
       if (!hist.has(uid)) hist.set(uid, []);
       hist.get(uid).push({ date: d, rating: v.rating, displayRating: displayRating(v.rating), rd: Math.round(v.rd) });
     }
   }
-  const full = fitGlobal(games.map(g => ({ a: g.a, b: g.b, s: g.sa })));
+  const latest = dates.length ? dates[dates.length - 1] : today();
+  const full = fitGlobal(games.map(g => ({ a: g.a, b: g.b, s: g.sa, w: recencyWeight(g.day, latest) })));
   for (const [uid, v] of full) state.set(uid, { rating: v.rating, rd: v.rd });
   return { state, hist };
 }

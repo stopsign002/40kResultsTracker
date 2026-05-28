@@ -10,7 +10,7 @@ npm test                              # node --test test/*.test.js
 node --test test/game-scoring.test.js # single file
 ```
 
-24 cases currently pass (run `npm test` to confirm). Note the npm script globs `test/*.test.js` — `node --test test/` (bare directory) is not expanded by newer Node and errors with "Cannot find module '/app/test'".
+27 cases currently pass (run `npm test` to confirm). Note the npm script globs `test/*.test.js` — `node --test test/` (bare directory) is not expanded by newer Node and errors with "Cannot find module '/app/test'".
 
 ## What's covered
 
@@ -19,7 +19,7 @@ node --test test/game-scoring.test.js # single file
 | `game-scoring.test.js` | `lib/game-scoring.js` | `computeFinalScores`: zero-zero → draw, primary roll-up, **secondaries fold in via cards (NOT `r.secondaryScore`)** ← the camelCase regression test, finalScore clamps to 100, `manualWinner` overrides higher score, both `manualWinner` → draw. `validateGameInput`: rejects missing playedAt / pointsLimit / wrong player count / players with neither userId nor guestName; happy path doesn't throw. |
 | `glicko2.test.js` | `lib/glicko2.js` | **Pins Glickman's worked example** (1500/200 vs three opponents → 1464.06 / 151.52 / 0.05999). Idle-period RD inflation + 350 ceiling, empty-results decay, `expectedScore` symmetry + uncertainty pulling toward 50/50. |
 | `ratings.test.js` | `lib/ratings.js` (pure parts) | `outcomeScore` W/L/D + margin-of-victory direction/magnitude; `displayRating` 1500→500 mapping + 0–1000 clamp; `balancedPairings` pairs closest ratings (not best-vs-worst) and handles odd counts with a sit-out. |
-| `whr.test.js` | `lib/whr.js` | Whole-history `fitGlobal`: transitive ordering (A>B>C from A-beat-B, B-beat-C); undefeated player stays finite (prior); symmetric results → centre; more games → lower RD; margin-of-victory moves the estimate more than a draw. |
+| `whr.test.js` | `lib/whr.js` | Whole-history `fitGlobal`: transitive ordering (A>B>C from A-beat-B, B-beat-C); undefeated player stays finite (prior); symmetric results → centre; more games → lower RD; margin-of-victory moves the estimate more than a draw. **Recency weight**: heavier (recent) result leans the rating; omitting `w` == `w=1` (regression); down-weighted games → higher RD. |
 
 ## Why this scope
 

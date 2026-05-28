@@ -43,3 +43,29 @@ test('whr: margin-of-victory score moves the estimate more than a draw', () => {
   assert.ok(blowout.get(1).rating > draw.get(1).rating, 'decisive win rates higher');
   assert.ok(Math.abs(draw.get(1).rating - 1500) < 1, 'a draw keeps you at centre');
 });
+
+const gw = (a, b, s, w) => ({ a, b, s, w });
+
+test('whr: recency weight leans the rating toward the heavier (recent) result', () => {
+  // Same pair, opposite outcomes: an old win (low weight) vs a recent loss (full weight).
+  const r = fitGlobal([gw(1, 2, 1, 0.2), gw(1, 2, 0, 1)]);
+  assert.ok(r.get(1).rating < 1500, 'recent loss dominates the faded old win');
+  // Flip the weights → the win should dominate instead.
+  const r2 = fitGlobal([gw(1, 2, 1, 1), gw(1, 2, 0, 0.2)]);
+  assert.ok(r2.get(1).rating > 1500, 'recent win dominates the faded old loss');
+});
+
+test('whr: omitting w defaults to 1 (weightless == fully-weighted)', () => {
+  const bare = fitGlobal([g(1, 2, 1), g(2, 3, 0)]);
+  const weighted = fitGlobal([gw(1, 2, 1, 1), gw(2, 3, 0, 1)]);
+  for (const id of [1, 2, 3]) {
+    assert.ok(Math.abs(bare.get(id).rating - weighted.get(id).rating) < 1e-9, `player ${id} rating matches`);
+    assert.ok(Math.abs(bare.get(id).rd - weighted.get(id).rd) < 1e-9, `player ${id} rd matches`);
+  }
+});
+
+test('whr: down-weighted games carry less information → higher RD', () => {
+  const heavy = fitGlobal([gw(1, 2, 1, 1), gw(1, 2, 0, 1)]);
+  const light = fitGlobal([gw(1, 2, 1, 0.2), gw(1, 2, 0, 0.2)]);
+  assert.ok(light.get(1).rd > heavy.get(1).rd, 'less weight → less certainty');
+});
