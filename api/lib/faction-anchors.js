@@ -33,6 +33,7 @@ export const FACTION_HOMES = {
   'Thousand Sons':       [0.18, 0.42],
   'World Eaters':        [0.21, 0.38],
   "Emperor's Children":  [0.15, 0.48],
+  'Salamanders':         [0.60, 0.46],
 };
 
 // Open-territory spawn pool. Slots are between FACTION_HOMES entries so

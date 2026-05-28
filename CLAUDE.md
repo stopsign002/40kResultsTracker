@@ -13,7 +13,7 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 ## Stack
 
 - **Backend:** Node 22 (alpine) + Express 4 + Postgres 17 (shared with other sites on the box)
-- **Frontend:** Vanilla HTML/CSS/JS — **no build step**, no framework. Chart.js loaded from CDN.
+- **Frontend:** Vanilla HTML/CSS/JS — **no build step**, no framework. Chart.js + `chartjs-adapter-date-fns` (for the rankings time axis) loaded from CDN.
 - **Auth:** `bcrypt` + `express-session` + `connect-pg-simple` (Postgres-backed sessions)
 - **Reverse proxy:** Caddy 2 (handled by base infra; this repo only ships a `caddy.example` snippet)
 - **Container:** single service `40k-api`; Caddy serves `app/` directly off disk
@@ -46,7 +46,9 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │   │   ├── audit.js        fire-and-forget audit log writer
 │   │   ├── events.js       in-process SSE broadcaster (subs Set + broadcast())
 │   │   ├── game-scoring.js computeFinalScores + validateGameInput (pure, tested)
-│   │   └── (no adopt-guest helper — see pitfall #8 for the manual workaround)
+│   │   ├── glicko2.js      pure Glicko-2 rating math (ratePeriod/expectedScore), tested vs Glickman example
+│   │   ├── ratings.js      games → all-time ratings (periods + margin-of-victory) + balanced matchmaker
+│   │   └── adopt-guest.js  promote guests → inactive accounts (preview + promote, war-map-safe)
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
 │   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
@@ -55,7 +57,8 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │   │   ├── warmap.js       /stats/warmap — banners feed for the Theatre of War
 │   │   ├── reference.js    /reference/* — factions, detachments, mission packs, names
 │   │   ├── events.js       /events — SSE long-poll for live updates
-│   │   └── seasons.js      /seasons — list + start-new (admin)
+│   │   ├── seasons.js      /seasons — list + start-new (admin)
+│   │   └── ratings.js      /ratings — ADMIN-ONLY Glicko-2 leaderboard + balanced matchmaker
 │   ├── db/
 │   │   ├── README.md       schema/seed conventions, idempotency rules, ALTER pattern
 │   │   ├── schema.sql      tables, indexes, view; idempotent (CREATE IF NOT EXISTS + DO $$..ALTER guard)
@@ -63,7 +66,9 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │   │                       Season 1 + guest→user backfill (all idempotent)
 │   └── test/
 │       ├── README.md       how to run + what's covered
-│       └── game-scoring.test.js  11 cases pinning the camelCase payload contract
+│       ├── game-scoring.test.js  11 cases pinning the camelCase payload contract
+│       ├── glicko2.test.js       pins Glicko-2 math to Glickman's worked example
+│       └── ratings.test.js       margin-of-victory + display mapping + balanced pairing
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
     ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
@@ -71,7 +76,7 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
     └── js/
         ├── README.md       module roles
         ├── app.js          hash router, shell renderer, route table, nav links, error boundary
-        ├── api.js          fetch wrapper; exports: api, auth, reference, games, stats, admin, seasons
+        ├── api.js          fetch wrapper; exports: api, auth, reference, games, stats, admin, seasons, ratings
         ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions(),
         │                   confirmModal(), promptModal() — USE THESE
         ├── live.js         singleton EventSource → 'live:game.saved' CustomEvent on document
@@ -83,7 +88,8 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
             ├── game-form.js       ⚠ HEAVIEST file; new game + edit; draft persistence + undo
             ├── stats.js           KPIs + Chart.js charts; matchup heatmap; calendar; trends
             ├── warmap.js          ⚠ Theatre of War canvas — DO NOT TOUCH constants (see invariants)
-            ├── admin.js           user management, audit log, seasons, change-own-password
+            ├── admin.js           user management, audit log, seasons, guest-account promotion, change-own-password
+            ├── ratings.js         ⚠ ADMIN-ONLY /rankings — Glicko-2 leaderboard + balanced matchmaker
             ├── player.js          per-player profile (overview + per-faction + streaks)
             └── profile.js         self-serve "My Profile" — army_name + change password
 ```
@@ -200,7 +206,7 @@ WHERE b.player_key LIKE 'guest:%'
   );
 ```
 
-If this becomes a frequent operation, build the auto-link into `POST /admin/users` (call into a new `api/lib/adopt-guest.js` helper that runs the same UPDATE plus migrates the `banner_first_seen` rows). Not worth the surface for one-offs.
+**This helper now exists.** `api/lib/adopt-guest.js` (`previewGuests` + `promoteAllGuests`) is wired to **Admin → Guest Accounts → Promote guests** (`POST /admin/promote-guests`). It goes one step further than the old backfill: guests with **no** matching account get a brand-new **inactive** account (can't log in) so every player is a first-class entity for rankings etc. It migrates `banner_first_seen` (preserving `first_seen_at` + anchors) so the war map stays put — verified by a transaction-rollback dry run. Idempotent. Relatedly, `resolvePlayerIdentities` now matches **active or inactive** accounts (active preferred), so a future game typed with a promoted guest's name re-links to their account instead of re-fragmenting. The per-game / restart workarounds above still work for one-offs.
 
 ---
 
@@ -212,7 +218,7 @@ If this becomes a frequent operation, build the auto-link into `POST /admin/user
 2. Apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min)
 3. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
 4. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
-5. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`
+5. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`, `/ratings`
 6. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`
 7. `app.listen(PORT)`
 
@@ -272,6 +278,7 @@ const routes = [
   { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
   { match: /^\/stats$/,              handler: () => renderStats(state) },
+  { match: /^\/rankings$/,           handler: () => renderRatings(state), requireAdmin: true },
   { match: /^\/admin$/,              handler: () => renderAdmin(state) },
 ];
 ```
@@ -307,8 +314,10 @@ export const stats     = { overview, factionWinRates, playerWinRates, factionMis
                             factionDeploymentBreakdown, factionMatchups, headToHead,
                             firstTurnImpact, secondaryAverages, warmap,
                             detachmentWinRates, trends, player, calendar };
-export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit };
+export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit,
+                            guestsPreview, promoteGuests };
 export const seasons   = { list, start };
+export const ratings   = { leaderboard, suggest, history };   // admin-only
 ```
 
 All requests `credentials: 'same-origin'`. Errors throw with `.status`, `.code` (server's `error.code`), and `.data` on the Error. Network failures throw with `status: 0` and `code: 'network'`.
@@ -359,9 +368,14 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` (broadcasts `game.saved`) |
 | DELETE | `/admin/games/:id` | admin | hard delete; cascades to rounds/secondaries/challengers (broadcasts `game.saved`) |
 | GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at |
+| GET | `/admin/guests/preview` | admin | read-only: which guests a promotion run would `create` vs `link` |
+| POST | `/admin/promote-guests` | admin | promote all unlinked guests to inactive accounts (idempotent, war-map-safe) |
+| GET | `/ratings/leaderboard[?marginOfVictory=true]` | admin | Glicko-2 ranked players: `displayRating` (0–1000), `rd`, `confidence`, W/L/D, `provisional`, `inMainPool` |
+| GET | `/ratings/suggest?present=1,2,3[&marginOfVictory=true]` | admin | up to 4 balanced pairing configs with predicted win-% + last-met; `bye` if odd |
+| GET | `/ratings/history[?marginOfVictory=true]` | admin | every player's day-by-day rating series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` |
 | GET | `/events` | auth | Server-Sent Events stream; emits `game.saved`, `season.changed` |
 
-**Total: 38 endpoints** in `routes/*.js` (cross-check: `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js \| wc -l`), plus `/health` defined inline in `server.js`.
+**Total: 45 endpoints** in `routes/*.js` (cross-check: `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js \| wc -l`), plus `/health` defined inline in `server.js`. `/ratings/*` and the two guest endpoints are admin-only; ratings are computed on the fly (no tables).
 
 ---
 
@@ -416,6 +430,8 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | Delete a game | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation |
 | Manage users | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
 | Manage seasons (start new) | – | ✓ | `requireAdmin` on `POST /seasons`; lives in the Admin → Seasons panel |
+| Promote guests to accounts | – | ✓ | `requireAdmin` on `/admin/guests/preview` + `POST /admin/promote-guests`; Admin → Guest Accounts panel |
+| View rankings / matchmaker | – | ✓ | `requireAdmin` on all `/ratings/*`; the **Rankings** nav link + `/rankings` route render only for admins. **Private by spec** — players can't see their own rating |
 | View audit log | – | ✓ | `requireAdmin` on `GET /admin/audit`; rendered in the Admin → Audit Log panel |
 | Subscribe to live updates | ✓ | ✓ | `requireAuth` on `GET /events`; `app.js` calls `startLiveFeed()` once a session is established |
 | Change own password | ✓ | ✓ | `POST /auth/change-password` |
@@ -586,6 +602,21 @@ What CAN shift between regens: borders move when scores change or banners join/l
 ### Recipe: changing what shows on a banner's label
 
 `drawLabels()` resolves the primary label as `u.army_name || u.player_name` inline. To change the displayed text, edit that fallback chain — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
+
+---
+
+## Player ranking internals (`/rankings`, admin-only)
+
+A private MMR-style system. **Algorithm: Glicko-2** (the chess/Lichess successor to Elo) — chosen because it outperforms Elo/TrueSkill with few games per player and tracks an uncertainty (RD), which a small friend group needs. Whole feature is `requireAdmin`; **players cannot see their own rating by design**.
+
+- **`lib/glicko2.js`** — pure math, pinned to Glickman's worked example in `test/glicko2.test.js`. Don't "tidy" the volatility (Illinois) iteration; it's a faithful transcription of the paper. `decayRd(player, periods)` takes a fractional period count so callers can inflate RD by real elapsed time.
+- **`lib/ratings.js`** — `computeRatings()` pulls every non-hidden game (all seasons) and processes them in chronological **per-day batches** (same-day games rate together against pre-day ratings). Between a player's appearances RD inflates by real elapsed time (one Glicko period per `PERIOD_DAYS`, default 30), and the leaderboard inflates once more from a player's last game to *today* so dormant players read as less certain. Each player's `history` therefore has a point on **every day they played**. Then it finds connected components (union-find) over the shared-opponent graph and flags any split (`inMainPool`). **Computed on the fly each request; no tables, no schema.** Tunables at the top: `MOV_FULL`, `PERIOD_DAYS`, the 0–1000 display mapping (`displayRating`: 1500→500, ×0.8), provisional thresholds.
+- **Margin of victory** — direction comes from `result` (respects manual-winner / concession), magnitude from the score gap via `outcomeScore()` → a Glicko score in [0,1]. Toggle in the UI (default on).
+- **Matchmaker** — `balancedPairings()` sorts present players by rating and pairs adjacent (the min-total-gap matching for points on a line), returns up to 4 near-optimal configs for "reshuffle", a `bye` for odd counts, and per-pair predicted win-% via `expectedScore()`. The point is *close* games, not best-vs-worst.
+- **History chart** — `GET /ratings/history` returns every player's day-by-day series; the view (`ratings.js`) plots them all on one Chart.js **time axis** (daily points, month ticks — needs the `chartjs-adapter-date-fns` CDN script in `index.html`). Click a player (chart line, chip, or leaderboard name) to highlight their line; the rest dim rather than disappear.
+- **Identity** — ratings key on `user_id`. Run **Admin → Guest Accounts → Promote guests** first so guests become accounts and get rated (see pitfall #8). After promotion, every game player resolves to a user.
+
+To change ranking behaviour, the tunables in `ratings.js` are the dial; the math in `glicko2.js` should stay put (it has a known-answer test).
 
 ---
 

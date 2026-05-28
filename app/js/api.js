@@ -106,6 +106,16 @@ export const admin = {
   setVisibility:(gameId, hidden) => api.patch(`/admin/games/${gameId}/visibility`, { hidden }),
   deleteGame:   (gameId) => api.del(`/admin/games/${gameId}`),
   audit:        (limit) => api.get('/admin/audit' + (limit ? '?limit=' + limit : '')),
+  guestsPreview:() => api.get('/admin/guests/preview'),
+  promoteGuests:() => api.post('/admin/promote-guests', {}),
+};
+
+// Admin-only player ranking (Glicko-2) + balanced matchmaking.
+export const ratings = {
+  leaderboard:   (marginOfVictory) => api.get('/ratings/leaderboard' + qstr({ marginOfVictory })),
+  suggest:       (presentIds, marginOfVictory) =>
+                   api.get('/ratings/suggest' + qstr({ present: (presentIds || []).join(','), marginOfVictory })),
+  history:       (marginOfVictory) => api.get('/ratings/history' + qstr({ marginOfVictory })),
 };
 
 function qstr(q) {

@@ -7,13 +7,14 @@ Each file exports a `Router()` mounted from `api/server.js`. The full endpoint c
 | File | Mounted at | Auth gate | What it serves |
 |---|---|---|---|
 | `auth.js` | `/auth` | **per-route** (login/logout reachable while logged out) | login, logout, me, PATCH me (self-serve `army_name`), change-password |
-| `admin.js` | `/admin` | `requireAdmin` (top-level) | user CRUD, game visibility toggle, game hard-delete, audit log viewer |
+| `admin.js` | `/admin` | `requireAdmin` (top-level) | user CRUD, game visibility toggle, game hard-delete, audit log viewer, guest-account preview + promotion |
 | `games.js` | `/games` | `requireAuth` (top-level) | list (with filters + free-text `q`), get, create, update. **HEAVIEST file**: contains `insertPlayerChildren`, `resolvePlayerIdentities`, `recordBannerFirstSeen` |
 | `stats.js` | `/stats` | `requireAuth` | overview, faction/player win rates, mission/deployment breakdowns, matchups, head-to-head, first-turn impact, secondary averages, detachment win rates, trends, calendar, per-player profile |
 | `warmap.js` | `/stats` (second mount) | `requireAuth` | single endpoint `/stats/warmap` — banners feed for the Theatre of War |
 | `reference.js` | `/reference` | `requireAuth` | factions, per-faction detachments (UNION of seeded + free-text from past games), mission packs, mission details, users, distinct player names |
 | `events.js` | `/events` | `requireAuth` | SSE long-poll. Heartbeat every 25s; emits `game.saved`, `season.changed` |
 | `seasons.js` | `/seasons` | mixed (`GET` auth, `POST` admin) | list seasons, start a new season (closes current, generates new map seed) |
+| `ratings.js` | `/ratings` | `requireAdmin` (top-level) | **admin-only** Glicko-2 player ranking: leaderboard, balanced matchmaking (`/suggest`), per-player rating history. Computed on the fly via `lib/ratings.js`; no tables. |
 
 ## Quirks worth knowing
 

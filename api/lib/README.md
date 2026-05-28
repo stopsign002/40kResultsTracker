@@ -11,6 +11,9 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 | `audit.js` | `audit(req, action, opts)` | Fire-and-forget INSERT into `audit_log`. **Never throws** — an audit-write outage cannot block the actual operation. Pass `{ type, id, payload }` for context. Keep the payload small. |
 | `events.js` | `addSubscriber({ res, userId })`, `broadcast(type, data)`, `subscriberCount()` | In-process SSE subscriber set. `routes/events.js` adds subscribers; write-path endpoints call `broadcast('game.saved', ...)` to push. Failed writes silently drop the dead sub. |
 | `game-scoring.js` | `computeFinalScores(players)`, `validateGameInput(body)` | Pure helpers used by `routes/games.js` POST/PUT. Operates on the **camelCase request payload**, not DB rows. Tested in `test/game-scoring.test.js` — pins the camelCase contract that has bitten production once already (see CLAUDE.md pitfall #1). |
+| `glicko2.js` | `ratePeriod`, `decayRd`, `expectedScore`, `newPlayer`, `GLICKO2_DEFAULTS` | Pure Glicko-2 rating math (chess/Lichess system). `ratePeriod(player, results)` rates one player over a rating period; `expectedScore(a,b)` is the win-probability used for matchmaking. Pinned to Glickman's worked example in `test/glicko2.test.js`. No DB, no deps. |
+| `ratings.js` | `computeRatings(opts)`, `balancedPairings`, `outcomeScore`, `displayRating`, `displayConfidence`, `MOV_FULL` | Turns the game record into all-time ratings: processes games in chronological **per-day batches** with elapsed-time RD decay (`PERIOD_DAYS`), maps 40k scores to Glicko outcomes (margin-of-victory), runs `glicko2.js`, finds connected components, and proposes balanced pairings. Each player's `history` has a point per day played. `db.js` is imported lazily so the pure helpers stay testable without `pg`. Tunables (`MOV_FULL`, `PERIOD_DAYS`, display scale, provisional thresholds) live at the top. |
+| `adopt-guest.js` | `previewGuests()`, `promoteAllGuests(client)` | Promotes free-text guests into real **inactive** user accounts (or links to existing ones), then migrates `banner_first_seen` so the war map stays put. Idempotent + transactional (pass a `withTx` client). Backs `/admin/guests/preview` + `/admin/promote-guests`. |
 
 ## Conventions
 
@@ -32,6 +35,6 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 3. Import from the consumer (a route, another helper, or a test).
 4. If it has a non-trivial pure path, drop a `test/<name>.test.js` mirroring `test/game-scoring.test.js`.
 
-## Notable absence
+## Guest adoption
 
-There is no `adopt-guest.js` helper. The "user created after their first guest game" case is handled manually — see CLAUDE.md pitfall #8 for the workaround. If this becomes a frequent operation, this directory is where the helper would land.
+`adopt-guest.js` now exists (it was the "notable absence" the earlier docs flagged). `promoteAllGuests` is the bulk fix for the "user created after their first guest game" case — it creates inactive accounts for unmatched guests, links the rest, relinks their `game_players` rows, and copies each guest's `banner_first_seen` row (preserving `first_seen_at` + anchors) so the Theatre of War doesn't reshape. Triggered by an admin button, not on boot. The per-game manual workaround in CLAUDE.md pitfall #8 still works for one-offs.

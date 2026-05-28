@@ -64,6 +64,7 @@ const FACTION_HOMES = {
   'Thousand Sons':       [0.18, 0.42],
   'World Eaters':        [0.21, 0.38],
   'Emperor\'s Children': [0.15, 0.48],
+  'Salamanders':         [0.60, 0.46],
 };
 
 // ── Faction colours (40k lore-matched) ──────────────────────────
@@ -96,6 +97,7 @@ const FACTION_COLOURS = {
   'Thousand Sons':       '#1a3399',
   'World Eaters':        '#aa2200',
   'Emperor\'s Children': '#cc44aa',
+  'Salamanders':         '#1b7a3d',
 };
 
 const HUD_CYAN  = 'rgba(120, 220, 255, 0.85)';

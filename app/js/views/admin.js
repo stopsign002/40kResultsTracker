@@ -99,6 +99,70 @@ export async function renderAdmin(state) {
     usersList,
   ]);
 
+  // Guest accounts — promote free-text guests into real (inactive) accounts so
+  // they're first-class players for rankings etc. Idempotent + war-map-safe.
+  const guestsBody = el('div', { class: 'panel-body' }, el('div', { class: 'muted' }, 'Loading…'));
+  async function refreshGuests() {
+    clear(guestsBody);
+    guestsBody.appendChild(el('div', { class: 'muted' }, 'Loading…'));
+    try {
+      const pv = await admin.guestsPreview();
+      clear(guestsBody);
+      guestsBody.appendChild(el('p', { class: 'muted', style: { marginTop: '0' } },
+        'Turns free-text guest names into real but inactive accounts (can\'t log in) so every player is rankable. '
+        + 'Names matching an existing account are linked instead. Re-runnable; preserves the war map.'));
+      if (!pv.groups.length) {
+        guestsBody.appendChild(el('div', { class: 'muted' }, 'No unlinked guests — nothing to promote.'));
+        return;
+      }
+      guestsBody.appendChild(el('div', { style: { marginBottom: '10px' } }, [
+        pill(`${pv.toCreate} new account${pv.toCreate === 1 ? '' : 's'}`, 'first'),
+        ' ',
+        pill(`${pv.toLink} linked to existing`, ''),
+      ]));
+      const head = el('thead', {}, el('tr', {}, [
+        el('th', {}, 'Guest name'), el('th', { style: { textAlign: 'right' } }, 'Games'), el('th', {}, 'Action'),
+      ]));
+      const tbody = el('tbody', {}, pv.groups.map(g => el('tr', {}, [
+        el('td', {}, g.name),
+        el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(g.rows)),
+        el('td', {}, pill(g.action === 'create' ? 'create account' : 'link existing', g.action === 'create' ? 'first' : '')),
+      ])));
+      guestsBody.appendChild(el('table', {}, [head, tbody]));
+    } catch (e) {
+      clear(guestsBody);
+      guestsBody.appendChild(el('div', { class: 'error-text' }, e.message));
+    }
+  }
+  const promoteBtn = el('button', { class: 'btn primary small', onClick: async () => {
+    const pv = await admin.guestsPreview().catch(() => null);
+    if (pv && !pv.groups.length) { toast('No guests to promote'); return; }
+    const ok = await confirmModal({
+      title: 'Promote all guests?',
+      body: pv
+        ? `Creates ${pv.toCreate} inactive account(s) and links ${pv.toLink} to existing users, then attaches their historical games. Re-runnable and safe; the war map is preserved.`
+        : 'Creates inactive accounts for guests and links the rest, then attaches their historical games.',
+      confirmLabel: 'Promote guests',
+    });
+    if (!ok) return;
+    try {
+      const r = await admin.promoteGuests();
+      toast(`Created ${r.created.length}, linked ${r.linked.length}`);
+      refreshGuests();
+      refresh();
+    } catch (e) { toast(e.message, 'error'); }
+  } }, 'Promote guests');
+  const guestsPanel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [
+      el('h2', {}, 'Guest Accounts'),
+      el('div', { class: 'btn-group' }, [
+        el('button', { class: 'btn small', onClick: refreshGuests }, 'Refresh'),
+        promoteBtn,
+      ]),
+    ]),
+    guestsBody,
+  ]);
+
   // Audit log viewer
   const auditBody = el('div', { class: 'panel-body' }, 'Loading…');
   async function refreshAudit() {
@@ -161,11 +225,13 @@ export async function renderAdmin(state) {
 
   root.appendChild(createPanel);
   root.appendChild(usersPanel);
+  root.appendChild(guestsPanel);
   root.appendChild(seasonsPanel);
   root.appendChild(auditPanel);
   root.appendChild(pwPanel);
 
   await refresh();
+  await refreshGuests();
   await refreshSeasons();
   await refreshAudit();
   return root;

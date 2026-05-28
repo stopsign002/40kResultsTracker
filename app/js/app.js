@@ -10,6 +10,7 @@ import { renderWarmap } from './views/warmap.js';
 import { renderAdmin } from './views/admin.js';
 import { renderPlayer } from './views/player.js';
 import { renderProfile } from './views/profile.js';
+import { renderRatings } from './views/ratings.js';
 
 const root = document.getElementById('app');
 
@@ -27,6 +28,7 @@ const routes = [
   { match: /^\/stats$/,              handler: () => renderStats(state) },
   { match: /^\/players\/(.+)$/,      handler: (m) => renderPlayer(state, decodeURIComponent(m[1])) },
   { match: /^\/profile$/,            handler: () => renderProfile(state),     requireAuth: true },
+  { match: /^\/rankings$/,           handler: () => renderRatings(state),     requireAdmin: true },
   { match: /^\/admin$/,              handler: () => renderAdmin(state),       requireAdmin: true },
   { match: /^\/login$/,              handler: () => renderLogin(state, () => navigate('/')) },
 ];
@@ -54,6 +56,7 @@ function renderShell(viewNode) {
     { href: '/stats', label: 'Stats' },
   ];
   if (state.user) linkDefs.push({ href: '/games/new', label: 'New Game' });
+  if (state.user?.role === 'admin') linkDefs.push({ href: '/rankings', label: 'Rankings' });
   if (state.user?.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });
 
   const navItems = linkDefs.map(d => {
