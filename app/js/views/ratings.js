@@ -29,8 +29,10 @@ export async function renderRatings(state) {
 
   const root = el('div', { class: 'fade-in' });
   let mov = true;
+  let model = 'glicko';
   let board = null;
   let historyChart = null;
+  let historyPlayers = [];
   let highlighted = null;       // userId of the highlighted line, or null
   const present = new Set();
 
@@ -38,17 +40,35 @@ export async function renderRatings(state) {
   const movToggle = el('input', { type: 'checkbox', checked: true });
   movToggle.addEventListener('change', () => { mov = movToggle.checked; load(); });
 
+  const modelSelect = el('select', {}, [
+    el('option', { value: 'glicko' }, 'Glicko-2 (forward / causal)'),
+    el('option', { value: 'whr' }, 'Whole-History (retroactive)'),
+  ]);
+  modelSelect.addEventListener('change', () => { model = modelSelect.value; load(); });
+
   const settingsPanel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, el('h2', {}, 'Player Rankings')),
     el('div', { class: 'panel-body' }, [
       el('p', { class: 'muted', style: { marginTop: '0' } },
-        'Private Glicko-2 ratings (the chess/Lichess system) computed from every logged game. '
-        + 'Ratings cross-reference shared opponents, so players who never met are still comparable. '
-        + 'The 0–1000 dial centres at 500; "provisional" means too few games to be confident yet.'),
-      el('label', { class: 'inline-toggle', style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' } }, [
-        movToggle,
-        el('span', {}, 'Margin of victory — blowouts move ratings more than nail-biters'),
+        'Private ratings computed from every logged game; players who never met are still comparable via shared opponents. '
+        + 'The board ranks by a confidence-adjusted floor, so a player with few games starts low and climbs as they prove it '
+        + '(the big number is that floor; "est" is the raw estimate, "±" its uncertainty).'),
+      el('div', { class: 'form-row cols-2' }, [
+        el('div', { class: 'form-group' }, [
+          el('label', {}, 'Rating model'),
+          modelSelect,
+        ]),
+        el('div', { class: 'form-group' }, [
+          el('label', {}, 'Margin of victory'),
+          el('label', { class: 'inline-toggle', style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', paddingTop: '6px' } }, [
+            movToggle,
+            el('span', { class: 'muted', style: { fontSize: '13px' } }, 'blowouts move ratings more'),
+          ]),
+        ]),
       ]),
+      el('p', { class: 'muted', style: { fontSize: '12px', marginBottom: '0' } },
+        'Glicko-2 locks each result to opponents’ ratings at the time. Whole-History re-solves everyone together, '
+        + 'so beating someone who later proves weak counts for less (and vice-versa).'),
     ]),
   ]);
 
@@ -90,7 +110,7 @@ export async function renderRatings(state) {
     if (present.size < 2) { toast('Pick at least two players', 'error'); return; }
     clear(suggestOut); suggestOut.appendChild(el('div', { class: 'muted' }, 'Crunching…'));
     try {
-      const data = await ratings.suggest([...present], mov);
+      const data = await ratings.suggest([...present], mov, model);
       renderSuggestions(data.configs);
     } catch (e) {
       clear(suggestOut); suggestOut.appendChild(el('div', { class: 'error-text' }, e.message));
@@ -111,7 +131,7 @@ export async function renderRatings(state) {
     clear(suggestOut);
     highlighted = null;
     try {
-      board = await ratings.leaderboard(mov);
+      board = await ratings.leaderboard(mov, model);
       renderBoard();
       renderPicker();
     } catch (e) {
@@ -155,8 +175,8 @@ export async function renderRatings(state) {
         (board.componentCount > 1 && !p.inMainPool) ? pill('alt pool', 'loss') : null,
       ]);
       const ratingCell = el('td', { style: { textAlign: 'right' } }, [
-        el('span', { class: 'tabular', style: { fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: '700', color: 'var(--accent)' } }, String(p.displayRating)),
-        el('span', { class: 'muted tabular', style: { fontSize: '11px', marginLeft: '4px' } }, `±${p.confidence}`),
+        el('span', { class: 'tabular', style: { fontFamily: 'var(--font-display)', fontSize: '20px', fontWeight: '700', color: 'var(--accent)' }, title: 'confidence floor — what the ranking uses' }, String(p.displayFloor)),
+        el('div', { class: 'muted tabular', style: { fontSize: '11px' } }, `est ${p.displayRating} ±${p.confidence}`),
         p.provisional ? el('div', {}, pill('provisional', 'draw')) : null,
       ]);
       return el('tr', {}, [
@@ -240,7 +260,7 @@ export async function renderRatings(state) {
     clear(historyBody);
     historyBody.appendChild(el('div', { class: 'muted' }, 'Loading…'));
     try {
-      const data = await ratings.history(mov);
+      const data = await ratings.history(mov, model);
       clear(historyBody);
       if (!data.players.length) { historyBody.appendChild(el('div', { class: 'muted' }, 'No rated games yet.')); return; }
       if (typeof Chart === 'undefined') { historyBody.appendChild(el('div', { class: 'muted' }, 'Chart library unavailable.')); return; }
@@ -256,6 +276,7 @@ export async function renderRatings(state) {
 
   function buildHistoryChart(players) {
     if (historyChart) { historyChart.destroy(); historyChart = null; }
+    historyPlayers = players;
     clear(historyCanvasWrap);
     const canvas = el('canvas');
     historyCanvasWrap.appendChild(canvas);
@@ -280,6 +301,10 @@ export async function renderRatings(state) {
       pointHoverRadius: 4,
       spanGaps: true,
     }));
+    // Two trailing datasets render the highlighted player's ± uncertainty band
+    // (filled area between hi and lo). Empty until a player is highlighted.
+    datasets.push({ label: '_bandLow', _band: true, data: [], borderWidth: 0, pointRadius: 0, fill: false, tension: 0.3, spanGaps: true, order: 50 });
+    datasets.push({ label: '_bandHigh', _band: true, data: [], borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, order: 50 });
     historyChart = new Chart(canvas, {
       type: 'line',
       data: { datasets },
@@ -290,8 +315,9 @@ export async function renderRatings(state) {
         interaction: { mode: 'nearest', intersect: false },
         onClick: (_evt, els) => {
           if (!els.length) return;
-          const uid = historyChart.data.datasets[els[0].datasetIndex]._userId;
-          setHighlight(highlighted === uid ? null : uid);
+          const ds = historyChart.data.datasets[els[0].datasetIndex];
+          if (!ds || ds._userId == null) return; // ignore clicks on the band
+          setHighlight(highlighted === ds._userId ? null : ds._userId);
         },
         scales: {
           x: {
@@ -304,11 +330,26 @@ export async function renderRatings(state) {
         },
         plugins: {
           legend: { display: false },
-          tooltip: { backgroundColor: '#22222a', borderColor: chartTheme.accent, borderWidth: 1 },
+          tooltip: { backgroundColor: '#22222a', borderColor: chartTheme.accent, borderWidth: 1, filter: (item) => !item.dataset._band },
         },
       },
     });
+    applyBand();
     styleDatasets();
+  }
+
+  function applyBand() {
+    if (!historyChart) return;
+    const low = historyChart.data.datasets.find(d => d.label === '_bandLow');
+    const high = historyChart.data.datasets.find(d => d.label === '_bandHigh');
+    if (!low || !high) return;
+    if (highlighted == null) { low.data = []; high.data = []; return; }
+    const idx = historyPlayers.findIndex(p => p.userId === highlighted);
+    const pl = historyPlayers[idx];
+    if (!pl) { low.data = []; high.data = []; return; }
+    low.data = pl.series.map(s => ({ x: s.x, y: s.lo }));
+    high.data = pl.series.map(s => ({ x: s.x, y: s.hi }));
+    high.backgroundColor = hexToRgba(colorFor(idx), 0.15);
   }
 
   function buildHistoryChips(players) {
@@ -324,6 +365,7 @@ export async function renderRatings(state) {
 
   function setHighlight(uid) {
     highlighted = uid;
+    applyBand();
     styleDatasets();
     syncChips();
   }
@@ -331,6 +373,7 @@ export async function renderRatings(state) {
   function styleDatasets() {
     if (!historyChart) return;
     for (const ds of historyChart.data.datasets) {
+      if (ds._band) continue; // band styling handled in applyBand()
       if (highlighted == null) {
         ds.borderColor = hexToRgba(ds._color, 0.85);
         ds.borderWidth = 2; ds.pointRadius = 2; ds.order = 1;

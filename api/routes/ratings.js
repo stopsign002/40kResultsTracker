@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { requireAdmin } from '../lib/auth.js';
-import { computeRatings, balancedPairings, displayRating, displayConfidence } from '../lib/ratings.js';
+import { computeRatings, balancedPairings, displayRating, displayFloor, displayConfidence, displayBand } from '../lib/ratings.js';
 import { GLICKO2_DEFAULTS } from '../lib/glicko2.js';
 
 const router = Router();
@@ -21,11 +21,13 @@ async function userDirectory() {
 }
 
 const movFlag = (req) => req.query.marginOfVictory !== 'false';
+const modelFlag = (req) => (req.query.model === 'whr' ? 'whr' : 'glicko');
 
 // ── Full ranked leaderboard ───────────────────────────────────────────────
 router.get('/leaderboard', async (req, res) => {
   const marginOfVictory = movFlag(req);
-  const [data, dir] = await Promise.all([computeRatings({ marginOfVictory }), userDirectory()]);
+  const model = modelFlag(req);
+  const [data, dir] = await Promise.all([computeRatings({ marginOfVictory, model }), userDirectory()]);
 
   const players = [...data.players.entries()].map(([userId, p]) => {
     const u = dir.get(userId) || {};
@@ -35,7 +37,8 @@ router.get('/leaderboard', async (req, res) => {
       displayName: u.displayName || `#${userId}`,
       armyName: u.armyName || null,
       isActive: u.isActive ?? true,
-      displayRating: displayRating(p.rating),
+      displayFloor: displayFloor(p.rating, p.rd), // confidence-adjusted; ranking + headline
+      displayRating: displayRating(p.rating),     // raw mean estimate ("est")
       rating: p.rating,
       rd: p.rd,
       confidence: displayConfidence(p.rd),
@@ -47,7 +50,8 @@ router.get('/leaderboard', async (req, res) => {
       inMainPool: p.component === data.mainComponent,
     };
   });
-  players.sort((a, b) => b.displayRating - a.displayRating || b.games - a.games);
+  // Rank by the confidence floor so an unproven player doesn't leap to the top.
+  players.sort((a, b) => b.displayFloor - a.displayFloor || b.displayRating - a.displayRating || b.games - a.games);
 
   res.json({
     settings: data.settings,
@@ -62,11 +66,12 @@ router.get('/leaderboard', async (req, res) => {
 // default Glicko prior so they can still be matched.
 router.get('/suggest', async (req, res) => {
   const marginOfVictory = movFlag(req);
+  const model = modelFlag(req);
   const present = String(req.query.present || '')
     .split(',').map(s => parseInt(s.trim(), 10)).filter(Number.isInteger);
   if (present.length < 2) return res.status(400).json({ error: 'select at least two players' });
 
-  const [data, dir] = await Promise.all([computeRatings({ marginOfVictory }), userDirectory()]);
+  const [data, dir] = await Promise.all([computeRatings({ marginOfVictory, model }), userDirectory()]);
   const nameOf = (id) => (dir.get(id)?.displayName) || `#${id}`;
 
   const pool2 = present.map(id => {
@@ -98,13 +103,23 @@ router.get('/suggest', async (req, res) => {
 // Each player's series carries a point on each day they played; the client
 // plots them all on a time axis and highlights one on click.
 router.get('/history', async (req, res) => {
-  const [data, dir] = await Promise.all([computeRatings({ marginOfVictory: movFlag(req) }), userDirectory()]);
+  const [data, dir] = await Promise.all([
+    computeRatings({ marginOfVictory: movFlag(req), model: modelFlag(req) }), userDirectory(),
+  ]);
   const players = [...data.players.entries()]
     .filter(([, p]) => p.history.length)
     .map(([userId, p]) => ({
       userId,
       displayName: dir.get(userId)?.displayName || `#${userId}`,
-      series: p.history.map(h => ({ x: h.date, y: h.displayRating })),
+      // y = mean estimate; lo/hi = ±1 RD band for the highlight shading.
+      series: p.history.map(h => {
+        const band = displayBand(h.rd);
+        return {
+          x: h.date, y: h.displayRating,
+          lo: Math.max(0, h.displayRating - band),
+          hi: Math.min(1000, h.displayRating + band),
+        };
+      }),
     }))
     .sort((a, b) => (a.displayName < b.displayName ? -1 : a.displayName > b.displayName ? 1 : 0));
   res.json({ settings: data.settings, players });

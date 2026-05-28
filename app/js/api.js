@@ -110,12 +110,12 @@ export const admin = {
   promoteGuests:() => api.post('/admin/promote-guests', {}),
 };
 
-// Admin-only player ranking (Glicko-2) + balanced matchmaking.
+// Admin-only player ranking + balanced matchmaking. model = 'glicko' | 'whr'.
 export const ratings = {
-  leaderboard:   (marginOfVictory) => api.get('/ratings/leaderboard' + qstr({ marginOfVictory })),
-  suggest:       (presentIds, marginOfVictory) =>
-                   api.get('/ratings/suggest' + qstr({ present: (presentIds || []).join(','), marginOfVictory })),
-  history:       (marginOfVictory) => api.get('/ratings/history' + qstr({ marginOfVictory })),
+  leaderboard:   (marginOfVictory, model) => api.get('/ratings/leaderboard' + qstr({ marginOfVictory, model })),
+  suggest:       (presentIds, marginOfVictory, model) =>
+                   api.get('/ratings/suggest' + qstr({ present: (presentIds || []).join(','), marginOfVictory, model })),
+  history:       (marginOfVictory, model) => api.get('/ratings/history' + qstr({ marginOfVictory, model })),
 };
 
 function qstr(q) {

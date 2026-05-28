@@ -6,25 +6,44 @@
 // db.js is imported lazily inside computeRatings so the pure helpers (and their
 // unit tests) don't drag in the pg dependency.
 import { ratePeriod, decayRd, expectedScore, newPlayer } from './glicko2.js';
+import { fitGlobal } from './whr.js';
 
 // ── Tunables (single source of truth) ─────────────────────────────────────
 export const MOV_FULL = 50;          // score gap (of ~100) at which a win counts "maximally"
 export const PERIOD_LABEL = 'per-day (time-decayed)';
 const PERIOD_DAYS = 30;              // inactivity-decay timescale: RD inflates by ~one Glicko period per 30 idle days
-const DISPLAY_CENTER = 500;          // a 1500 Glicko rating shows as this on the 0–1000 dial
-const DISPLAY_SCALE = 0.8;           // points of display per point of Glicko rating
+const DISPLAY_CENTER = 500;          // a 1500 rating shows as this on the 0–1000 dial
+const DISPLAY_SCALE = 0.8;           // points of display per point of rating
 const PROVISIONAL_GAMES = 5;         // fewer games than this → "provisional"
 const PROVISIONAL_RD = 150;          // or RD above this → "provisional"
+const RANK_FLOOR_K = 2;              // leaderboard ranks by rating − K·RD (confidence floor)
+const STALE_RD = 10;                 // RD added per idle 30-day period (leaderboard freshness)
 
-/** Map a raw Glicko rating onto the 0–1000 dial. */
+/** Map a raw rating (mean estimate) onto the 0–1000 dial. */
 export function displayRating(rating) {
   const v = Math.round(DISPLAY_CENTER + (rating - 1500) * DISPLAY_SCALE);
   return Math.max(0, Math.min(1000, v));
 }
 
+/** Confidence-adjusted "floor" on the dial — what the leaderboard ranks by, so
+ *  an unproven player with a wide band sits low until they earn it. */
+export function displayFloor(rating, rd) {
+  return displayRating(rating - RANK_FLOOR_K * rd);
+}
+
 /** 95%-ish confidence half-width, expressed in display-dial points. */
 export function displayConfidence(rd) {
   return Math.round(2 * rd * DISPLAY_SCALE);
+}
+
+/** One-RD band half-width on the dial — used to shade uncertainty on the chart. */
+export function displayBand(rd) {
+  return Math.round(rd * DISPLAY_SCALE);
+}
+
+/** Inflate RD for `periods` of inactivity (used for leaderboard freshness). */
+function inflateStale(rd, periods) {
+  return Math.min(350, Math.sqrt(rd * rd + STALE_RD * STALE_RD * Math.max(0, periods)));
 }
 
 /**
@@ -66,19 +85,72 @@ function daysBetween(a, b) {
 }
 function today() { return new Date().toISOString().slice(0, 10); }
 
+// Glicko-2 (forward/causal): chronological per-DAY batches; same-day games rate
+// against pre-day ratings, idle gaps inflate RD by elapsed time. History gets a
+// point on each day the player actually played (rating only moves when you play).
+function runGlicko(games) {
+  const days = new Map();
+  for (const gm of games) { if (!days.has(gm.day)) days.set(gm.day, []); days.get(gm.day).push(gm); }
+  const orderedDays = [...days.keys()].sort();
+  const state = new Map();
+  const lastSeen = new Map();
+  const hist = new Map();
+  const pre = (uid) => state.get(uid) || newPlayer();
+  for (const day of orderedDays) {
+    const resultsByPlayer = new Map();
+    const push = (uid, opp, score) => {
+      if (!resultsByPlayer.has(uid)) resultsByPlayer.set(uid, []);
+      resultsByPlayer.get(uid).push({ rating: opp.rating, rd: opp.rd, score });
+    };
+    for (const gm of days.get(day)) {
+      const ra = pre(gm.a), rb = pre(gm.b);
+      push(gm.a, rb, gm.sa);
+      push(gm.b, ra, 1 - gm.sa);
+    }
+    for (const uid of resultsByPlayer.keys()) {
+      let cur = pre(uid);
+      if (lastSeen.has(uid)) {
+        const t = daysBetween(lastSeen.get(uid), day) / PERIOD_DAYS;
+        if (t > 0) cur = decayRd(cur, t);
+      }
+      const next = ratePeriod(cur, resultsByPlayer.get(uid));
+      state.set(uid, next);
+      lastSeen.set(uid, day);
+      if (!hist.has(uid)) hist.set(uid, []);
+      hist.get(uid).push({ date: day, displayRating: displayRating(next.rating), rd: Math.round(next.rd) });
+    }
+  }
+  return { state, hist };
+}
+
+// Whole-history (global Bradley-Terry): refit the entire graph at each distinct
+// game-date. A player's estimate can move on a date they DIDN'T play, because
+// new results about their opponents reshape the whole fit — that's the point.
+function runWHR(games) {
+  const state = new Map();
+  const hist = new Map();
+  const dates = [...new Set(games.map(g => g.day))].sort();
+  for (const d of dates) {
+    const through = [];
+    for (const g of games) if (g.day <= d) through.push({ a: g.a, b: g.b, s: g.sa });
+    const fit = fitGlobal(through);
+    for (const [uid, v] of fit) {
+      if (!hist.has(uid)) hist.set(uid, []);
+      hist.get(uid).push({ date: d, displayRating: displayRating(v.rating), rd: Math.round(v.rd) });
+    }
+  }
+  const full = fitGlobal(games.map(g => ({ a: g.a, b: g.b, s: g.sa })));
+  for (const [uid, v] of full) state.set(uid, { rating: v.rating, rd: v.rd });
+  return { state, hist };
+}
+
 /**
- * Compute all-time Glicko-2 ratings from every non-hidden game.
+ * Compute all-time ratings from every non-hidden game.
  *
- * Games process in chronological per-DAY batches (same-day games rate together
- * against pre-day ratings). Between a player's appearances RD is inflated by
- * real elapsed time (one Glicko period per PERIOD_DAYS), so each player's
- * history gets a point on every day they played and uncertainty grows sensibly
- * across gaps — no runaway per-calendar-day decay.
- *
- * @param {{ marginOfVictory?: boolean }} [opts]
+ * @param {{ marginOfVictory?: boolean, model?: 'glicko'|'whr' }} [opts]
  * @returns {Promise<{
- *   settings: { marginOfVictory: boolean, period: string },
- *   players: Map<number, { rating:number, rd:number, vol:number, games:number,
+ *   settings: { marginOfVictory: boolean, model: string, period: string },
+ *   players: Map<number, { rating:number, rd:number, games:number,
  *     wins:number, losses:number, draws:number, lastPlayed:string|null,
  *     provisional:boolean, component:number, history:Array<{date:string,displayRating:number,rd:number}> }>,
  *   components: Array<{ id:number, size:number, members:number[] }>,
@@ -88,6 +160,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
  */
 export async function computeRatings(opts = {}) {
   const marginOfVictory = opts.marginOfVictory !== false; // default ON
+  const model = opts.model === 'whr' ? 'whr' : 'glicko';
   const { pool } = await import('./db.js');
   const { rows } = await pool.query(`
     SELECT g.id, g.played_at::text AS played_at,
@@ -100,69 +173,37 @@ export async function computeRatings(opts = {}) {
     ORDER BY g.played_at ASC, g.id ASC
   `);
 
-  // Group usable games into chronological per-day batches.
-  const days = new Map(); // dayKey → game[]
+  // Shared parse: usable games (chronological, score-share for a), connectivity,
+  // per-player win/loss/draw + last-played, and last-met per pair (matchmaker).
+  // Note outcomeScore guarantees sA + sB = 1, so we keep only a's share.
+  const games = [];
   const dsu = new DSU();
+  const meta = new Map();
+  const lastPlayedPair = new Map();
+  const ensureMeta = (uid) => {
+    if (!meta.has(uid)) meta.set(uid, { games: 0, wins: 0, losses: 0, draws: 0, lastPlayed: null });
+    return meta.get(uid);
+  };
   for (const r of rows) {
     if (r.a_user == null || r.b_user == null || r.a_user === r.b_user) continue;
     const sA = outcomeScore(r.a_result, r.a_score, r.b_score, marginOfVictory);
-    const sB = outcomeScore(r.b_result, r.b_score, r.a_score, marginOfVictory);
-    if (sA == null || sB == null) continue;
-    const key = dayKey(r.played_at);
-    if (!days.has(key)) days.set(key, []);
-    days.get(key).push({ ...r, sA, sB });
+    if (sA == null || outcomeScore(r.b_result, r.b_score, r.a_score, marginOfVictory) == null) continue;
+    games.push({ a: r.a_user, b: r.b_user, sa: sA, day: dayKey(r.played_at) });
     dsu.union(r.a_user, r.b_user);
-  }
-  const orderedDays = [...days.keys()].sort();
-
-  /** @type {Map<number, any>} */
-  const state = new Map();   // userId → {rating, rd, vol}
-  const meta = new Map();    // userId → {games, wins, losses, draws, lastPlayed, lastSeenDay, history}
-  const lastPlayedPair = new Map();
-  const ensureMeta = (uid) => {
-    if (!meta.has(uid)) meta.set(uid, { games: 0, wins: 0, losses: 0, draws: 0, lastPlayed: null, lastSeenDay: null, history: [] });
-    return meta.get(uid);
-  };
-  const pre = (uid) => state.get(uid) || newPlayer();
-
-  for (const day of orderedDays) {
-    const games = days.get(day);
-    /** @type {Map<number, Array<{rating:number,rd:number,score:number}>>} */
-    const resultsByPlayer = new Map();
-    const push = (uid, opp, score) => {
-      if (!resultsByPlayer.has(uid)) resultsByPlayer.set(uid, []);
-      resultsByPlayer.get(uid).push({ rating: opp.rating, rd: opp.rd, score });
-    };
-    for (const gm of games) {
-      const ra = pre(gm.a_user), rb = pre(gm.b_user);
-      push(gm.a_user, rb, gm.sA);
-      push(gm.b_user, ra, gm.sB);
-      for (const [uid, res] of [[gm.a_user, gm.a_result], [gm.b_user, gm.b_result]]) {
-        const mm = ensureMeta(uid);
-        mm.games++;
-        if (res === 'win') mm.wins++; else if (res === 'loss') mm.losses++; else mm.draws++;
-        if (!mm.lastPlayed || gm.played_at > mm.lastPlayed) mm.lastPlayed = gm.played_at;
-      }
-      const lo = Math.min(gm.a_user, gm.b_user), hi = Math.max(gm.a_user, gm.b_user);
-      lastPlayedPair.set(`${lo}:${hi}`, gm.played_at); // ascending order → last write wins
-    }
-
-    for (const uid of resultsByPlayer.keys()) {
+    for (const [uid, res] of [[r.a_user, r.a_result], [r.b_user, r.b_result]]) {
       const mm = ensureMeta(uid);
-      let cur = pre(uid);
-      if (mm.lastSeenDay) {
-        const t = daysBetween(mm.lastSeenDay, day) / PERIOD_DAYS;
-        if (t > 0) cur = decayRd(cur, t); // RD inflation for the idle gap
-      }
-      const next = ratePeriod(cur, resultsByPlayer.get(uid));
-      state.set(uid, next);
-      mm.lastSeenDay = day;
-      mm.history.push({ date: day, displayRating: displayRating(next.rating), rd: Math.round(next.rd) });
+      mm.games++;
+      if (res === 'win') mm.wins++; else if (res === 'loss') mm.losses++; else mm.draws++;
+      if (!mm.lastPlayed || r.played_at > mm.lastPlayed) mm.lastPlayed = r.played_at;
     }
+    const lo = Math.min(r.a_user, r.b_user), hi = Math.max(r.a_user, r.b_user);
+    lastPlayedPair.set(`${lo}:${hi}`, r.played_at); // ascending order → last write wins
   }
+
+  const { state, hist } = model === 'whr' ? runWHR(games) : runGlicko(games);
 
   // Connected components over players that share the game graph.
-  const compRoots = new Map(); // root → members[]
+  const compRoots = new Map();
   for (const uid of state.keys()) {
     const root = dsu.find(uid);
     if (!compRoots.has(root)) compRoots.set(root, []);
@@ -179,22 +220,21 @@ export async function computeRatings(opts = {}) {
     const m = meta.get(uid);
     // Freshness: inflate RD for the gap between the last game and now, so a
     // long-dormant player reads as less certain (and provisional) today.
-    const tNow = m.lastSeenDay ? daysBetween(m.lastSeenDay, now) / PERIOD_DAYS : 0;
-    const currentRd = Math.round(tNow > 0 ? decayRd(s, tNow).rd : s.rd);
+    const tNow = m.lastPlayed ? daysBetween(dayKey(m.lastPlayed), now) / PERIOD_DAYS : 0;
+    const currentRd = Math.round(inflateStale(s.rd, tNow));
     players.set(uid, {
       rating: Math.round(s.rating),
       rd: currentRd,
-      vol: s.vol,
       games: m.games, wins: m.wins, losses: m.losses, draws: m.draws,
       lastPlayed: m.lastPlayed,
       provisional: m.games < PROVISIONAL_GAMES || currentRd > PROVISIONAL_RD,
       component: dsu.find(uid),
-      history: m.history,
+      history: hist.get(uid) || [],
     });
   }
 
   return {
-    settings: { marginOfVictory, period: PERIOD_LABEL },
+    settings: { marginOfVictory, model, period: model === 'whr' ? 'whole-history' : PERIOD_LABEL },
     players, components, mainComponent, lastPlayedPair,
   };
 }

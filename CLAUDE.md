@@ -47,7 +47,8 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │   │   ├── events.js       in-process SSE broadcaster (subs Set + broadcast())
 │   │   ├── game-scoring.js computeFinalScores + validateGameInput (pure, tested)
 │   │   ├── glicko2.js      pure Glicko-2 rating math (ratePeriod/expectedScore), tested vs Glickman example
-│   │   ├── ratings.js      games → all-time ratings (periods + margin-of-victory) + balanced matchmaker
+│   │   ├── whr.js          whole-history rating: global Bradley-Terry fit (retroactive), tested
+│   │   ├── ratings.js      games → all-time ratings (glicko OR whr, margin-of-victory) + balanced matchmaker
 │   │   └── adopt-guest.js  promote guests → inactive accounts (preview + promote, war-map-safe)
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
@@ -68,7 +69,8 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │       ├── README.md       how to run + what's covered
 │       ├── game-scoring.test.js  11 cases pinning the camelCase payload contract
 │       ├── glicko2.test.js       pins Glicko-2 math to Glickman's worked example
-│       └── ratings.test.js       margin-of-victory + display mapping + balanced pairing
+│       ├── ratings.test.js       margin-of-victory + display mapping + balanced pairing
+│       └── whr.test.js           whole-history fit: transitivity, bounded undefeated, uncertainty
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
     ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
@@ -370,9 +372,9 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at |
 | GET | `/admin/guests/preview` | admin | read-only: which guests a promotion run would `create` vs `link` |
 | POST | `/admin/promote-guests` | admin | promote all unlinked guests to inactive accounts (idempotent, war-map-safe) |
-| GET | `/ratings/leaderboard[?marginOfVictory=true]` | admin | Glicko-2 ranked players: `displayRating` (0–1000), `rd`, `confidence`, W/L/D, `provisional`, `inMainPool` |
-| GET | `/ratings/suggest?present=1,2,3[&marginOfVictory=true]` | admin | up to 4 balanced pairing configs with predicted win-% + last-met; `bye` if odd |
-| GET | `/ratings/history[?marginOfVictory=true]` | admin | every player's day-by-day rating series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` |
+| GET | `/ratings/leaderboard[?marginOfVictory=true&model=glicko\|whr]` | admin | ranked players: `displayFloor` (confidence-adjusted, the rank/headline value), `displayRating` (raw "est"), `rd`, `confidence`, W/L/D, `provisional`, `inMainPool` |
+| GET | `/ratings/suggest?present=1,2,3[&marginOfVictory=true&model=…]` | admin | up to 4 balanced pairing configs with predicted win-% + last-met; `bye` if odd |
+| GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y,lo,hi}] }]` (lo/hi = ±1 RD band) |
 | GET | `/events` | auth | Server-Sent Events stream; emits `game.saved`, `season.changed` |
 
 **Total: 45 endpoints** in `routes/*.js` (cross-check: `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js \| wc -l`), plus `/health` defined inline in `server.js`. `/ratings/*` and the two guest endpoints are admin-only; ratings are computed on the fly (no tables).
@@ -607,16 +609,18 @@ What CAN shift between regens: borders move when scores change or banners join/l
 
 ## Player ranking internals (`/rankings`, admin-only)
 
-A private MMR-style system. **Algorithm: Glicko-2** (the chess/Lichess successor to Elo) — chosen because it outperforms Elo/TrueSkill with few games per player and tracks an uncertainty (RD), which a small friend group needs. Whole feature is `requireAdmin`; **players cannot see their own rating by design**.
+A private MMR-style system, `requireAdmin`; **players cannot see their own rating by design**. Two interchangeable models (UI toggle / `?model=` param):
 
-- **`lib/glicko2.js`** — pure math, pinned to Glickman's worked example in `test/glicko2.test.js`. Don't "tidy" the volatility (Illinois) iteration; it's a faithful transcription of the paper. `decayRd(player, periods)` takes a fractional period count so callers can inflate RD by real elapsed time.
-- **`lib/ratings.js`** — `computeRatings()` pulls every non-hidden game (all seasons) and processes them in chronological **per-day batches** (same-day games rate together against pre-day ratings). Between a player's appearances RD inflates by real elapsed time (one Glicko period per `PERIOD_DAYS`, default 30), and the leaderboard inflates once more from a player's last game to *today* so dormant players read as less certain. Each player's `history` therefore has a point on **every day they played**. Then it finds connected components (union-find) over the shared-opponent graph and flags any split (`inMainPool`). **Computed on the fly each request; no tables, no schema.** Tunables at the top: `MOV_FULL`, `PERIOD_DAYS`, the 0–1000 display mapping (`displayRating`: 1500→500, ×0.8), provisional thresholds.
-- **Margin of victory** — direction comes from `result` (respects manual-winner / concession), magnitude from the score gap via `outcomeScore()` → a Glicko score in [0,1]. Toggle in the UI (default on).
-- **Matchmaker** — `balancedPairings()` sorts present players by rating and pairs adjacent (the min-total-gap matching for points on a line), returns up to 4 near-optimal configs for "reshuffle", a `bye` for odd counts, and per-pair predicted win-% via `expectedScore()`. The point is *close* games, not best-vs-worst.
-- **History chart** — `GET /ratings/history` returns every player's day-by-day series; the view (`ratings.js`) plots them all on one Chart.js **time axis** (daily points, month ticks — needs the `chartjs-adapter-date-fns` CDN script in `index.html`). Click a player (chart line, chip, or leaderboard name) to highlight their line; the rest dim rather than disappear.
-- **Identity** — ratings key on `user_id`. Run **Admin → Guest Accounts → Promote guests** first so guests become accounts and get rated (see pitfall #8). After promotion, every game player resolves to a user.
+- **Glicko-2** (`lib/glicko2.js`, default) — the chess/Lichess system; **forward/causal**. A game's effect is locked to opponents' ratings *at that moment*; later results don't flow backward. Pure math pinned to Glickman's worked example in `test/glicko2.test.js` — don't "tidy" the volatility (Illinois) iteration. `decayRd(player, periods)` inflates RD by a fractional period count (elapsed-time decay).
+- **Whole-History** (`lib/whr.js`) — a global Bayesian Bradley-Terry fit over **all** games at once, so evidence propagates **both directions** (beating someone who later proves weak counts for less). A N(1500, 350²) prior regularises (undefeated ≠ ∞) and pins disconnected groups to a shared scale. Uncertainty = 1/√(Fisher info) → a zero-game player lands at RD 350, same scale as Glicko. Tested in `test/whr.test.js`.
+- **`lib/ratings.js`** — `computeRatings({ marginOfVictory, model })` does the shared parse (usable games, connectivity via union-find, W/L/D, last-met) then dispatches to `runGlicko` (per-day forward batches; idle gaps inflate RD; one history point per day *played*) or `runWHR` (re-fit the whole graph at each game-date — a player's estimate can move on a day they *didn't* play, as the fit reshapes). Leaderboard RD also inflates from the last game to *today* (freshness). **Computed on the fly each request; no tables, no schema.** Tunables at top: `MOV_FULL`, `PERIOD_DAYS`, `RANK_FLOOR_K`, display mapping, provisional thresholds.
+- **Confidence floor (the ranking key)** — the board ranks and headlines by `displayFloor` = `displayRating(rating − RANK_FLOOR_K·rd)` (K=2), *not* the raw mean. So a 1-game player who beats the best sits **low** (huge RD → low floor) and climbs as they prove it, instead of leaping to #2. The raw mean shows as "est", "±" is the confidence. Applies in both models.
+- **Margin of victory** — direction from `result` (respects manual-winner / concession), magnitude from the score gap via `outcomeScore()` → a score in [0,1] (sums to 1 across the pair). UI toggle, default on.
+- **Matchmaker** — `balancedPairings()` sorts present players by rating and pairs adjacent (min-total-gap on a line), returns up to 4 near-optimal configs for "reshuffle", a `bye` for odd counts, per-pair predicted win-% via `expectedScore()`. Close games, not best-vs-worst.
+- **History chart** — `GET /ratings/history` returns each player's series `{x: date, y: mean, lo/hi: ±1 RD band}`; the view plots them on one Chart.js **time axis** (daily points, month ticks — needs the `chartjs-adapter-date-fns` CDN in `index.html`). Click a player (line, chip, or leaderboard name) to highlight: their line bolds, the rest dim, and two trailing `_band` datasets shade their ± uncertainty.
+- **Identity** — ratings key on `user_id`. Run **Admin → Guest Accounts → Promote guests** first so guests become accounts and get rated (see pitfall #8).
 
-To change ranking behaviour, the tunables in `ratings.js` are the dial; the math in `glicko2.js` should stay put (it has a known-answer test).
+To change behaviour, the tunables in `ratings.js` are the dial; the math in `glicko2.js` / `whr.js` should stay put (both have tests).
 
 ---
 
