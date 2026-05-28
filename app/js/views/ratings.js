@@ -32,7 +32,6 @@ export async function renderRatings(state) {
   let model = 'whr';
   let board = null;
   let historyChart = null;
-  let historyPlayers = [];
   let highlighted = null;       // userId of the highlighted line, or null
   const present = new Set();
 
@@ -276,7 +275,6 @@ export async function renderRatings(state) {
 
   function buildHistoryChart(players) {
     if (historyChart) { historyChart.destroy(); historyChart = null; }
-    historyPlayers = players;
     clear(historyCanvasWrap);
     const canvas = el('canvas');
     historyCanvasWrap.appendChild(canvas);
@@ -293,6 +291,15 @@ export async function renderRatings(state) {
       pointHoverRadius: 4,
       spanGaps: true,
     }));
+    // Bake the fitted y-range into the config at creation. (Setting it after
+    // construction + relying on update() to apply it left the first paint
+    // squished — it only corrected on the next update, e.g. a click.)
+    const ys = players.flatMap(pl => pl.series.map(s => s.y));
+    const lo = ys.length ? Math.min(...ys) : 0;
+    const hi = ys.length ? Math.max(...ys) : 1000;
+    const pad = Math.max(15, (hi - lo) * 0.12);
+    const yMin = Math.max(0, Math.round(lo - pad));
+    const yMax = Math.min(1000, Math.round(hi + pad));
     historyChart = new Chart(canvas, {
       type: 'line',
       data: { datasets },
@@ -314,7 +321,7 @@ export async function renderRatings(state) {
             ticks: { color: chartTheme.muted },
             grid: { color: chartTheme.grid },
           },
-          y: { min: 0, max: 1000, ticks: { color: chartTheme.muted }, grid: { color: chartTheme.grid } },
+          y: { min: yMin, max: yMax, ticks: { color: chartTheme.muted }, grid: { color: chartTheme.grid } },
         },
         plugins: {
           legend: { display: false },
@@ -322,7 +329,6 @@ export async function renderRatings(state) {
         },
       },
     });
-    fitYAxis();
     styleDatasets();
   }
 
@@ -335,18 +341,6 @@ export async function renderRatings(state) {
       historyChips.appendChild(chip);
     });
     syncChips();
-  }
-
-  // Fit the y-axis to the rating lines (with padding) so they aren't crushed
-  // into the middle of a fixed 0–1000 range.
-  function fitYAxis() {
-    if (!historyChart) return;
-    const vals = historyPlayers.flatMap(pl => pl.series.map(s => s.y));
-    if (!vals.length) return;
-    const lo = Math.min(...vals), hi = Math.max(...vals);
-    const pad = Math.max(15, (hi - lo) * 0.12);
-    historyChart.options.scales.y.min = Math.max(0, Math.round(lo - pad));
-    historyChart.options.scales.y.max = Math.min(1000, Math.round(hi + pad));
   }
 
   function setHighlight(uid) {
