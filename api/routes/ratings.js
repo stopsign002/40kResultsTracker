@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { requireAdmin } from '../lib/auth.js';
-import { computeRatings, balancedPairings, displayRating, displayFloor, displayConfidence, displayBand } from '../lib/ratings.js';
+import { computeRatings, balancedPairings, displayRating, displayFloor, displayConfidence } from '../lib/ratings.js';
 import { GLICKO2_DEFAULTS } from '../lib/glicko2.js';
 
 const router = Router();
@@ -21,7 +21,7 @@ async function userDirectory() {
 }
 
 const movFlag = (req) => req.query.marginOfVictory !== 'false';
-const modelFlag = (req) => (req.query.model === 'whr' ? 'whr' : 'glicko');
+const modelFlag = (req) => (req.query.model === 'glicko' ? 'glicko' : 'whr'); // whole-history is the default
 
 // ── Full ranked leaderboard ───────────────────────────────────────────────
 router.get('/leaderboard', async (req, res) => {
@@ -100,27 +100,29 @@ router.get('/suggest', async (req, res) => {
 });
 
 // ── Every player's rating trajectory on a shared timeline (compare chart) ──
-// Each player's series carries a point on each day they played; the client
-// plots them all on a time axis and highlights one on click.
+// The line `y` is the SAME confidence floor the leaderboard ranks by, so the
+// chart and board agree (a 1-game fluke reads low on both). The band runs from
+// that floor up to the raw estimate, so its height = the uncertainty discount.
+// Each line is carried forward to today using the player's current (staleness-
+// adjusted) values, so it doesn't stop dead at their last game.
 router.get('/history', async (req, res) => {
   const [data, dir] = await Promise.all([
     computeRatings({ marginOfVictory: movFlag(req), model: modelFlag(req) }), userDirectory(),
   ]);
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const point = (rating, rd, date) => {
+    const floor = displayFloor(rating, rd);
+    return { x: date, y: floor, lo: floor, hi: displayRating(rating) };
+  };
   const players = [...data.players.entries()]
     .filter(([, p]) => p.history.length)
-    .map(([userId, p]) => ({
-      userId,
-      displayName: dir.get(userId)?.displayName || `#${userId}`,
-      // y = mean estimate; lo/hi = ±1 RD band for the highlight shading.
-      series: p.history.map(h => {
-        const band = displayBand(h.rd);
-        return {
-          x: h.date, y: h.displayRating,
-          lo: Math.max(0, h.displayRating - band),
-          hi: Math.min(1000, h.displayRating + band),
-        };
-      }),
-    }))
+    .map(([userId, p]) => {
+      const series = p.history.map(h => point(h.rating, h.rd, h.date));
+      // Fill forward: extend to today at the current (freshness-adjusted) value.
+      const last = p.history[p.history.length - 1];
+      if (last.date < todayStr) series.push(point(p.rating, p.rd, todayStr));
+      return { userId, displayName: dir.get(userId)?.displayName || `#${userId}`, series };
+    })
     .sort((a, b) => (a.displayName < b.displayName ? -1 : a.displayName > b.displayName ? 1 : 0));
   res.json({ settings: data.settings, players });
 });

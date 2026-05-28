@@ -117,7 +117,7 @@ function runGlicko(games) {
       state.set(uid, next);
       lastSeen.set(uid, day);
       if (!hist.has(uid)) hist.set(uid, []);
-      hist.get(uid).push({ date: day, displayRating: displayRating(next.rating), rd: Math.round(next.rd) });
+      hist.get(uid).push({ date: day, rating: next.rating, displayRating: displayRating(next.rating), rd: Math.round(next.rd) });
     }
   }
   return { state, hist };
@@ -136,7 +136,7 @@ function runWHR(games) {
     const fit = fitGlobal(through);
     for (const [uid, v] of fit) {
       if (!hist.has(uid)) hist.set(uid, []);
-      hist.get(uid).push({ date: d, displayRating: displayRating(v.rating), rd: Math.round(v.rd) });
+      hist.get(uid).push({ date: d, rating: v.rating, displayRating: displayRating(v.rating), rd: Math.round(v.rd) });
     }
   }
   const full = fitGlobal(games.map(g => ({ a: g.a, b: g.b, s: g.sa })));
@@ -152,7 +152,7 @@ function runWHR(games) {
  *   settings: { marginOfVictory: boolean, model: string, period: string },
  *   players: Map<number, { rating:number, rd:number, games:number,
  *     wins:number, losses:number, draws:number, lastPlayed:string|null,
- *     provisional:boolean, component:number, history:Array<{date:string,displayRating:number,rd:number}> }>,
+ *     provisional:boolean, component:number, history:Array<{date:string,rating:number,displayRating:number,rd:number}> }>,
  *   components: Array<{ id:number, size:number, members:number[] }>,
  *   mainComponent: number|null,
  *   lastPlayedPair: Map<string, string>,
@@ -160,7 +160,7 @@ function runWHR(games) {
  */
 export async function computeRatings(opts = {}) {
   const marginOfVictory = opts.marginOfVictory !== false; // default ON
-  const model = opts.model === 'whr' ? 'whr' : 'glicko';
+  const model = opts.model === 'glicko' ? 'glicko' : 'whr'; // whole-history is the default
   const { pool } = await import('./db.js');
   const { rows } = await pool.query(`
     SELECT g.id, g.played_at::text AS played_at,

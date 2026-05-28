@@ -29,7 +29,7 @@ export async function renderRatings(state) {
 
   const root = el('div', { class: 'fade-in' });
   let mov = true;
-  let model = 'glicko';
+  let model = 'whr';
   let board = null;
   let historyChart = null;
   let historyPlayers = [];
@@ -41,8 +41,8 @@ export async function renderRatings(state) {
   movToggle.addEventListener('change', () => { mov = movToggle.checked; load(); });
 
   const modelSelect = el('select', {}, [
-    el('option', { value: 'glicko' }, 'Glicko-2 (forward / causal)'),
     el('option', { value: 'whr' }, 'Whole-History (retroactive)'),
+    el('option', { value: 'glicko' }, 'Glicko-2 (forward / causal)'),
   ]);
   modelSelect.addEventListener('change', () => { model = modelSelect.value; load(); });
 
@@ -280,14 +280,6 @@ export async function renderRatings(state) {
     clear(historyCanvasWrap);
     const canvas = el('canvas');
     historyCanvasWrap.appendChild(canvas);
-    // Auto-fit the y-axis to the actual ratings (with padding) so the lines
-    // aren't all crushed into the middle of a fixed 0–1000 range.
-    const ys = players.flatMap(pl => pl.series.map(s => s.y));
-    const lo = ys.length ? Math.min(...ys) : 0;
-    const hi = ys.length ? Math.max(...ys) : 1000;
-    const pad = Math.max(15, (hi - lo) * 0.15);
-    const yMin = Math.max(0, Math.round(lo - pad));
-    const yMax = Math.min(1000, Math.round(hi + pad));
     const datasets = players.map((pl, i) => ({
       label: pl.displayName,
       data: pl.series,
@@ -326,7 +318,7 @@ export async function renderRatings(state) {
             ticks: { color: chartTheme.muted },
             grid: { color: chartTheme.grid },
           },
-          y: { min: yMin, max: yMax, ticks: { color: chartTheme.muted }, grid: { color: chartTheme.grid } },
+          y: { min: 0, max: 1000, ticks: { color: chartTheme.muted }, grid: { color: chartTheme.grid } },
         },
         plugins: {
           legend: { display: false },
@@ -335,6 +327,7 @@ export async function renderRatings(state) {
       },
     });
     applyBand();
+    fitYAxis();
     styleDatasets();
   }
 
@@ -363,9 +356,26 @@ export async function renderRatings(state) {
     syncChips();
   }
 
+  // Fit the y-axis to the floor lines (always) plus, when a player is
+  // highlighted, the top of their uncertainty band — so the band isn't clipped.
+  function fitYAxis() {
+    if (!historyChart) return;
+    const vals = historyPlayers.flatMap(pl => pl.series.map(s => s.y));
+    if (highlighted != null) {
+      const pl = historyPlayers.find(p => p.userId === highlighted);
+      if (pl) vals.push(...pl.series.map(s => s.hi));
+    }
+    if (!vals.length) return;
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    const pad = Math.max(15, (hi - lo) * 0.12);
+    historyChart.options.scales.y.min = Math.max(0, Math.round(lo - pad));
+    historyChart.options.scales.y.max = Math.min(1000, Math.round(hi + pad));
+  }
+
   function setHighlight(uid) {
     highlighted = uid;
     applyBand();
+    fitYAxis();
     styleDatasets();
     syncChips();
   }
