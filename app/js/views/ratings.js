@@ -293,10 +293,6 @@ export async function renderRatings(state) {
       pointHoverRadius: 4,
       spanGaps: true,
     }));
-    // Two trailing datasets render the highlighted player's ± uncertainty band
-    // (filled area between hi and lo). Empty until a player is highlighted.
-    datasets.push({ label: '_bandLow', _band: true, data: [], borderWidth: 0, pointRadius: 0, fill: false, tension: 0.3, spanGaps: true, order: 50 });
-    datasets.push({ label: '_bandHigh', _band: true, data: [], borderWidth: 0, pointRadius: 0, fill: '-1', backgroundColor: 'transparent', tension: 0.3, spanGaps: true, order: 50 });
     historyChart = new Chart(canvas, {
       type: 'line',
       data: { datasets },
@@ -308,7 +304,7 @@ export async function renderRatings(state) {
         onClick: (_evt, els) => {
           if (!els.length) return;
           const ds = historyChart.data.datasets[els[0].datasetIndex];
-          if (!ds || ds._userId == null) return; // ignore clicks on the band
+          if (!ds || ds._userId == null) return;
           setHighlight(highlighted === ds._userId ? null : ds._userId);
         },
         scales: {
@@ -322,27 +318,12 @@ export async function renderRatings(state) {
         },
         plugins: {
           legend: { display: false },
-          tooltip: { backgroundColor: '#22222a', borderColor: chartTheme.accent, borderWidth: 1, filter: (item) => !item.dataset._band },
+          tooltip: { backgroundColor: '#22222a', borderColor: chartTheme.accent, borderWidth: 1 },
         },
       },
     });
-    applyBand();
     fitYAxis();
     styleDatasets();
-  }
-
-  function applyBand() {
-    if (!historyChart) return;
-    const low = historyChart.data.datasets.find(d => d.label === '_bandLow');
-    const high = historyChart.data.datasets.find(d => d.label === '_bandHigh');
-    if (!low || !high) return;
-    if (highlighted == null) { low.data = []; high.data = []; return; }
-    const idx = historyPlayers.findIndex(p => p.userId === highlighted);
-    const pl = historyPlayers[idx];
-    if (!pl) { low.data = []; high.data = []; return; }
-    low.data = pl.series.map(s => ({ x: s.x, y: s.lo }));
-    high.data = pl.series.map(s => ({ x: s.x, y: s.hi }));
-    high.backgroundColor = hexToRgba(colorFor(idx), 0.15);
   }
 
   function buildHistoryChips(players) {
@@ -356,15 +337,11 @@ export async function renderRatings(state) {
     syncChips();
   }
 
-  // Fit the y-axis to the floor lines (always) plus, when a player is
-  // highlighted, the top of their uncertainty band — so the band isn't clipped.
+  // Fit the y-axis to the rating lines (with padding) so they aren't crushed
+  // into the middle of a fixed 0–1000 range.
   function fitYAxis() {
     if (!historyChart) return;
     const vals = historyPlayers.flatMap(pl => pl.series.map(s => s.y));
-    if (highlighted != null) {
-      const pl = historyPlayers.find(p => p.userId === highlighted);
-      if (pl) vals.push(...pl.series.map(s => s.hi));
-    }
     if (!vals.length) return;
     const lo = Math.min(...vals), hi = Math.max(...vals);
     const pad = Math.max(15, (hi - lo) * 0.12);
@@ -374,8 +351,6 @@ export async function renderRatings(state) {
 
   function setHighlight(uid) {
     highlighted = uid;
-    applyBand();
-    fitYAxis();
     styleDatasets();
     syncChips();
   }
@@ -383,7 +358,6 @@ export async function renderRatings(state) {
   function styleDatasets() {
     if (!historyChart) return;
     for (const ds of historyChart.data.datasets) {
-      if (ds._band) continue; // band styling handled in applyBand()
       if (highlighted == null) {
         ds.borderColor = hexToRgba(ds._color, 0.85);
         ds.borderWidth = 2; ds.pointRadius = 2; ds.order = 1;

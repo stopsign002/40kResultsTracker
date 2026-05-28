@@ -101,19 +101,15 @@ router.get('/suggest', async (req, res) => {
 
 // ── Every player's rating trajectory on a shared timeline (compare chart) ──
 // The line `y` is the SAME confidence floor the leaderboard ranks by, so the
-// chart and board agree (a 1-game fluke reads low on both). The band runs from
-// that floor up to the raw estimate, so its height = the uncertainty discount.
-// Each line is carried forward to today using the player's current (staleness-
-// adjusted) values, so it doesn't stop dead at their last game.
+// chart and board agree (a 1-game fluke reads low on both). Each line is
+// carried forward to today using the player's current (staleness-adjusted)
+// value, so it doesn't stop dead at their last game.
 router.get('/history', async (req, res) => {
   const [data, dir] = await Promise.all([
     computeRatings({ marginOfVictory: movFlag(req), model: modelFlag(req) }), userDirectory(),
   ]);
   const todayStr = new Date().toISOString().slice(0, 10);
-  const point = (rating, rd, date) => {
-    const floor = displayFloor(rating, rd);
-    return { x: date, y: floor, lo: floor, hi: displayRating(rating) };
-  };
+  const point = (rating, rd, date) => ({ x: date, y: displayFloor(rating, rd) });
   const players = [...data.players.entries()]
     .filter(([, p]) => p.history.length)
     .map(([userId, p]) => {
