@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { pool } from '../lib/db.js';
+import { pool, withTx } from '../lib/db.js';
 import { hashPassword, requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
+import { previewGuests, promoteAllGuests } from '../lib/adopt-guest.js';
 
 const router = Router();
 
@@ -89,6 +90,25 @@ router.delete('/games/:id', async (req, res) => {
   await audit(req, 'game.delete', { type: 'game', id });
   broadcast('game.saved', { id, action: 'delete' });
   res.json({ ok: true, id });
+});
+
+// Preview which guests a promotion run would create vs link (read-only).
+router.get('/guests/preview', async (_req, res) => {
+  res.json(await previewGuests());
+});
+
+// Promote every free-text guest into a real (inactive) user account so they
+// become first-class players for ratings etc. Idempotent + transactional;
+// preserves war-map territory via banner_first_seen migration. See
+// lib/adopt-guest.js and CLAUDE.md pitfall #8.
+router.post('/promote-guests', async (req, res) => {
+  const result = await withTx((client) => promoteAllGuests(client));
+  await audit(req, 'guests.promote', {
+    type: 'user', id: null,
+    payload: { created: result.created.length, linked: result.linked.length },
+  });
+  if (result.created.length || result.linked.length) broadcast('game.saved', { action: 'promote-guests' });
+  res.json(result);
 });
 
 // Recent audit-log entries — admin viewer.

@@ -1,22 +1,24 @@
 # `api/test/` — smoke tests
 
-Pure-JS tests using Node's built-in `node:test` runner. **No DB access** — tests cover the helpers extracted into `api/lib/` and import them directly.
+Pure-JS tests using Node's built-in `node:test` runner. **No DB access** — tests cover the helpers extracted into `api/lib/` and import them directly. (`lib/ratings.js` imports `db.js` lazily so its pure helpers stay testable without `pg`.)
 
 ## Running
 
 ```bash
 cd api
-npm test                              # node --test test/
+npm test                              # node --test test/*.test.js
 node --test test/game-scoring.test.js # single file
 ```
 
-11 cases currently pass (run `npm test` to confirm).
+19 cases currently pass (run `npm test` to confirm). Note the npm script globs `test/*.test.js` — `node --test test/` (bare directory) is not expanded by newer Node and errors with "Cannot find module '/app/test'".
 
 ## What's covered
 
 | File | Module under test | Cases |
 |---|---|---|
 | `game-scoring.test.js` | `lib/game-scoring.js` | `computeFinalScores`: zero-zero → draw, primary roll-up, **secondaries fold in via cards (NOT `r.secondaryScore`)** ← the camelCase regression test, finalScore clamps to 100, `manualWinner` overrides higher score, both `manualWinner` → draw. `validateGameInput`: rejects missing playedAt / pointsLimit / wrong player count / players with neither userId nor guestName; happy path doesn't throw. |
+| `glicko2.test.js` | `lib/glicko2.js` | **Pins Glickman's worked example** (1500/200 vs three opponents → 1464.06 / 151.52 / 0.05999). Idle-period RD inflation + 350 ceiling, empty-results decay, `expectedScore` symmetry + uncertainty pulling toward 50/50. |
+| `ratings.test.js` | `lib/ratings.js` (pure parts) | `outcomeScore` W/L/D + margin-of-victory direction/magnitude; `displayRating` 1500→500 mapping + 0–1000 clamp; `balancedPairings` pairs closest ratings (not best-vs-worst) and handles odd counts with a sit-out. |
 
 ## Why this scope
 

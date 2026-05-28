@@ -164,12 +164,18 @@ router.get('/:id', async (req, res) => {
 // registered user's display_name, link the player to that user — this is what
 // keeps army_name flowing through to the war map and lets head-to-head /
 // player-winrate stats group correctly. Otherwise the player stays a guest.
+//
+// Matches active OR inactive accounts (active preferred). Inactive accounts are
+// the "dummy" accounts created for promoted guests (lib/adopt-guest.js), so a
+// future game typed with a promoted guest's name re-links to their account
+// instead of spawning a fresh guest row and re-fragmenting their history.
 async function resolvePlayerIdentities(players) {
   for (const p of players) {
     if (p.userId || !p.guestName) continue;
     const { rows } = await pool.query(
       `SELECT id FROM users
-       WHERE LOWER(display_name) = LOWER($1) AND is_active = TRUE
+       WHERE LOWER(display_name) = LOWER($1)
+       ORDER BY is_active DESC, id ASC
        LIMIT 1`,
       [p.guestName.trim()]
     );

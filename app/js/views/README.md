@@ -12,7 +12,8 @@ Every file exports one async function: `export async function renderXxx(state, .
 | `game-form.js` | `/games/new`, `/games/:id/edit` | **HEAVIEST file.** Per-round scoring grid, secondary/challenger card slots, draft persistence to `localStorage`, undo-last-save toast on edit. Uses `rerender()` for structural changes; mutates draft directly on score-input change to preserve focus. |
 | `stats.js` | `/stats` | Chart.js dashboard: faction/player win rates, head-to-head, faction matchup heatmap, drill-down with detachment breakdown, calendar heatmap, trends. Click bars/cells to drill through to filtered `/games`. |
 | `warmap.js` | `/`, `/war` | **Theatre of War.** Canvas-based deterministic map. **DO NOT TOUCH constants** — see CLAUDE.md "Critical invariants". Hover tooltip, faction glyphs on fortresses, legend toggle, season picker. |
-| `admin.js` | `/admin` | User CRUD, change own password, audit log viewer, seasons panel (start new). Admin-only nav gating. |
+| `admin.js` | `/admin` | User CRUD, change own password, audit log viewer, seasons panel (start new), **Guest Accounts** panel (preview + promote guests to inactive accounts). Admin-only nav gating. |
+| `ratings.js` | `/rankings` | **Admin-only.** Glicko-2 leaderboard (0–1000 dial, ±confidence, provisional badges), balanced matchmaker (tick who's present → closest-skill pairings with predicted win-% and last-met, reshuffle for alternatives), and an all-players rating-history compare chart (Chart.js time axis, daily points / month ticks; click a player to highlight, others dim). Refuses non-admins; the API behind it is `requireAdmin`. |
 | `player.js` | `/players/:playerKey` | Per-player profile. Streaks, biggest win/loss margin, per-faction breakdown. `playerKey` is `'user:<id>'` or `'guest:<name>'`. |
 | `profile.js` | `/profile` | Self-serve "My Profile" — edit own `army_name`, change own password. Linked from the username in the header session row. |
 
