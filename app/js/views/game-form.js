@@ -176,6 +176,13 @@ export async function renderGameForm(state, gameId) {
     const tournTableInput = el('input', { type: 'number', min: '0', value: draft.tournamentTable ?? '' });
     tournTableInput.addEventListener('change', () => { draft.tournamentTable = tournTableInput.value === '' ? null : parseInt(tournTableInput.value, 10); });
 
+    const mediumSel = el('select', {}, [
+      el('option', { value: 'physical' }, 'Physical (tabletop)'),
+      el('option', { value: 'digital' }, 'Digital (Tabletop Simulator)'),
+    ]);
+    mediumSel.value = draft.playMedium || 'physical';
+    mediumSel.addEventListener('change', () => { draft.playMedium = mediumSel.value; });
+
     const locationInput = el('input', { type: 'text', placeholder: 'optional', value: draft.location ?? '' });
     locationInput.addEventListener('input', () => { draft.location = locationInput.value || null; });
 
@@ -201,7 +208,10 @@ export async function renderGameForm(state, gameId) {
         field('Round', tournRoundInput),
         field('Table', tournTableInput),
       ]),
-      el('div', { class: 'form-row' }, [field('Location', locationInput)]),
+      el('div', { class: 'form-row cols-2' }, [
+        field('Play Medium', mediumSel),
+        field('Location', locationInput),
+      ]),
       el('div', { class: 'form-row' }, [field('Notes', notesArea)]),
     ]);
   }
@@ -539,6 +549,7 @@ function makeDraft(existing) {
       tournamentTable: null,
       location: null,
       notes: null,
+      playMedium: 'physical',
       players: [emptyPlayer(), emptyPlayer()],
     };
   }
@@ -560,6 +571,7 @@ function makeDraft(existing) {
     tournamentTable: existing.tournament_table,
     location: existing.location,
     notes: existing.notes,
+    playMedium: existing.play_medium || 'physical',
     players: existing.players.map(p => ({
       userId: p.user_id,
       guestName: p.guest_name || (p.display_name && p.user_id ? p.display_name : null),
@@ -620,6 +632,7 @@ function serializeDraft(d) {
     tournamentTable: d.tournamentTable,
     location: d.location,
     notes: d.notes,
+    playMedium: d.playMedium || 'physical',
     players: d.players.map(p => ({
       ...p,
       secondaries: (p.secondaries || []).filter(s => s.cardName),
@@ -668,6 +681,7 @@ function restorePayload(g) {
     tournamentTable: g.tournament_table,
     location: g.location,
     notes: g.notes,
+    playMedium: g.play_medium || 'physical',
     players: g.players.map(p => ({
       userId: p.user_id,
       guestName: p.guest_name,

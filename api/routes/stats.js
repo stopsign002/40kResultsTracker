@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
+import { COUNTED_GAMES } from '../lib/game-filter.js';
 
 const router = Router();
 
@@ -7,7 +8,7 @@ const router = Router();
 
 // Helper: shared filter clauses
 function buildFilters(q, startIndex = 1) {
-  const where = ['g.hidden_from_stats = FALSE'];
+  const where = [COUNTED_GAMES];
   const params = [];
   let i = startIndex;
   if (q.format) { where.push(`g.game_format = $${i++}`); params.push(q.format); }
@@ -98,7 +99,7 @@ router.get('/faction-mission-breakdown', async (req, res) => {
       SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
       ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     LEFT JOIN primary_missions pm ON pm.id = g.primary_mission_id
     WHERE gp.faction_id = $1 AND pm.id IS NOT NULL
     GROUP BY pm.id, pm.name
@@ -121,7 +122,7 @@ router.get('/faction-deployment-breakdown', async (req, res) => {
       SUM(CASE WHEN gp.result = 'win' THEN 1 ELSE 0 END)::int AS wins,
       ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     LEFT JOIN deployment_maps dm ON dm.id = g.deployment_map_id
     WHERE gp.faction_id = $1 AND dm.id IS NOT NULL
     GROUP BY dm.id, dm.name
@@ -143,7 +144,7 @@ router.get('/faction-matchups', async (_req, res) => {
            SUM(CASE WHEN a.result = 'win' THEN 1 ELSE 0 END)::int AS wins
     FROM game_players a
     JOIN game_players b ON a.game_id = b.game_id AND a.seat <> b.seat
-    JOIN games g ON g.id = a.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = a.game_id AND ${COUNTED_GAMES}
     JOIN factions fa ON fa.id = a.faction_id
     JOIN factions fb ON fb.id = b.faction_id
     WHERE a.faction_id IS NOT NULL AND b.faction_id IS NOT NULL
@@ -169,7 +170,7 @@ router.get('/head-to-head', async (req, res) => {
     LEFT JOIN factions fb ON fb.id = pb.faction_id
     LEFT JOIN primary_missions pm ON pm.id = g.primary_mission_id
     LEFT JOIN deployment_maps dm ON dm.id = g.deployment_map_id
-    WHERE g.hidden_from_stats = FALSE
+    WHERE ${COUNTED_GAMES}
     ORDER BY g.played_at DESC
   `;
   const { rows } = await pool.query(sql, [a, b]);
@@ -205,7 +206,7 @@ router.get('/secondary-averages', async (_req, res) => {
       MAX(ps.score) AS max_score
     FROM player_secondaries ps
     JOIN game_players gp ON gp.id = ps.game_player_id
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     GROUP BY ps.card_name
     HAVING COUNT(*) >= 1
     ORDER BY picks DESC, avg_score DESC
@@ -220,7 +221,7 @@ router.get('/secondary-averages', async (_req, res) => {
 // or empty values bucket into "(unspecified)".
 router.get('/detachment-winrates', async (req, res) => {
   const factionId = req.query.factionId ? parseInt(req.query.factionId, 10) : null;
-  const where = ['g.hidden_from_stats = FALSE'];
+  const where = [COUNTED_GAMES];
   const params = [];
   let i = 1;
   if (factionId) { where.push(`gp.faction_id = $${i++}`); params.push(factionId); }
@@ -257,7 +258,7 @@ router.get('/trends', async (_req, res) => {
     SELECT TO_CHAR(date_trunc('month', g.played_at), 'YYYY-MM') AS month,
            COUNT(*)::int AS games
     FROM games g
-    WHERE g.hidden_from_stats = FALSE
+    WHERE ${COUNTED_GAMES}
     GROUP BY month
     ORDER BY month
   `);
@@ -266,7 +267,7 @@ router.get('/trends', async (_req, res) => {
            ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score
     FROM games g
     JOIN game_players gp ON gp.game_id = g.id
-    WHERE g.hidden_from_stats = FALSE
+    WHERE ${COUNTED_GAMES}
     GROUP BY month
     ORDER BY month
   `);
@@ -275,7 +276,7 @@ router.get('/trends', async (_req, res) => {
       SELECT f.id, f.name
       FROM factions f
       JOIN game_players gp ON gp.faction_id = f.id
-      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+      JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
       GROUP BY f.id, f.name
       ORDER BY COUNT(*) DESC
       LIMIT 8
@@ -287,7 +288,7 @@ router.get('/trends', async (_req, res) => {
       COUNT(*)::int AS games
     FROM top_factions f
     JOIN game_players gp ON gp.faction_id = f.id
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     GROUP BY month, f.id, f.name
     ORDER BY month, f.name
   `);
@@ -306,7 +307,7 @@ router.get('/calendar', async (req, res) => {
   const { rows } = await pool.query(`
     SELECT g.played_at::text AS date, COUNT(*)::int AS games
     FROM games g
-    WHERE g.hidden_from_stats = FALSE
+    WHERE ${COUNTED_GAMES}
       AND g.played_at >= CURRENT_DATE - INTERVAL '${days} days'
     GROUP BY g.played_at
     ORDER BY g.played_at
@@ -353,7 +354,7 @@ router.get('/player/:playerKey', async (req, res) => {
       ROUND(AVG(gp.final_score)::numeric, 1) AS avg_score,
       MAX(gp.final_score)::int AS best_score
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     WHERE ${playerKeyExpr} = $1
   `, [playerKey]);
 
@@ -364,7 +365,7 @@ router.get('/player/:playerKey', async (req, res) => {
       SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
       SUM(CASE WHEN gp.result = 'draw' THEN 1 ELSE 0 END)::int AS draws
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     JOIN factions f ON f.id = gp.faction_id
     WHERE ${playerKeyExpr} = $1
     GROUP BY f.id, f.name
@@ -380,7 +381,7 @@ router.get('/player/:playerKey', async (req, res) => {
     SELECT g.id, g.played_at::text AS played_at, gp.result, gp.final_score,
            opp.final_score AS opp_score
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     JOIN game_players opp ON opp.game_id = g.id AND opp.seat <> gp.seat
     WHERE ${playerKeyExpr} = $1
     ORDER BY g.played_at, g.id

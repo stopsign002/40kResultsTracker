@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS games (
   location            TEXT,
   notes               TEXT,
   hidden_from_stats   BOOLEAN NOT NULL DEFAULT FALSE,
+  play_medium         TEXT NOT NULL DEFAULT 'physical' CHECK (play_medium IN ('physical','digital')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -210,6 +211,18 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_games_season ON games(season_id);
+
+-- Migration: add play_medium to games (physical = in-person tabletop, digital =
+-- Tabletop Simulator). Existing rows default to 'physical'.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='games' AND column_name='play_medium'
+  ) THEN
+    ALTER TABLE games ADD COLUMN play_medium TEXT NOT NULL DEFAULT 'physical'
+      CHECK (play_medium IN ('physical','digital'));
+  END IF;
+END $$;
 
 -- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
 CREATE TABLE IF NOT EXISTS audit_log (

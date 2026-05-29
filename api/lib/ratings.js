@@ -7,6 +7,7 @@
 // unit tests) don't drag in the pg dependency.
 import { ratePeriod, decayRd, expectedScore, newPlayer } from './glicko2.js';
 import { fitGlobal } from './whr.js';
+import { COUNTED_GAMES } from './game-filter.js';
 
 // ── Tunables (single source of truth) ─────────────────────────────────────
 export const MOV_FULL = 50;          // score gap (of ~100) at which a win counts "maximally"
@@ -174,7 +175,7 @@ export async function computeRatings(opts = {}) {
     FROM games g
     JOIN game_players a ON a.game_id = g.id AND a.seat = 1
     JOIN game_players b ON b.game_id = g.id AND b.seat = 2
-    WHERE g.hidden_from_stats = FALSE
+    WHERE ${COUNTED_GAMES}
     ORDER BY g.played_at ASC, g.id ASC
   `);
 

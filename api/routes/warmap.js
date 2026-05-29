@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
+import { COUNTED_GAMES } from '../lib/game-filter.js';
 
 const router = Router();
 
@@ -49,7 +50,7 @@ router.get('/warmap', async (req, res) => {
       END AS player_key,
       gp.faction_id
     FROM game_players gp
-    JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
+    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
     WHERE gp.faction_id IS NOT NULL
     ON CONFLICT (player_key, faction_id) DO NOTHING
   `);
@@ -64,7 +65,7 @@ router.get('/warmap', async (req, res) => {
         gp.user_id, gp.guest_name, gp.faction_id, gp.result, gp.final_score,
         g.turn_count
       FROM game_players gp
-      JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE ${seasonFilter} ${throughFilter}
+      JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES} ${seasonFilter} ${throughFilter}
       WHERE gp.faction_id IS NOT NULL
     )
     SELECT
@@ -95,7 +96,7 @@ router.get('/warmap', async (req, res) => {
 
   const totalGamesRow = await pool.query(
     `SELECT COUNT(*)::int AS total_games FROM games g
-      WHERE g.hidden_from_stats = FALSE ${seasonFilter} ${throughFilter}`
+      WHERE ${COUNTED_GAMES} ${seasonFilter} ${throughFilter}`
   );
   const totalGames = Math.max(1, totalGamesRow.rows[0]?.total_games ?? 1);
   const winsSat   = Math.log1p(totalGames);
@@ -139,7 +140,7 @@ router.get('/warmap-timeline', async (req, res) => {
     LEFT JOIN factions f2 ON f2.id = gp2.faction_id
     LEFT JOIN users   u1 ON u1.id = gp1.user_id
     LEFT JOIN users   u2 ON u2.id = gp2.user_id
-    WHERE g.hidden_from_stats = FALSE ${seasonFilter}
+    WHERE ${COUNTED_GAMES} ${seasonFilter}
     ORDER BY g.played_at ASC, g.id ASC
   `);
   res.json(rows);

@@ -28,7 +28,7 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 ├── DEPLOY.md               server-side install + env recipe + nightly backups cron
 ├── docker-compose.yml      defines the 40k-api service on the shared 'web' network
 ├── caddy.example           drop into ~/sites/base/conf.d/40k.caddy on the host
-├── .env.example            6 vars; copy to .env on the server
+├── .env.example            7 vars; copy to .env on the server (incl. INCLUDE_DIGITAL_IN_STATS)
 ├── scripts/
 │   ├── README.md           per-script doc
 │   └── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
@@ -49,7 +49,8 @@ Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log match
 │   │   ├── glicko2.js      pure Glicko-2 rating math (ratePeriod/expectedScore), tested vs Glickman example
 │   │   ├── whr.js          whole-history rating: global Bradley-Terry fit (retroactive), tested
 │   │   ├── ratings.js      games → all-time ratings (glicko OR whr, margin-of-victory) + balanced matchmaker
-│   │   └── adopt-guest.js  promote guests → inactive accounts (preview + promote, war-map-safe)
+│   │   ├── adopt-guest.js  promote guests → inactive accounts (preview + promote, war-map-safe)
+│   │   └── game-filter.js  COUNTED_GAMES — the shared "counts toward stats" gate (digital on/off)
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
 │   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
@@ -344,7 +345,7 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/reference/mission-packs/:id/details` | auth | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
 | GET | `/reference/users` | auth | active users `[{ id, username, display_name }]` |
 | GET | `/reference/player-names` | auth | distinct names from past games (for autocomplete) |
-| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
+| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
 | GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
 | POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
@@ -397,7 +398,7 @@ Tables (snake_case throughout):
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
-| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, season_id (FK seasons.id), created_at, updated_at |
+| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), season_id (FK seasons.id), created_at, updated_at |
 | `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
@@ -619,6 +620,7 @@ A private MMR-style system, `requireAdmin`; **players cannot see their own ratin
 - **Matchmaker** — `balancedPairings()` sorts present players by rating and pairs adjacent (min-total-gap on a line), returns up to 4 near-optimal configs for "reshuffle", a `bye` for odd counts, per-pair predicted win-% via `expectedScore()`. Close games, not best-vs-worst.
 - **History chart** — `GET /ratings/history` returns each player's series `{x: date, y: floor}` — the line is the SAME confidence floor the leaderboard ranks by (so chart and board agree; no separate uncertainty band — the floor already *is* the conservative bound). Each line is **carried forward to today** at the current freshness-adjusted value, so it doesn't stop at the last game. The view plots them on one Chart.js **time axis** (daily points, month ticks — needs the `chartjs-adapter-date-fns` CDN in `index.html`); the y-axis auto-fits to the lines. Click a player (line, chip, or leaderboard name) to highlight: their line bolds, the rest dim.
 - **Identity** — ratings key on `user_id`. Run **Admin → Guest Accounts → Promote guests** first so guests become accounts and get rated (see pitfall #8).
+- **Digital vs physical (TTS)** — every competitive query (rankings, war map, all of `stats.js`) gates on the shared `COUNTED_GAMES` fragment from `lib/game-filter.js` (drop-in where the games table is aliased `g`), instead of the bare `hidden_from_stats = FALSE`. It **includes** digital (Tabletop Simulator) games by default; set `INCLUDE_DIGITAL_IN_STATS=false` in `.env` + restart to exclude them from all those surfaces at once. With the flag on, `COUNTED_GAMES === 'g.hidden_from_stats = FALSE'` exactly (byte-identical SQL → zero behaviour change). The games **browser** (`/games` list) is never gated — you can still see/filter digital games (`?playMedium=`). Per-game medium lives in `games.play_medium`.
 
 To change behaviour, the tunables in `ratings.js` are the dial; the math in `glicko2.js` / `whr.js` should stay put (both have tests).
 

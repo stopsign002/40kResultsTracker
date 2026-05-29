@@ -57,7 +57,7 @@ View: https://40k.thewheeliebois.com/#/games/${id}`;
 router.get('/', async (req, res) => {
   const {
     playerUserId, playerKey, playerFaction, opponentFaction, missionPack, primaryMission,
-    deploymentMap, format, dateFrom, dateTo, includeHidden, q,
+    deploymentMap, format, playMedium, dateFrom, dateTo, includeHidden, q,
     limit = 100, offset = 0,
   } = req.query;
 
@@ -67,6 +67,9 @@ router.get('/', async (req, res) => {
 
   if (!includeHidden || includeHidden === 'false') {
     where.push(`g.hidden_from_stats = FALSE`);
+  }
+  if (playMedium === 'physical' || playMedium === 'digital') {
+    where.push(`g.play_medium = $${i++}`); params.push(playMedium);
   }
   if (q && q.trim()) {
     // Free-text search across notes, army_list_code, tournament_name,
@@ -123,7 +126,7 @@ router.get('/', async (req, res) => {
   const sql = `
     SELECT
       g.id, g.played_at, g.game_format, g.points_limit, g.hidden_from_stats,
-      g.tournament_name, g.location, g.end_condition,
+      g.tournament_name, g.location, g.end_condition, g.play_medium,
       mp.name AS mission_pack, pm.name AS primary_mission, dm.name AS deployment_map,
       json_agg(json_build_object(
         'seat', gp.seat,
@@ -386,8 +389,8 @@ router.post('/', requireAuth, async (req, res) => {
         `INSERT INTO games
           (created_by_user_id, played_at, game_format, points_limit, mission_pack_id,
            primary_mission_id, deployment_map_id, mission_rule_id, turn_count,
-           end_condition, tournament_name, tournament_round, tournament_table, location, notes, season_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+           end_condition, tournament_name, tournament_round, tournament_table, location, notes, season_id, play_medium)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING id`,
         [
           req.session.userId, b.playedAt, b.gameFormat || 'matched', b.pointsLimit,
@@ -395,6 +398,7 @@ router.post('/', requireAuth, async (req, res) => {
           b.missionRuleId ?? null, b.turnCount ?? null, b.endCondition || 'normal',
           b.tournamentName ?? null, b.tournamentRound ?? null, b.tournamentTable ?? null,
           b.location ?? null, b.notes ?? null, seasonId,
+          b.playMedium === 'digital' ? 'digital' : 'physical',
         ]
       );
       const gameId = g.rows[0].id;
@@ -454,7 +458,7 @@ router.put('/:id', requireAuth, async (req, res) => {
                           primary_mission_id=$6, deployment_map_id=$7, mission_rule_id=$8,
                           turn_count=$9, end_condition=$10, tournament_name=$11,
                           tournament_round=$12, tournament_table=$13, location=$14,
-                          notes=$15, updated_at=NOW()
+                          notes=$15, play_medium=$16, updated_at=NOW()
          WHERE id=$1`,
         [
           id, b.playedAt, b.gameFormat || 'matched', b.pointsLimit,
@@ -462,6 +466,7 @@ router.put('/:id', requireAuth, async (req, res) => {
           b.missionRuleId ?? null, b.turnCount ?? null, b.endCondition || 'normal',
           b.tournamentName ?? null, b.tournamentRound ?? null, b.tournamentTable ?? null,
           b.location ?? null, b.notes ?? null,
+          b.playMedium === 'digital' ? 'digital' : 'physical',
         ]
       );
 

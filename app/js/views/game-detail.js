@@ -155,6 +155,7 @@ function buildMeta(g) {
     ['Mission Rule', g.mission_rule_name || '—'],
     ['Turns Played', g.turn_count ?? '—'],
     ['End Condition', g.end_condition],
+    ['Play Medium', g.play_medium === 'digital' ? 'Digital (TTS)' : 'Physical'],
     ['Tournament', g.tournament_name || '—'],
     g.tournament_round ? ['Round', g.tournament_round] : null,
     g.tournament_table ? ['Table', g.tournament_table] : null,
