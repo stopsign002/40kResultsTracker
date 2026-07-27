@@ -3,7 +3,7 @@ import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
 
 const filterState = {
   format: '', missionPack: '', primaryMission: '', deploymentMap: '',
-  playerKey: '', playerFaction: '', opponentFaction: '', playMedium: '',
+  playerKey: '', playerFaction: '', opponentFaction: '', playMedium: '', edition: '',
   dateFrom: '', dateTo: '', includeHidden: 'false', q: '',
 };
 
@@ -79,6 +79,17 @@ export async function renderGamesList(state) {
     return el('div', { class: 'form-group' }, [el('label', {}, 'Medium'), sel]);
   })();
 
+  const editionSel = (() => {
+    const sel = el('select', {}, [
+      el('option', { value: '' }, 'Any'),
+      el('option', { value: '11' }, '11th'),
+      el('option', { value: '10' }, '10th'),
+    ]);
+    sel.value = filterState.edition;
+    sel.addEventListener('change', () => { filterState.edition = sel.value; refresh(); });
+    return el('div', { class: 'form-group' }, [el('label', {}, 'Edition'), sel]);
+  })();
+
   const includeHiddenSel = (() => {
     const sel = el('select', {}, [
       el('option', { value: 'false' }, 'Visible only'),
@@ -128,6 +139,7 @@ export async function renderGamesList(state) {
         filterSel('Faction', 'playerFaction', factions),
         filterSel('Vs Faction', 'opponentFaction', factions),
         formatSel,
+        editionSel,
         mediumSel,
         filterSel('Mission Pack', 'missionPack', missionPacks),
         filterSel('Primary', 'primaryMission', primaryMissions),
@@ -209,6 +221,8 @@ function buildTable(list) {
       el('td', { class: 'tabular', style: { textAlign: 'right' } }, score),
       el('td', {}, [
         pill(g.game_format, ''),
+        ' ',
+        pill(g.edition === '11' ? '11e' : '10e', ''),
         g.play_medium === 'digital' ? ' ' : null,
         g.play_medium === 'digital' ? pill('Digital', '') : null,
         g.hidden_from_stats ? ' ' : null,

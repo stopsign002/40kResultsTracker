@@ -6,7 +6,7 @@ This file is auto-loaded by Claude Code into every session. It is the single sou
 
 ## What this is
 
-Multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log matches (mission, factions, per-round scoring, secondaries, challenger cards), browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" galaxy map. Hosted at **https://40k.thewheeliebois.com** as a Docker stack alongside other thewheeliebois.com sites. See `DEPLOY.md` for infra/deploy steps.
+Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each game carries an `edition` flag; new games default to 11e). Friends log matches (mission, factions, per-round scoring, secondaries, challenger cards), browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" galaxy map. Hosted at **https://40k.thewheeliebois.com** as a Docker stack alongside other thewheeliebois.com sites. See `DEPLOY.md` for infra/deploy steps.
 
 ---
 
@@ -111,7 +111,8 @@ These are load-bearing. Changing any of them silently breaks production.
 | `FACTION_HOMES` positions | `app/js/views/warmap.js` | Each faction's seed anchor sits at a hard-coded `[x, y]` in 0..1 space. Anchors are no longer drawn as fortresses — they're the invisible roots that drive the initial Voronoi assignment. Editing or reordering shifts every banner's seed site and reshapes the whole map. **Append new factions only; never edit or reorder.** |
 | `FACTION_COLOURS` | `app/js/views/warmap.js` | Lore-matched (Blood Angels red, Salamanders green, etc). Treat as the canonical palette. |
 | YAAB CSS variables | `app/css/style.css` | `--bg`, `--panel-bg`, `--accent`, `--font-display`, etc. were copied verbatim from the sister `yetanotherarmybuilder` site to keep visual consistency across the user's properties. Don't redesign — match. |
-| 5 battle rounds | everywhere | `ROUNDS = [1,2,3,4,5]` in `game-form.js`; `CHECK (round_number BETWEEN 1 AND 5)` in `schema.sql` (twice). 10e is a 5-round game. |
+| 5 battle rounds | everywhere | `ROUNDS = [1,2,3,4,5]` in `game-form.js`; `CHECK (round_number BETWEEN 1 AND 5)` in `schema.sql` (twice). Both 10e and 11e are 5-round games. |
+| Existing games are 10e | `schema.sql` edition migration | Every game logged before the `edition` column existed was 10th edition. The migration adds the column with `DEFAULT '10'` **and then** flips the default to `'11'` — so the backfill lands on 10e and only new rows get 11e. Don't "simplify" that to a single `DEFAULT '11'`; it would silently re-label the entire back catalogue. |
 | No public signup | `routes/auth.js` (no register endpoint) | Admin creates all accounts via `POST /admin/users`. Login page must not have a "Sign up" link. |
 | No game deletion | `routes/games.js` (no DELETE) | Admin can only `PATCH /admin/games/:id/visibility { hidden: true }`. Per the user's spec: results are permanent. |
 | Bootstrap admin only when users table is empty | `lib/auth.js` `ensureBootstrapAdmin()` | After first run, `ADMIN_PASSWORD` env var is ignored. To recover, INSERT directly via psql. |
@@ -345,7 +346,7 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/reference/mission-packs/:id/details` | auth | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
 | GET | `/reference/users` | auth | active users `[{ id, username, display_name }]` |
 | GET | `/reference/player-names` | auth | distinct names from past games (for autocomplete) |
-| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
+| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `edition` (`10`\|`11`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
 | GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
 | POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
@@ -398,7 +399,7 @@ Tables (snake_case throughout):
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
-| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), season_id (FK seasons.id), created_at, updated_at |
+| `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), edition ('10'\|'11' — DB default '11'; pre-existing rows backfilled to '10'), season_id (FK seasons.id), created_at, updated_at |
 | `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |

@@ -3,6 +3,11 @@ import { el, clear, toast, selectOptions, confirmModal } from '../components.js'
 
 const ROUNDS = [1, 2, 3, 4, 5];
 
+// Edition a brand-new game is stamped with. Games recorded before the edition
+// column existed were all 10e and were backfilled as such by the migration —
+// only the *default for new entries* moves forward. Bump this when 12e lands.
+const DEFAULT_EDITION = '11';
+
 let comboSeq = 0;
 function comboField(items, currentId, currentName, onChange, opts = {}) {
   const listId = `combo-${++comboSeq}`;
@@ -176,6 +181,13 @@ export async function renderGameForm(state, gameId) {
     const tournTableInput = el('input', { type: 'number', min: '0', value: draft.tournamentTable ?? '' });
     tournTableInput.addEventListener('change', () => { draft.tournamentTable = tournTableInput.value === '' ? null : parseInt(tournTableInput.value, 10); });
 
+    const editionSel = el('select', {}, [
+      el('option', { value: '11' }, '11th Edition'),
+      el('option', { value: '10' }, '10th Edition'),
+    ]);
+    editionSel.value = draft.edition || DEFAULT_EDITION;
+    editionSel.addEventListener('change', () => { draft.edition = editionSel.value; });
+
     const mediumSel = el('select', {}, [
       el('option', { value: 'physical' }, 'Physical (tabletop)'),
       el('option', { value: 'digital' }, 'Digital (Tabletop Simulator)'),
@@ -208,7 +220,8 @@ export async function renderGameForm(state, gameId) {
         field('Round', tournRoundInput),
         field('Table', tournTableInput),
       ]),
-      el('div', { class: 'form-row cols-2' }, [
+      el('div', { class: 'form-row cols-3' }, [
+        field('Edition', editionSel),
         field('Play Medium', mediumSel),
         field('Location', locationInput),
       ]),
@@ -550,6 +563,7 @@ function makeDraft(existing) {
       location: null,
       notes: null,
       playMedium: 'physical',
+      edition: DEFAULT_EDITION,
       players: [emptyPlayer(), emptyPlayer()],
     };
   }
@@ -572,6 +586,7 @@ function makeDraft(existing) {
     location: existing.location,
     notes: existing.notes,
     playMedium: existing.play_medium || 'physical',
+    edition: existing.edition || '10',
     players: existing.players.map(p => ({
       userId: p.user_id,
       guestName: p.guest_name || (p.display_name && p.user_id ? p.display_name : null),
@@ -633,6 +648,7 @@ function serializeDraft(d) {
     location: d.location,
     notes: d.notes,
     playMedium: d.playMedium || 'physical',
+    edition: d.edition || DEFAULT_EDITION,
     players: d.players.map(p => ({
       ...p,
       secondaries: (p.secondaries || []).filter(s => s.cardName),
@@ -682,6 +698,7 @@ function restorePayload(g) {
     location: g.location,
     notes: g.notes,
     playMedium: g.play_medium || 'physical',
+    edition: g.edition || '10',
     players: g.players.map(p => ({
       userId: p.user_id,
       guestName: p.guest_name,

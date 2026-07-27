@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS games (
   notes               TEXT,
   hidden_from_stats   BOOLEAN NOT NULL DEFAULT FALSE,
   play_medium         TEXT NOT NULL DEFAULT 'physical' CHECK (play_medium IN ('physical','digital')),
+  edition             TEXT NOT NULL DEFAULT '11' CHECK (edition IN ('10','11')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -221,6 +222,21 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE games ADD COLUMN play_medium TEXT NOT NULL DEFAULT 'physical'
       CHECK (play_medium IN ('physical','digital'));
+  END IF;
+END $$;
+
+-- Migration: add edition to games. Every game recorded before this column
+-- existed was a 10th-edition game, so the column is added with DEFAULT '10' (so
+-- the backfill of existing rows lands on '10'), then the default is flipped to
+-- '11' for everything created from here on.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='games' AND column_name='edition'
+  ) THEN
+    ALTER TABLE games ADD COLUMN edition TEXT NOT NULL DEFAULT '10'
+      CHECK (edition IN ('10','11'));
+    ALTER TABLE games ALTER COLUMN edition SET DEFAULT '11';
   END IF;
 END $$;
 
