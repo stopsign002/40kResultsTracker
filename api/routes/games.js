@@ -154,7 +154,8 @@ router.get('/', async (req, res) => {
         'result', gp.result,
         'wentFirst', gp.went_first,
         'primaryMission', COALESCE(gp.primary_mission_name, ppm.name),
-        'forceDisposition', gp.force_disposition
+        'forceDisposition', gp.force_disposition,
+        'timeSeconds', gp.time_seconds
       ) ORDER BY gp.seat) AS players
     FROM games g
     LEFT JOIN mission_packs mp ON mp.id = g.mission_pack_id

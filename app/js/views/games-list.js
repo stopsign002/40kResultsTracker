@@ -1,5 +1,5 @@
 import { games, reference, gameImages, mapImages } from '../api.js';
-import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
+import { el, clear, fmtDate, pill, selectOptions, fmtDuration } from '../components.js';
 
 const filterState = {
   format: '', missionPack: '', primaryMission: '', deploymentMap: '',
@@ -326,6 +326,18 @@ function previewThumb({ src, fullSrc, alt, cls }) {
 
 // Two thumbnails per row: the game's cover photo, and a picture of the terrain
 // layout it was played on. Either can be absent.
+// Chess-clock time per player, mirroring the "A vs B" name order above it. Only
+// rendered when someone actually clocked the game — an untimed game shows
+// nothing rather than a row of dashes.
+function clockLine(p1, p2) {
+  const a = p1?.timeSeconds;
+  const b = p2?.timeSeconds;
+  if (a == null && b == null) return null;
+  const dash = '—';
+  return el('div', { class: 'dim tabular', style: { fontSize: '11px' } },
+    `\u23F1 ${fmtDuration(a) ?? dash} vs ${fmtDuration(b) ?? dash}`);
+}
+
 function thumbCell(g) {
   const tiles = [];
   if (g.thumb_name) {
@@ -388,6 +400,7 @@ function buildTable(list) {
       el('td', {}, fmtDate(g.played_at)),
       el('td', {}, [
         playersText,
+        clockLine(p1, p2),
         winner ? el('div', { class: 'dim', style: { fontSize: '11px' } }, `Won: ${winner.displayName}`) : null,
       ].filter(Boolean)),
       el('td', { class: 'muted' }, factions),
