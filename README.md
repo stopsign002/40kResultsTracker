@@ -25,7 +25,7 @@ scoring rules follow it. Friends log matches, browse a filterable game list, vie
   full-screen viewer. Images are downscaled in the browser and served off disk
 - **Filtering** — by player, faction, opponent faction, mission, deployment, format, edition, play medium (tabletop / Tabletop Simulator), date range, visibility
 - **Stats dashboard** — KPIs, faction win rates (animated bars), per-player W/L/D, going-first impact, faction drilldown by mission and deployment, secondary card averages
-- **Theatre of War map** — Boimaggedon: a procedurally generated continent of ~50 territories. Each `(player, faction)` combo holds its own cluster of land with a fortress that **never falls**. Territory share = 70% games-played (log-scaled) + 30% win-rate, so frequent players dominate without win-rate becoming irrelevant. Same seed → identical map on every device, forever.
+- **Theatre of War map** — Boimaggedon: a procedurally generated continent of **~120** territories, tiled by Voronoi + Lloyd's relaxation. Each `(player, faction)` pair is a **banner** owning its own contiguous cluster of land. Territory share is roughly **two-thirds wins, one-third points scored** — both log-scaled and saturating as the season grows, so frequent winners dominate while high-scoring losses still earn ground. Banners keep the same region across regenerations, and the same seed gives an identical map on every device, forever.
 - **Admin tab** — only visible to admins; create users, set army names, promote/demote, deactivate, reset passwords, hide games from stats
 
 ---
@@ -115,11 +115,14 @@ Ask the admin to fill in your **Army Name** in the Admin tab. That name then sho
 
 - **Continent silhouette in cyan** — the world of Boimaggedon
 - **Coloured territories** — each cluster is one `(player, faction)` banner; the colour is the faction's lore-matched palette (Necrons green, Blood Angels red, etc.)
-- **Glowing diamond markers** — fortresses, one per banner. These are immutable once placed.
 - **Thin cyan borders** — between two of your own territories
 - **Bold amber borders** — the war front: the line between two different banners (whether different factions, or the same faction held by two different players)
-- **Fortress label** — your army name (or display name fallback) on top, faction abbreviation below
-- **HUD chrome** — corner brackets, compass, scan-line texture, bottom-right tactical readout (`> WORLD: BOIMAGGEDON / > THEATRES: 50 / …`)
+- **Banner label** — your army name (or display name fallback) on top, faction abbreviation below, floated over the most central part of your territory
+- **HUD chrome** — corner brackets, compass, scan-line texture, bottom-right tactical readout (`> WORLD: BOIMAGGEDON / > THEATRES: <n> / …`)
+
+There are no fortress markers. Each banner does have a fixed, invisible seed
+position it grows from — that's what keeps your territory in the same corner of
+the world as scores change — but nothing is drawn there.
 
 ### Stats dashboard
 

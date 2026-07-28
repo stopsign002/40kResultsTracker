@@ -574,7 +574,7 @@ When in doubt, the module's own README is the closer source of truth than this f
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate regions but share the Necron green colour. Each banner's label (army_name → display_name → guest name) floats at the centroid of its owned cells; no fortress markers are drawn. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate regions but share the Necron green colour. Each banner's label (army_name → display_name → guest name) sits on the *densest* cell of its region — not the centroid, which can land outside a concave or split region; no fortress markers are drawn. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
@@ -600,7 +600,7 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 
    - **Same faction, two players** → two separate territory clusters in the same general region of the continent, distinguished by a bold amber war-front border between them.
 7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; ocean = backdrop. (No unclaimed neutral land — the multi-source BFS in step 6 covers everything.)
 8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
-9. **Labels.** Each banner's label is drawn at the centroid of its owned cells. Primary line = army_name (or display_name fallback) in amber monospace; faction abbreviation in cyan below.
+9. **Labels.** Each banner's label is drawn on its **densest owned cell** — the one maximising Σ 1/(1+hop) over other same-owner cells reachable through same-owner cells only. A plain centroid would drift outside a concave or two-lobed region; the density measure keeps the label on solid ground. Primary line = army_name (or display_name fallback) in amber monospace; faction abbreviation in cyan below.
 10. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout.
 
 ### Territory score formula
