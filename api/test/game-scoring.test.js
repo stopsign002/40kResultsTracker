@@ -191,3 +191,57 @@ test('computeFinalScores: 10e default is unchanged when no edition is passed', (
   computeFinalScores([p, blankPlayer()]);
   assert.equal(p.finalScore, 100, '10e clamps the combined total at 100');
 });
+
+// ── Round-totals entry (no card detail recorded) ──────────────
+// Some games are logged from memory: nobody noted which secondary scored, only
+// that N points came in during round R. The per-round figures must then be
+// taken as entered rather than recomputed from an empty card list.
+
+test('computeFinalScores 11e: per-round secondary totals count when no cards were recorded', () => {
+  const p = withPrimary(e11Player(), [5, 5, 5, 5, 5]);   // 25 primary
+  p.rounds[0].secondaryScore = 4;
+  p.rounds[1].secondaryScore = 8;
+  p.rounds[3].secondaryScore = 3;
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.finalScore, 25 + 15);
+});
+
+test('computeFinalScores 11e: entered round totals survive, not zeroed', () => {
+  const p = e11Player();
+  p.rounds[2].secondaryScore = 7;
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.rounds[2].secondaryScore, 7);
+});
+
+test('computeFinalScores 11e: cards win when present, round totals recomputed', () => {
+  const p = e11Player();
+  p.rounds[0].secondaryScore = 99;            // stale/bogus hand entry
+  p.secondaries = [{ cardName: 'Beacon', drawnRound: 1, roundNumber: 1, score: 5 }];
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.rounds[0].secondaryScore, 5, 'card detail overrides the typed total');
+  assert.equal(p.finalScore, 5);
+});
+
+test('computeFinalScores 11e: round totals still respect the 45 secondary cap', () => {
+  const p = e11Player();
+  for (const r of p.rounds) r.secondaryScore = 15;   // 75
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.finalScore, 45);
+});
+
+test('computeFinalScores 10e: round totals count when no cards or challengers exist', () => {
+  const p = withPrimary(blankPlayer(), [10, 10, 0, 0, 0]);
+  p.rounds[0].secondaryScore = 6;
+  p.rounds[1].secondaryScore = 4;
+  computeFinalScores([p, blankPlayer()]);
+  assert.equal(p.finalScore, 30);
+});
+
+test('computeFinalScores 10e: a challenger alone still counts as card detail', () => {
+  const p = withPrimary(blankPlayer(), [10, 0, 0, 0, 0]);
+  p.rounds[0].secondaryScore = 99;
+  p.challengers = [{ cardName: 'Gambit', roundNumber: 1, score: 8 }];
+  computeFinalScores([p, blankPlayer()]);
+  assert.equal(p.rounds[0].secondaryScore, 8);
+  assert.equal(p.finalScore, 18);
+});

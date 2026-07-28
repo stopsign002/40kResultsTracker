@@ -482,8 +482,55 @@ export async function renderGameForm(state, gameId) {
       ]),
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
       buildRoundsTable(p),
-      is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p),
+      buildSecondaryModeToggle(p),
+      secondaryMode(p) === 'rounds'
+        ? null
+        : (is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p)),
     ].filter(Boolean));
+  }
+
+  // 'cards' = record which secondary scored and when; 'rounds' = only the
+  // per-round secondary totals, for games nobody tracked card-by-card.
+  // Derived on load rather than stored: if a player has cards they tracked
+  // them, and if they don't but have round totals they didn't.
+  function secondaryMode(p) {
+    if (!p.secondaryMode) {
+      const hasCards = (p.secondaries || []).length > 0;
+      const hasRoundTotals = (p.rounds || []).some(r => (r.secondaryScore || 0) > 0);
+      p.secondaryMode = (!hasCards && hasRoundTotals) ? 'rounds' : 'cards';
+    }
+    return p.secondaryMode;
+  }
+
+  async function setSecondaryMode(p, mode) {
+    if (mode === secondaryMode(p)) return;
+    const cardsWithData = (p.secondaries || []).filter(
+      s => s.drawnRound != null || s.roundNumber != null || (s.score || 0) > 0);
+
+    if (mode === 'rounds') {
+      if (cardsWithData.length) {
+        const ok = await confirmModal({
+          title: 'Switch to round totals?',
+          body: `The ${cardsWithData.length} card${cardsWithData.length === 1 ? '' : ''} recorded for this player will be replaced by per-round totals. The points carry over, but which card scored them is lost.`,
+          confirmLabel: 'Switch',
+        });
+        if (!ok) { rerender(); return; }
+      }
+      // Carry the numbers across so nothing has to be re-typed.
+      for (const r of p.rounds || []) {
+        r.secondaryScore = (p.secondaries || [])
+          .filter(x => x.roundNumber === r.roundNumber)
+          .reduce((sum, x) => sum + (x.score || 0), 0);
+      }
+      p.secondaries = [];
+    } else {
+      // Card scoring re-derives the per-round figure, so stale manual totals
+      // would be overwritten on save anyway — clear them now so the live
+      // readout matches what will be stored.
+      for (const r of p.rounds || []) r.secondaryScore = 0;
+    }
+    p.secondaryMode = mode;
+    rerender();
   }
 
   const bothDispositionsSet = () =>
@@ -549,7 +596,29 @@ export async function renderGameForm(state, gameId) {
     ]);
   }
 
+  function buildSecondaryModeToggle(p) {
+    const sel = el('select', { style: { width: 'auto' } }, [
+      el('option', { value: 'cards' }, 'Track each secondary'),
+      el('option', { value: 'rounds' }, 'Round totals only'),
+    ]);
+    sel.value = secondaryMode(p);
+    sel.addEventListener('change', () => { setSecondaryMode(p, sel.value); });
+
+    return el('div', {
+      style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', flexWrap: 'wrap' },
+    }, [
+      el('span', { class: 'dim', style: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em' } },
+        'Secondary detail'),
+      sel,
+      secondaryMode(p) === 'rounds'
+        ? el('span', { class: 'muted', style: { fontSize: '11px' } },
+            'Enter what scored each round in the Secondary column above.')
+        : null,
+    ].filter(Boolean));
+  }
+
   function buildRoundsTable(p) {
+    const roundTotals = secondaryMode(p) === 'rounds';
     const rows = ROUNDS.map(rn => {
       const r = p.rounds.find(x => x.roundNumber === rn) || { roundNumber: rn, primaryScore: 0, secondaryScore: 0 };
       if (!p.rounds.find(x => x.roundNumber === rn)) p.rounds.push(r);
@@ -558,10 +627,22 @@ export async function renderGameForm(state, gameId) {
         r.primaryScore = parseInt(primary.value, 10) || 0;
         refreshTotals();
       });
-      return el('tr', {}, [
+      const cells = [
         el('td', { style: { textAlign: 'center', color: 'var(--text-muted)' } }, `R${rn}`),
         el('td', {}, primary),
-      ]);
+      ];
+      if (roundTotals) {
+        const sec = el('input', {
+          type: 'number', min: '0', max: '45', step: '1', inputmode: 'numeric',
+          value: r.secondaryScore || 0,
+        });
+        sec.addEventListener('input', () => {
+          r.secondaryScore = parseInt(sec.value, 10) || 0;
+          refreshTotals();
+        });
+        cells.push(el('td', {}, sec));
+      }
+      return el('tr', {}, cells);
     });
 
     return el('div', {}, [
@@ -574,7 +655,11 @@ export async function renderGameForm(state, gameId) {
         }, capLabel(sumPrimary(p), E11_PRIMARY_CAP)) : null,
       ].filter(Boolean)),
       el('table', { class: 'round-entry-table' }, [
-        el('thead', {}, el('tr', {}, [el('th', {}, ''), el('th', {}, 'Primary')])),
+        el('thead', {}, el('tr', {}, [
+          el('th', {}, ''),
+          el('th', {}, 'Primary'),
+          roundTotals ? el('th', {}, 'Secondary') : null,
+        ].filter(Boolean))),
         el('tbody', {}, rows),
       ]),
     ]);
@@ -588,7 +673,7 @@ export async function renderGameForm(state, gameId) {
       const tot = root.querySelector(`[data-player-total="${i}"]`);
       if (tot) tot.textContent = `Score: ${calcTotal(pl, draft.edition)}`;
       const sec = root.querySelector(`[data-sec-total="${i}"]`);
-      if (sec) sec.textContent = capLabel(sumSecondaries(pl), E11_SECONDARY_CAP);
+      if (sec) sec.textContent = capLabel(sumSecondaryPoints(pl), E11_SECONDARY_CAP);
       const pri = root.querySelector(`[data-pri-total="${i}"]`);
       if (pri) pri.textContent = capLabel(sumPrimary(pl), E11_PRIMARY_CAP);
     });
@@ -972,6 +1057,13 @@ function sumSecondaries(p) {
   return (p.secondaries || []).reduce((s, x) => s + (x.score || 0), 0);
 }
 
+// Mirrors computeFinalScores: with no cards recorded, the per-round secondary
+// figures are the record; with cards, they're derived from the cards.
+function sumSecondaryPoints(p) {
+  if ((p.secondaries || []).length) return sumSecondaries(p);
+  return (p.rounds || []).reduce((s, r) => s + (r.secondaryScore || 0), 0);
+}
+
 // "32 / 45", or "45 / 45 (46 raw)" when the cap is actually biting, so it's
 // obvious the entry wasn't mis-typed — the ceiling just clipped it.
 function capLabel(raw, cap) {
@@ -982,11 +1074,13 @@ function capLabel(raw, cap) {
 // it only drives the live readout, the server value is authoritative.
 function calcTotal(p, edition) {
   const primary = sumPrimary(p);
-  const sec = sumSecondaries(p);
+  const sec = sumSecondaryPoints(p);
   if (edition === '11') {
     return Math.min(E11_PRIMARY_CAP, primary) + Math.min(E11_SECONDARY_CAP, sec);
   }
-  const chal = (p.challengers || []).reduce((s, c) => s + (c.score || 0), 0);
+  const chal = (p.secondaries || []).length
+    ? (p.challengers || []).reduce((s, c) => s + (c.score || 0), 0)
+    : 0;
   return Math.min(100, primary + sec + chal);
 }
 
@@ -1112,6 +1206,7 @@ function serializeDraft(d) {
     edition: d.edition || DEFAULT_EDITION,
     players: d.players.map(p => ({
       ...p,
+      secondaryMode: undefined,
       detachments: (p.detachments || []).map(x => (x || '').trim()).filter(Boolean),
       secondaries: (p.secondaries || []).filter(s => s.cardName),
       challengers: (d.edition || DEFAULT_EDITION) === '11'

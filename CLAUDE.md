@@ -647,6 +647,17 @@ backfilled to **10** (see the invariant table).
   tab-type. Round fields are lenient while typing and clamped to 1-5 on blur,
   so a stray "7" visibly becomes 5 rather than being dropped at save; blank
   means "not drawn" / "never scored".
+  **Round-totals entry**: some games get logged from memory, where nobody noted
+  *which* secondary scored — only that N points came in during round R. The
+  per-player "Secondary detail" toggle switches the card grid for a Secondary
+  column in the rounds table. `computeFinalScores` keys off the data, not a
+  flag: **with no cards (and, in 10e, no challengers) the entered per-round
+  secondary totals are taken as given**; with cards present they remain the
+  source of truth and the per-round figure is derived from them as before. That
+  means an edit round-trip of a round-totals game can't silently zero it, which
+  is exactly what the old unconditional recompute did. Switching the toggle
+  carries the numbers across (and confirms first if card data would be lost);
+  `secondaryMode` is client-only draft state and is stripped from the payload.
   The deck is sorted **alphabetically** for entry (you're hunting for the card
   that came up); the game-detail view re-sorts the saved cards **by round
   drawn** so the game reads back chronologically.
