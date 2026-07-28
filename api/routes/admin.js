@@ -4,6 +4,7 @@ import { hashPassword, requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 import { previewGuests, promoteAllGuests } from '../lib/adopt-guest.js';
+import { removeGameImageFiles } from './images.js';
 
 const router = Router();
 
@@ -87,6 +88,8 @@ router.delete('/games/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const { rowCount } = await pool.query('DELETE FROM games WHERE id = $1', [id]);
   if (!rowCount) return res.status(404).json({ error: 'not found' });
+  // game_images rows cascade, but the files on the uploads volume do not.
+  await removeGameImageFiles(id);
   await audit(req, 'game.delete', { type: 'game', id });
   broadcast('game.saved', { id, action: 'delete' });
   res.json({ ok: true, id });

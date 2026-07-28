@@ -4,6 +4,12 @@ services:
     build: ./api
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Photo bytes live on this volume, NOT in Postgres. Caddy serves the same
+      # directory read-only at /uploads/* (see caddy.example).
+      UPLOAD_DIR: /data/uploads
+    volumes:
+      - ./uploads:/data/uploads
     networks:
       - web
 

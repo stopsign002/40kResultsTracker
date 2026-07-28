@@ -1,4 +1,4 @@
-import { games, reference } from '../api.js';
+import { games, reference, gameImages } from '../api.js';
 import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
 
 const filterState = {
@@ -191,6 +191,7 @@ export async function renderGamesList(state) {
 function buildTable(list) {
   if (!list.length) return el('div', { class: 'muted' }, 'No games match these filters.');
   const head = el('thead', {}, el('tr', {}, [
+    el('th', { style: { width: '52px' } }, ''),
     el('th', {}, 'Date'),
     el('th', {}, 'Players'),
     el('th', {}, 'Factions'),
@@ -208,6 +209,19 @@ function buildTable(list) {
     const score = `${p1.finalScore ?? '–'} – ${p2.finalScore ?? '–'}`;
     const winner = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
     const tr = el('tr', { class: 'row-link', onClick: () => window.__nav('/games/' + g.id) }, [
+      el('td', {}, g.thumb_name
+        ? el('span', { class: 'list-thumb-wrap' }, [
+            el('img', {
+              class: 'list-thumb',
+              src: gameImages.url(g.id, g.thumb_name),
+              alt: '',
+              loading: 'lazy',
+            }),
+            g.image_count > 1
+              ? el('span', { class: 'list-thumb-count' }, String(g.image_count))
+              : null,
+          ].filter(Boolean))
+        : el('span', { class: 'list-thumb placeholder' }, '')),
       el('td', {}, fmtDate(g.played_at)),
       el('td', {}, [
         playersText,

@@ -7,6 +7,7 @@ import { ensureBootstrapAdmin } from './lib/auth.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import gameRoutes from './routes/games.js';
+import imageRoutes from './routes/images.js';
 import statsRoutes from './routes/stats.js';
 import referenceRoutes from './routes/reference.js';
 import warmapRoutes from './routes/warmap.js';
@@ -50,6 +51,7 @@ app.use('/auth/login', loginLimiter);
 
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
+app.use('/games', imageRoutes);
 app.use('/games', gameRoutes);
 app.use('/stats', statsRoutes);
 app.use('/reference', referenceRoutes);

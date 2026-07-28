@@ -131,6 +131,10 @@ router.get('/', async (req, res) => {
       g.id, g.played_at, g.game_format, g.points_limit, g.hidden_from_stats,
       g.tournament_name, g.location, g.end_condition, g.play_medium, g.edition,
       mp.name AS mission_pack, pm.name AS primary_mission, dm.name AS deployment_map,
+      (SELECT gi.thumb_name FROM game_images gi
+        WHERE gi.game_id = g.id
+        ORDER BY gi.is_thumbnail DESC, gi.id ASC LIMIT 1) AS thumb_name,
+      (SELECT COUNT(*)::int FROM game_images gi WHERE gi.game_id = g.id) AS image_count,
       json_agg(json_build_object(
         'seat', gp.seat,
         'userId', gp.user_id,
@@ -177,10 +181,12 @@ router.get('/:id', async (req, res) => {
 
   const players = await pool.query(
     `SELECT gp.*, COALESCE(u.display_name, gp.guest_name) AS display_name,
-            f.name AS faction_name
+            f.name AS faction_name,
+            ppm.name AS primary_mission_ref
      FROM game_players gp
      LEFT JOIN users u ON u.id = gp.user_id
      LEFT JOIN factions f ON f.id = gp.faction_id
+     LEFT JOIN primary_missions ppm ON ppm.id = gp.primary_mission_id
      WHERE gp.game_id = $1 ORDER BY gp.seat`,
     [id]
   );
@@ -333,6 +339,9 @@ async function resolveGameLookups(client, b) {
     b.missionRuleId = await resolveLookupId(client, 'mission_rules', b.missionPackId, b.missionRuleName);
   }
   for (const p of b.players || []) {
+    if (!p.primaryMissionId && p.primaryMissionName) {
+      p.primaryMissionId = await resolveLookupId(client, 'primary_missions', b.missionPackId, p.primaryMissionName);
+    }
     for (const s of p.secondaries || []) {
       if (!s.cardId && s.cardName) {
         s.cardId = await resolveCardId(client, 'secondary_cards', b.missionPackId, 'tactical', s.cardName);
@@ -356,9 +365,9 @@ async function insertPlayerChildren(client, gamePlayerId, p) {
   }
   for (const s of p.secondaries || []) {
     await client.query(
-      `INSERT INTO player_secondaries (game_player_id, round_number, card_id, card_name, score, was_discarded)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [gamePlayerId, s.roundNumber ?? null, s.cardId ?? null, s.cardName, s.score || 0, !!s.wasDiscarded]
+      `INSERT INTO player_secondaries (game_player_id, round_number, drawn_round, card_id, card_name, score, was_discarded)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [gamePlayerId, s.roundNumber ?? null, s.drawnRound ?? null, s.cardId ?? null, s.cardName, s.score || 0, !!s.wasDiscarded]
     );
   }
   for (const c of p.challengers || []) {
@@ -378,7 +387,7 @@ router.post('/', requireAuth, async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   await resolvePlayerIdentities(req.body.players);
-  computeFinalScores(req.body.players);
+  computeFinalScores(req.body.players, req.body.edition === '11' ? '11' : '10');
   const b = req.body;
 
   try {
@@ -412,8 +421,9 @@ router.post('/', requireAuth, async (req, res) => {
         const gp = await client.query(
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
-             detachment_name, army_list_code, went_first, is_attacker, final_score, result)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             detachment_name, army_list_code, went_first, is_attacker, final_score, result,
+             primary_mission_id, primary_mission_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            RETURNING id`,
           [
             gameId, seat, p.userId ?? null, p.guestName ?? null,
@@ -421,6 +431,8 @@ router.post('/', requireAuth, async (req, res) => {
             (p.detachmentName && p.detachmentName.trim()) || null,
             p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
+            p.primaryMissionId ?? null,
+            (p.primaryMissionName && p.primaryMissionName.trim()) || null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);
@@ -447,7 +459,7 @@ router.put('/:id', requireAuth, async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
   await resolvePlayerIdentities(req.body.players);
-  computeFinalScores(req.body.players);
+  computeFinalScores(req.body.players, req.body.edition === '11' ? '11' : '10');
   const b = req.body;
 
   try {
@@ -494,8 +506,9 @@ router.put('/:id', requireAuth, async (req, res) => {
         const gp = await client.query(
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
-             detachment_name, army_list_code, went_first, is_attacker, final_score, result)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             detachment_name, army_list_code, went_first, is_attacker, final_score, result,
+             primary_mission_id, primary_mission_name)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
            RETURNING id`,
           [
             id, seat, p.userId ?? null, p.guestName ?? null,
@@ -503,6 +516,8 @@ router.put('/:id', requireAuth, async (req, res) => {
             (p.detachmentName && p.detachmentName.trim()) || null,
             p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
+            p.primaryMissionId ?? null,
+            (p.primaryMissionName && p.primaryMissionName.trim()) || null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);

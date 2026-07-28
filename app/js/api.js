@@ -62,6 +62,16 @@ export const reference = {
   playerNames:     () => api.get('/reference/player-names'),
 };
 
+// Game photos. Upload posts base64 data URLs (already downscaled in the
+// browser); reads are plain static URLs under /uploads, not API calls.
+export const gameImages = {
+  list:      (gameId) => api.get(`/games/${gameId}/images`),
+  upload:    (gameId, payload) => api.post(`/games/${gameId}/images`, payload),
+  update:    (gameId, imageId, patch) => api.patch(`/games/${gameId}/images/${imageId}`, patch),
+  remove:    (gameId, imageId) => api.del(`/games/${gameId}/images/${imageId}`),
+  url:       (gameId, file) => `/uploads/${gameId}/${file}`,
+};
+
 export const games = {
   list:   (filters = {}) => {
     const qs = new URLSearchParams();

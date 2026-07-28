@@ -55,6 +55,7 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
 │   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
 │   │   ├── games.js        /games/* — list/get/create/update (HEAVY: insertPlayerChildren)
+│   │   ├── images.js       /games/:id/images — photo upload/cover/delete (bytes on disk)
 │   │   ├── stats.js        /stats/* — overview + 12 stat endpoints (incl. trends, calendar)
 │   │   ├── warmap.js       /stats/warmap — banners feed for the Theatre of War
 │   │   ├── reference.js    /reference/* — factions, detachments, mission packs, names
@@ -350,6 +351,10 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
 | POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
+| GET | `/games/:id/images` | public | `[{ id, file_name, thumb_name, caption, is_thumbnail, width, height, uploaded_by_name }]` |
+| POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only |
+| PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string }` |
+| DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
 | GET | `/stats/overview` | auth | totals + recent activity |
 | GET | `/stats/faction-winrates` | auth | per-faction W/L/D + win% + avg score |
 | GET | `/stats/player-winrates` | auth | per-player W/L/D + win% (groups by user_id OR guest_name) |
@@ -400,10 +405,11 @@ Tables (snake_case throughout):
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
 | `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), edition ('10'\|'11' — DB default '11'; pre-existing rows backfilled to '10'), season_id (FK seasons.id), created_at, updated_at |
-| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
+| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
-| `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (nullable for fixed), card_id, card_name, score, was_discarded |
+| `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (10e: the round scored; **11e: the round the card SCORED, NULL if it never did**), drawn_round (**11e only** — the round it entered hand; NULL on 10e where draw and score coincide), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
+| `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, width, height, bytes, created_at. Partial unique index `(game_id) WHERE is_thumbnail` — at most one cover per game |
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
 | `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
@@ -606,6 +612,74 @@ What CAN shift between regens: borders move when scores change or banners join/l
 ### Recipe: changing what shows on a banner's label
 
 `drawLabels()` resolves the primary label as `u.army_name || u.player_name` inline. To change the displayed text, edit that fallback chain — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
+
+---
+
+## 10th vs 11th edition
+
+`games.edition` ('10'|'11') switches both the entry form and the scoring rules.
+New games default to **11**; every game recorded before the column existed was
+backfilled to **10** (see the invariant table).
+
+| | 10e | 11e |
+|---|---|---|
+| Primary mission | one per game (`games.primary_mission_id`) | **one per player** (`game_players.primary_mission_id` / `_name`) |
+| Secondaries | 2 slots per round; drawn and scored in the same round | cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored) |
+| Challenger cards | yes | **none** — `serializeDraft()` drops them and `computeFinalScores` ignores them |
+| Score ceiling | `min(100, primary + secondary + challengers)` | `min(45, primary) + min(45, secondary)` — two independent halves, no cross-subsidy |
+| Deployment map / mission rule | game-level | game-level (unchanged) |
+
+- **Scoring** lives in `lib/game-scoring.js`: `computeFinalScores(players, edition)`.
+  `edition` defaults to `'10'` so old callers keep their behaviour;
+  `routes/games.js` passes the real value. `game-form.js` mirrors the same maths
+  in `calcTotal()` purely for the live readout — the server value is
+  authoritative. Pinned by tests, including the reference game (primary rounds
+  4/8/11/8/15 = 46 raw → clipped to 45, secondaries 32, **final 77**).
+- **Editing safety** — `PUT /games/:id` uses `edition = COALESCE($17, edition)`,
+  so a payload that omits `edition` can't silently re-stamp a 10e game as 11e.
+  `POST` defaults to 11.
+- **The 11e form** lays out the pack's **entire** secondary deck as rows (card
+  name fixed, you fill Drawn / Scored / VP), mirroring the War Journal app.
+  A row only becomes a stored `player_secondaries` entry once it has a drawn
+  round, a scored round or a score — untouched rows never reach the payload,
+  and a row that's cleared back to empty is pruned. Cards the seed list is
+  missing can still be added via "+ Card not listed".
+- **Mission pack `2026 - 2027 Chapter Approved`** carries the 11e deck. Its
+  primary missions are deliberately **unseeded** — they're typed free-text and
+  `resolveGameLookups()` files each new name under the pack, so the autocomplete
+  list grows itself. The seeded secondary deck (10 cards) was transcribed from a
+  single game screenshot and is **probably incomplete** (it jumps Cleanse →
+  Outflank). Adding the rest is a `seed.sql` append, nothing else.
+
+---
+
+## Game photos
+
+Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
+`pg_dumpall` shouldn't carry multi-MB blobs.
+
+- **Where** — `UPLOAD_DIR` (`/data/uploads` in the container) is bind-mounted
+  from `~/sites/sites/40kResultsTracker/uploads`. That path is the project root,
+  **not** `app/`, so uploads stay out of git and out of the SPA's `try_files`
+  fallback. Caddy serves them read-only at `/uploads/<game_id>/<file>` with a
+  1-year immutable cache header (filenames are UUIDs, so they never collide).
+  The Node process is not in the read path.
+- **Resizing happens in the browser** (`shrink()` in `game-detail.js`): a
+  ~1600px full and a ~400px thumb, both JPEG q0.82, posted as base64 data URLs.
+  That keeps `sharp`/imagemagick out of the image and means a 12MP phone photo
+  never crosses the wire at full size. `createImageBitmap(file, {
+  imageOrientation: 'from-image' })` is load-bearing — without it, portrait
+  phone photos come out sideways once re-encoded through a canvas.
+- **Cover photo** — `is_thumbnail` picks the one shown in the games list, with a
+  partial unique index enforcing at most one per game. The first upload becomes
+  the cover automatically; deleting the cover promotes the oldest survivor.
+- **Deleting a game** cascades `game_images` rows, but files need an explicit
+  unlink — `routes/admin.js` calls `removeGameImageFiles(id)` from
+  `routes/images.js`. If you add another game-deletion path, call it there too.
+- **Backups** — the nightly config tarball already archives `sites/sites`
+  excluding `*/app`, so `uploads/` is captured. It's a *full* tarball every
+  night, so if the photo library ever gets large, split it out into an
+  incremental `rclone sync` instead.
 
 ---
 

@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS game_players (
   faction_id      INTEGER REFERENCES factions(id),
   detachment_id   INTEGER REFERENCES detachments(id),
   detachment_name TEXT,
+  primary_mission_id   INTEGER REFERENCES primary_missions(id),
+  primary_mission_name TEXT,
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -158,6 +160,7 @@ CREATE TABLE IF NOT EXISTS player_secondaries (
   id              SERIAL PRIMARY KEY,
   game_player_id  INTEGER NOT NULL REFERENCES game_players(id) ON DELETE CASCADE,
   round_number    INTEGER CHECK (round_number BETWEEN 1 AND 5),
+  drawn_round     INTEGER CHECK (drawn_round BETWEEN 1 AND 5),
   card_id         INTEGER REFERENCES secondary_cards(id),
   card_name       TEXT NOT NULL,
   score           INTEGER NOT NULL DEFAULT 0,
@@ -239,6 +242,56 @@ DO $$ BEGIN
     ALTER TABLE games ALTER COLUMN edition SET DEFAULT '11';
   END IF;
 END $$;
+
+-- Migration: 11th edition gives each player their OWN primary mission, so the
+-- mission moves from games.primary_mission_id (shared) down to the player row.
+-- 10e games leave both NULL and keep reading the game-level column.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='primary_mission_id'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN primary_mission_id INTEGER REFERENCES primary_missions(id);
+    ALTER TABLE game_players ADD COLUMN primary_mission_name TEXT;
+  END IF;
+END $$;
+
+-- Migration: 11e secondaries persist in hand across rounds, so a card has a
+-- draw round distinct from the round it scores. round_number keeps its meaning
+-- (the round the card SCORED) and is NULL for a card that never scored;
+-- drawn_round is NULL on 10e rows, where draw and score are the same round.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='player_secondaries' AND column_name='drawn_round'
+  ) THEN
+    ALTER TABLE player_secondaries ADD COLUMN drawn_round INTEGER
+      CHECK (drawn_round BETWEEN 1 AND 5);
+  END IF;
+END $$;
+
+-- Photos attached to a game. The bytes live on disk (UPLOAD_DIR, served by
+-- Caddy at /uploads/<game_id>/<file>), not in Postgres — keeping multi-MB
+-- blobs out of the nightly pg_dumpall. Rows cascade with the game; the files
+-- are unlinked by the DELETE route.
+CREATE TABLE IF NOT EXISTS game_images (
+  id                   SERIAL PRIMARY KEY,
+  game_id              INTEGER NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  uploaded_by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  file_name            TEXT NOT NULL,
+  thumb_name           TEXT NOT NULL,
+  caption              TEXT,
+  is_thumbnail         BOOLEAN NOT NULL DEFAULT FALSE,
+  width                INTEGER,
+  height               INTEGER,
+  bytes                INTEGER,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_images_game ON game_images(game_id);
+-- At most one image per game can be the list thumbnail. Enforced in the DB so
+-- a concurrent "set as thumbnail" can't leave two winners.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_thumb
+  ON game_images(game_id) WHERE is_thumbnail;
 
 -- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
 CREATE TABLE IF NOT EXISTS audit_log (

@@ -1,4 +1,4 @@
-import { games, admin } from '../api.js';
+import { games, admin, gameImages } from '../api.js';
 import { el, fmtDate, pill, toast, confirmModal } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
@@ -54,9 +54,146 @@ export async function renderGameDetail(state, gameId) {
 
   root.appendChild(header);
   root.appendChild(players);
+  root.appendChild(await buildPhotosPanel(state, g));
   if (progression) root.appendChild(progression);
   if (notes) root.appendChild(notes);
   return root;
+}
+
+// Longest edge of the stored full-size image and of the list thumbnail. The
+// browser does the resizing (see shrink()), so the server never needs an image
+// library and a 12MP phone photo never crosses the wire at full size.
+const FULL_MAX_PX = 1600;
+const THUMB_MAX_PX = 400;
+const JPEG_QUALITY = 0.82;
+
+// Decode -> downscale -> re-encode as JPEG. `imageOrientation: 'from-image'`
+// matters: without it, portrait phone photos (which carry their rotation in
+// EXIF) come out sideways once re-encoded from a canvas.
+async function shrink(file, maxDim, quality) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+  bitmap.close?.();
+  return { dataUrl: canvas.toDataURL('image/jpeg', quality), width: w, height: h };
+}
+
+async function buildPhotosPanel(state, g) {
+  let images = [];
+  try {
+    images = await gameImages.list(g.id);
+  } catch { /* panel still renders, just empty */ }
+
+  const grid = el('div', { class: 'photo-grid' });
+  const fileInput = el('input', {
+    type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' },
+  });
+  const uploadBtn = el('button', { class: 'btn small primary' }, 'Add photos');
+  const status = el('span', { class: 'muted', style: { fontSize: '12px', marginLeft: '8px' } }, '');
+
+  const canEdit = (img) => state.user &&
+    (state.user.role === 'admin' || img.uploaded_by_user_id === state.user.id);
+
+  function paint() {
+    grid.textContent = '';
+    if (!images.length) {
+      grid.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
+        state.user ? 'No photos yet.' : 'No photos.'));
+      return;
+    }
+    for (const img of images) {
+      const thumb = el('img', {
+        class: 'photo-thumb',
+        src: gameImages.url(g.id, img.thumb_name),
+        alt: img.caption || 'Game photo',
+        loading: 'lazy',
+      });
+      const tile = el('figure', { class: 'photo-tile' }, [
+        el('a', { href: gameImages.url(g.id, img.file_name), target: '_blank', rel: 'noopener' }, thumb),
+        img.is_thumbnail ? el('span', { class: 'photo-badge' }, 'COVER') : null,
+        state.user ? el('div', { class: 'photo-actions' }, [
+          img.is_thumbnail ? null : el('button', {
+            class: 'btn small',
+            title: 'Use as the thumbnail in the games list',
+            onClick: async () => {
+              try {
+                await gameImages.update(g.id, img.id, { isThumbnail: true });
+                images = images.map(x => ({ ...x, is_thumbnail: x.id === img.id }));
+                paint();
+                toast('Cover photo set');
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, 'Cover'),
+          canEdit(img) ? el('button', {
+            class: 'btn small danger',
+            onClick: async () => {
+              const ok = await confirmModal({
+                title: 'Delete photo?',
+                body: 'This removes the image file for good.',
+                danger: true,
+                confirmLabel: 'Delete',
+              });
+              if (!ok) return;
+              try {
+                await gameImages.remove(g.id, img.id);
+                images = await gameImages.list(g.id);
+                paint();
+                toast('Photo deleted');
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, 'Delete') : null,
+        ].filter(Boolean)) : null,
+      ].filter(Boolean));
+      grid.appendChild(tile);
+    }
+  }
+
+  uploadBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', async () => {
+    const files = Array.from(fileInput.files || []);
+    fileInput.value = '';
+    if (!files.length) return;
+    uploadBtn.disabled = true;
+    let done = 0;
+    for (const file of files) {
+      status.textContent = `Uploading ${done + 1} of ${files.length}…`;
+      try {
+        const [full, thumb] = await Promise.all([
+          shrink(file, FULL_MAX_PX, JPEG_QUALITY),
+          shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
+        ]);
+        await gameImages.upload(g.id, {
+          dataUrl: full.dataUrl,
+          thumbDataUrl: thumb.dataUrl,
+          width: full.width,
+          height: full.height,
+        });
+        done++;
+      } catch (e) {
+        toast(`${file.name}: ${e.message}`, 'error');
+      }
+    }
+    uploadBtn.disabled = false;
+    status.textContent = '';
+    images = await gameImages.list(g.id);
+    paint();
+    if (done) toast(done === 1 ? 'Photo added' : `${done} photos added`);
+  });
+
+  paint();
+
+  return el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [
+      el('h2', {}, 'Photos'),
+      state.user ? el('div', {}, [uploadBtn, status, fileInput]) : null,
+    ].filter(Boolean)),
+    el('div', { class: 'panel-body' }, grid),
+  ]);
 }
 
 // Per-seat line colours for the progression chart.
@@ -150,7 +287,7 @@ function buildMeta(g) {
     ['Format', g.game_format],
     ['Points', g.points_limit],
     ['Mission Pack', g.mission_pack_name || '—'],
-    ['Primary Mission', g.primary_mission_name || '—'],
+    g.edition === '11' ? null : ['Primary Mission', g.primary_mission_name || '—'],
     ['Deployment', g.deployment_map_name || '—'],
     ['Mission Rule', g.mission_rule_name || '—'],
     ['Turns Played', g.turn_count ?? '—'],
@@ -186,15 +323,24 @@ function buildPlayerCard(p, g) {
     ]);
   });
 
+  const is11 = g.edition === '11';
+
   const secondaries = (p.secondaries || []).length ? el('div', {}, [
     el('h3', { style: { marginTop: '14px' } }, 'Secondaries'),
     el('table', {}, [
-      el('thead', {}, el('tr', {}, [el('th', {}, 'Card'), el('th', {}, 'Round'), el('th', { style: { textAlign: 'right' } }, 'Score')])),
+      el('thead', {}, el('tr', {}, [
+        el('th', {}, 'Card'),
+        is11 ? el('th', {}, 'Drawn') : null,
+        el('th', {}, is11 ? 'Scored' : 'Round'),
+        el('th', { style: { textAlign: 'right' } }, 'Score'),
+      ].filter(Boolean))),
       el('tbody', {}, (p.secondaries || []).map(s => el('tr', {}, [
         el('td', {}, s.card_name),
-        el('td', { class: 'muted' }, s.round_number ? `R${s.round_number}` : 'Fixed'),
+        is11 ? el('td', { class: 'muted' }, s.drawn_round ? `R${s.drawn_round}` : '—') : null,
+        el('td', { class: 'muted' },
+          s.round_number ? `R${s.round_number}` : (is11 ? 'Never' : 'Fixed')),
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(s.score)),
-      ]))),
+      ].filter(Boolean)))),
     ]),
   ]) : null;
 
@@ -228,6 +374,8 @@ function buildPlayerCard(p, g) {
     el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, [
       [p.faction_name, p.detachment_name].filter(Boolean).join(' — ') || 'Faction unknown',
     ]),
+    is11 ? el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } },
+      `Primary: ${p.primary_mission_name || p.primary_mission_ref || '—'}`) : null,
     el('h3', {}, 'Rounds'),
     el('div', {}, roundRows),
     secondaries,

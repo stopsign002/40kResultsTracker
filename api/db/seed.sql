@@ -349,6 +349,7 @@ INSERT INTO mission_packs (name) VALUES
   ('Pariah Nexus'),
   ('Leviathan'),
   ('Chapter Approved 2025-26'),
+  ('2026 - 2027 Chapter Approved'),
   ('Tempest of War'),
   ('Crusade'),
   ('Open Play'),
@@ -567,6 +568,30 @@ SELECT id, n FROM mission_packs, (VALUES
 -- One-shot: every install gets a Season 1 with the canonical MAP_SEED
 -- (0xDEAD40 = 14589504). After this seed runs, any game that lacks a
 -- season_id is attached to the currently-active season.
+-- ── 2026 - 2027 Chapter Approved (11th edition) ────────────────
+-- 11e drops challenger cards entirely, so none are seeded for this pack.
+-- Primary missions are deliberately NOT seeded: they're typed free-text in the
+-- game form for now, and resolveGameLookups() files each new name under this
+-- pack, so the autocomplete list builds itself until the real list lands.
+--
+-- The secondary deck below is transcribed from a game screenshot and is very
+-- likely PARTIAL (it jumps Cleanse -> Outflank, and every card shown had been
+-- drawn in that one game). The card input stays free-text, so anything missing
+-- can just be typed and it files itself under this pack the same way.
+INSERT INTO secondary_cards (mission_pack_id, name, card_type)
+SELECT id, n, 'tactical' FROM mission_packs, (VALUES
+  ('A Grievous Blow'),
+  ('Assassination'),
+  ('Beacon'),
+  ('Behind Enemy Lines'),
+  ('Bring It Down'),
+  ('Burden Of Trust'),
+  ('Cleanse'),
+  ('Outflank'),
+  ('Plunder'),
+  ('Secure No Man''s Land')
+) AS s(n) WHERE mission_packs.name = '2026 - 2027 Chapter Approved' ON CONFLICT DO NOTHING;
+
 INSERT INTO seasons (name, map_seed, is_active)
 SELECT 'Season 1', 14589504::bigint, TRUE
 WHERE NOT EXISTS (SELECT 1 FROM seasons);

@@ -8,6 +8,13 @@ const ROUNDS = [1, 2, 3, 4, 5];
 // only the *default for new entries* moves forward. Bump this when 12e lands.
 const DEFAULT_EDITION = '11';
 
+// 11e differences the form has to model: each player picks their own primary
+// mission, secondaries persist in hand (so a card has a draw round distinct
+// from the round it scores), challenger cards no longer exist, and each half
+// of the score caps at 45 independently.
+const E11_PRIMARY_CAP = 45;
+const E11_SECONDARY_CAP = 45;
+
 let comboSeq = 0;
 function comboField(items, currentId, currentName, onChange, opts = {}) {
   const listId = `combo-${++comboSeq}`;
@@ -105,6 +112,8 @@ export async function renderGameForm(state, gameId) {
     }
   }
 
+  const is11 = () => (draft.edition || DEFAULT_EDITION) === '11';
+
   function rerender() {
     persistDraft();
     clear(root);
@@ -156,8 +165,14 @@ export async function renderGameForm(state, gameId) {
       draft.deploymentMapName = null;
       draft.missionRuleId = null;
       draft.missionRuleName = null;
-      // Clear secondaries/challengers since they belong to a different pack
-      for (const p of draft.players) { p.secondaries = []; p.challengers = []; }
+      // Clear secondaries/challengers since they belong to a different pack.
+      // 11e per-player primaries are pack-scoped too, so they go with them.
+      for (const p of draft.players) {
+        p.secondaries = [];
+        p.challengers = [];
+        p.primaryMissionId = null;
+        p.primaryMissionName = null;
+      }
       missionDetails = newId ? await reference.missionDetails(newId) : { primaryMissions: [], deploymentMaps: [], missionRules: [], secondaryCards: [], challengerCards: [] };
       rerender();
     });
@@ -186,7 +201,9 @@ export async function renderGameForm(state, gameId) {
       el('option', { value: '10' }, '10th Edition'),
     ]);
     editionSel.value = draft.edition || DEFAULT_EDITION;
-    editionSel.addEventListener('change', () => { draft.edition = editionSel.value; });
+    // Structural: 11e moves the primary mission per-player and swaps the whole
+    // secondary section, so the form has to be rebuilt.
+    editionSel.addEventListener('change', () => { draft.edition = editionSel.value; rerender(); });
 
     const mediumSel = el('select', {}, [
       el('option', { value: 'physical' }, 'Physical (tabletop)'),
@@ -208,12 +225,18 @@ export async function renderGameForm(state, gameId) {
         field('Points', pointsInput),
         field('Turns played', turnInput),
       ]),
-      el('div', { class: 'form-row cols-4' }, [
-        field('Mission Pack', packSel),
-        field('Primary Mission', primarySel),
-        field('Deployment Map', deploySel),
-        field('Mission Rule', ruleSel),
-      ]),
+      is11()
+        ? el('div', { class: 'form-row cols-3' }, [
+            field('Mission Pack', packSel),
+            field('Deployment Map', deploySel),
+            field('Mission Rule', ruleSel),
+          ])
+        : el('div', { class: 'form-row cols-4' }, [
+            field('Mission Pack', packSel),
+            field('Primary Mission', primarySel),
+            field('Deployment Map', deploySel),
+            field('Mission Rule', ruleSel),
+          ]),
       el('div', { class: 'form-row cols-4' }, [
         field('End Condition', endSel),
         field('Tournament Name', tournNameInput),
@@ -298,7 +321,7 @@ export async function renderGameForm(state, gameId) {
     return el('div', { class: 'player-panel' }, [
       el('h2', {}, `Player ${idx + 1}`),
       el('div', { class: 'player-meta tabular' }, [
-        el('span', {}, `Score: ${calcTotal(p)}`),
+        el('span', { 'data-player-total': String(idx) }, `Score: ${calcTotal(p, draft.edition)}`),
         ' · ',
         el('span', {}, p.wentFirst ? 'Went 1st' : '2nd'),
       ]),
@@ -313,14 +336,24 @@ export async function renderGameForm(state, gameId) {
           detachmentDatalist,
         ]),
       ]),
+      is11()
+        ? el('div', { class: 'form-row' }, [
+            el('div', { class: 'form-group' }, [
+              el('label', {}, 'Primary Mission'),
+              comboField(missionDetails.primaryMissions, p.primaryMissionId, p.primaryMissionName,
+                (id, name) => { p.primaryMissionId = id; p.primaryMissionName = id ? null : name; },
+                { placeholder: draft.missionPackId ? 'Pick or type' : 'Choose a mission pack first' }),
+            ]),
+          ])
+        : null,
       el('div', { class: 'form-row cols-2' }, [
         field('Went First', wentFirstChk, true),
         field('Winner', winnerChk, true),
       ]),
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
       buildRoundsTable(p),
-      buildPerRoundSecondaries(p),
-    ]);
+      is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p),
+    ].filter(Boolean));
   }
 
   function buildRoundsTable(p) {
@@ -328,7 +361,10 @@ export async function renderGameForm(state, gameId) {
       const r = p.rounds.find(x => x.roundNumber === rn) || { roundNumber: rn, primaryScore: 0, secondaryScore: 0 };
       if (!p.rounds.find(x => x.roundNumber === rn)) p.rounds.push(r);
       const primary = el('input', { type: 'number', min: '0', max: '20', value: r.primaryScore });
-      primary.addEventListener('change', () => { r.primaryScore = parseInt(primary.value, 10) || 0; });
+      primary.addEventListener('change', () => {
+        r.primaryScore = parseInt(primary.value, 10) || 0;
+        refreshTotals();
+      });
       return el('tr', {}, [
         el('td', { style: { textAlign: 'center', color: 'var(--text-muted)' } }, `R${rn}`),
         el('td', {}, primary),
@@ -336,12 +372,192 @@ export async function renderGameForm(state, gameId) {
     });
 
     return el('div', {}, [
-      el('h3', { style: { marginTop: '14px' } }, 'Primary Scoring'),
+      el('h3', { style: { marginTop: '14px' } }, [
+        'Primary Scoring ',
+        is11() ? el('span', {
+          'data-pri-total': String(draft.players.indexOf(p)),
+          class: 'dim tabular',
+          style: { fontSize: '12px', fontWeight: 'normal' },
+        }, capLabel(sumPrimary(p), E11_PRIMARY_CAP)) : null,
+      ].filter(Boolean)),
       el('table', { class: 'round-entry-table' }, [
         el('thead', {}, el('tr', {}, [el('th', {}, ''), el('th', {}, 'Primary')])),
         el('tbody', {}, rows),
       ]),
     ]);
+  }
+
+  // Score readouts are refreshed in place rather than by rerender(): these fire
+  // from `change` on inputs, and a rebuild there steals focus from whatever the
+  // user clicked into next (see CLAUDE.md pitfall #2).
+  function refreshTotals() {
+    draft.players.forEach((pl, i) => {
+      const tot = root.querySelector(`[data-player-total="${i}"]`);
+      if (tot) tot.textContent = `Score: ${calcTotal(pl, draft.edition)}`;
+      const sec = root.querySelector(`[data-sec-total="${i}"]`);
+      if (sec) sec.textContent = capLabel(sumSecondaries(pl), E11_SECONDARY_CAP);
+      const pri = root.querySelector(`[data-pri-total="${i}"]`);
+      if (pri) pri.textContent = capLabel(sumPrimary(pl), E11_PRIMARY_CAP);
+    });
+  }
+
+  // 11e: the whole deck is laid out as fillable rows (mirroring the War
+  // Journal app) so entry is "fill in the ones that came up" rather than
+  // "remember every card name and type it". A row only becomes a stored
+  // secondary once it has a drawn round, a scored round or a score — untouched
+  // rows never reach the payload.
+  function buildHeldSecondaries(p) {
+    const idx = draft.players.indexOf(p);
+    const COLS = '1fr 88px 88px 64px 30px';
+    const deck = missionDetails.secondaryCards || [];
+    const deckNames = new Set(deck.map(c => (c.name || '').toLowerCase()));
+
+    const findEntry = (card) => (p.secondaries || []).find(s =>
+      (s.cardId != null && card.id != null && s.cardId === card.id) ||
+      (s.cardName && s.cardName.toLowerCase() === (card.name || '').toLowerCase()));
+
+    const ensure = (card) => {
+      let e = findEntry(card);
+      if (!e) {
+        e = { cardId: card.id ?? null, cardName: card.name, drawnRound: null, roundNumber: null, score: 0 };
+        p.secondaries.push(e);
+      }
+      return e;
+    };
+
+    const isBlank = (e) => e.drawnRound == null && e.roundNumber == null && !(e.score > 0);
+
+    const prune = (e) => {
+      if (e && isBlank(e)) {
+        const i = p.secondaries.indexOf(e);
+        if (i >= 0) p.secondaries.splice(i, 1);
+      }
+    };
+
+    const roundSel = (selected, blankLabel) => {
+      const sel = el('select', { style: { width: '100%' } }, [
+        el('option', { value: '' }, blankLabel),
+        ...ROUNDS.map(rn => el('option', { value: String(rn) }, `R${rn}`)),
+      ]);
+      sel.value = selected == null ? '' : String(selected);
+      return sel;
+    };
+
+    // A deck row: fixed card name, three inputs. Dimmed until it has data, so
+    // the cards that actually came up stand out from the full list.
+    const deckRow = (card) => {
+      const existing = findEntry(card);
+      const drawn = roundSel(existing?.drawnRound, '—');
+      const scored = roundSel(existing?.roundNumber, '—');
+      const scoreInp = el('input', {
+        type: 'number', min: '0', max: '20', value: existing?.score ?? 0,
+        style: { width: '100%', textAlign: 'center' },
+      });
+
+      const row = el('div', {
+        style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '4px', alignItems: 'center' },
+      }, [
+        el('div', { style: { fontSize: '13px' } }, card.name),
+        drawn, scored, scoreInp, el('div', {}),
+      ]);
+
+      const paint = () => {
+        const e = findEntry(card);
+        row.style.opacity = e && !isBlank(e) ? '1' : '0.55';
+      };
+      paint();
+
+      const commit = (fn) => {
+        const e = ensure(card);
+        fn(e);
+        prune(e);
+        paint();
+        refreshTotals();
+      };
+
+      drawn.addEventListener('change', () =>
+        commit(e => { e.drawnRound = drawn.value ? parseInt(drawn.value, 10) : null; }));
+      scored.addEventListener('change', () =>
+        commit(e => { e.roundNumber = scored.value ? parseInt(scored.value, 10) : null; }));
+      scoreInp.addEventListener('change', () =>
+        commit(e => { e.score = parseInt(scoreInp.value, 10) || 0; }));
+
+      return row;
+    };
+
+    // Anything recorded that the seeded deck doesn't cover — a card typed by
+    // hand, or one carried over from a different pack. Keeps its name editable
+    // so the (likely incomplete) seed list is never a dead end.
+    const extras = (p.secondaries || []).filter(s =>
+      !s.cardName || !deckNames.has(s.cardName.toLowerCase()));
+
+    const extraRow = (entry) => {
+      const cardSel = comboField(deck, entry.cardId,
+        entry.cardName === 'Unspecified' ? null : entry.cardName,
+        (id, name) => { entry.cardId = id; entry.cardName = name || 'Unspecified'; },
+        { placeholder: 'Card name' });
+
+      const drawn = roundSel(entry.drawnRound, '—');
+      drawn.addEventListener('change', () => {
+        entry.drawnRound = drawn.value ? parseInt(drawn.value, 10) : null;
+      });
+      const scored = roundSel(entry.roundNumber, '—');
+      scored.addEventListener('change', () => {
+        entry.roundNumber = scored.value ? parseInt(scored.value, 10) : null;
+        refreshTotals();
+      });
+      const scoreInp = el('input', {
+        type: 'number', min: '0', max: '20', value: entry.score ?? 0,
+        style: { width: '100%', textAlign: 'center' },
+      });
+      scoreInp.addEventListener('change', () => {
+        entry.score = parseInt(scoreInp.value, 10) || 0;
+        refreshTotals();
+      });
+      const remove = el('button', { class: 'btn small', type: 'button', title: 'Remove card' }, '×');
+      remove.addEventListener('click', () => {
+        const i = p.secondaries.indexOf(entry);
+        if (i >= 0) p.secondaries.splice(i, 1);
+        rerender();
+      });
+
+      return el('div', {
+        style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '4px', alignItems: 'center' },
+      }, [cardSel, drawn, scored, scoreInp, remove]);
+    };
+
+    const add = el('button', { class: 'btn small', type: 'button' }, '+ Card not listed');
+    add.addEventListener('click', () => {
+      p.secondaries.push({ cardId: null, cardName: 'Unspecified', drawnRound: null, roundNumber: null, score: 0 });
+      rerender();
+    });
+
+    const hdr = (t, align) => el('div', {
+      class: 'dim',
+      style: {
+        fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em',
+        paddingBottom: '4px', textAlign: align || 'left',
+      },
+    }, t);
+
+    return el('div', {}, [
+      el('h3', { style: { marginTop: '18px' } }, [
+        'Secondary Missions ',
+        el('span', {
+          'data-sec-total': String(idx),
+          class: 'dim tabular',
+          style: { fontSize: '12px', fontWeight: 'normal' },
+        }, capLabel(sumSecondaries(p), E11_SECONDARY_CAP)),
+      ]),
+      deck.length || extras.length
+        ? el('div', { style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '2px' } },
+            [hdr('Card'), hdr('Drawn', 'center'), hdr('Scored', 'center'), hdr('VP', 'center'), el('div', {})])
+        : el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '6px' } },
+            'Choose a mission pack to list its secondaries.'),
+      ...deck.map(deckRow),
+      ...extras.map(extraRow),
+      el('div', { style: { marginTop: '6px' } }, add),
+    ].filter(Boolean));
   }
 
   // Combined per-round scoring: 2 secondary slots + 1 optional challenger slot per round
@@ -534,8 +750,30 @@ function field(label, control, inline) {
   return el('div', { class: 'form-group' }, [el('label', {}, label), control]);
 }
 
-function calcTotal(p) {
-  return (p.rounds || []).reduce((s, r) => s + (r.primaryScore || 0) + (r.secondaryScore || 0), 0);
+function sumPrimary(p) {
+  return (p.rounds || []).reduce((s, r) => s + (r.primaryScore || 0), 0);
+}
+
+function sumSecondaries(p) {
+  return (p.secondaries || []).reduce((s, x) => s + (x.score || 0), 0);
+}
+
+// "32 / 45", or "45 / 45 (46 raw)" when the cap is actually biting, so it's
+// obvious the entry wasn't mis-typed — the ceiling just clipped it.
+function capLabel(raw, cap) {
+  return `${Math.min(cap, raw)} / ${cap}${raw > cap ? ` (${raw} raw)` : ''}`;
+}
+
+// Mirrors computeFinalScores() in api/lib/game-scoring.js. Kept in sync by hand;
+// it only drives the live readout, the server value is authoritative.
+function calcTotal(p, edition) {
+  const primary = sumPrimary(p);
+  const sec = sumSecondaries(p);
+  if (edition === '11') {
+    return Math.min(E11_PRIMARY_CAP, primary) + Math.min(E11_SECONDARY_CAP, sec);
+  }
+  const chal = (p.challengers || []).reduce((s, c) => s + (c.score || 0), 0);
+  return Math.min(100, primary + sec + chal);
 }
 
 function updateTotal(p) {
@@ -593,6 +831,8 @@ function makeDraft(existing) {
       factionId: p.faction_id,
       detachmentId: p.detachment_id,
       detachmentName: p.detachment_name,
+      primaryMissionId: p.primary_mission_id ?? null,
+      primaryMissionName: p.primary_mission_name ?? null,
       armyListCode: p.army_list_code,
       wentFirst: p.went_first,
       isAttacker: p.is_attacker,
@@ -607,6 +847,7 @@ function makeDraft(existing) {
       })),
       secondaries: (p.secondaries || []).map(s => ({
         cardId: s.card_id, cardName: s.card_name, roundNumber: s.round_number,
+        drawnRound: s.drawn_round ?? null,
         score: s.score, wasDiscarded: s.was_discarded,
       })),
       challengers: (p.challengers || []).map(c => ({
@@ -621,6 +862,7 @@ function emptyPlayer() {
   return {
     userId: null, guestName: null,
     factionId: null, detachmentId: null, detachmentName: null,
+    primaryMissionId: null, primaryMissionName: null,
     armyListCode: null, wentFirst: false, isAttacker: null,
     manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),
@@ -652,7 +894,9 @@ function serializeDraft(d) {
     players: d.players.map(p => ({
       ...p,
       secondaries: (p.secondaries || []).filter(s => s.cardName),
-      challengers: (p.challengers || []).filter(c => c.cardName),
+      challengers: (d.edition || DEFAULT_EDITION) === '11'
+        ? []
+        : (p.challengers || []).filter(c => c.cardName),
     })),
   };
 }
@@ -705,6 +949,8 @@ function restorePayload(g) {
       factionId: p.faction_id,
       detachmentId: p.detachment_id,
       detachmentName: p.detachment_name,
+      primaryMissionId: p.primary_mission_id ?? null,
+      primaryMissionName: p.primary_mission_name ?? null,
       armyListCode: p.army_list_code,
       wentFirst: p.went_first,
       isAttacker: p.is_attacker,
@@ -719,6 +965,7 @@ function restorePayload(g) {
       })),
       secondaries: (p.secondaries || []).map(s => ({
         cardId: s.card_id, cardName: s.card_name, roundNumber: s.round_number,
+        drawnRound: s.drawn_round ?? null,
         score: s.score, wasDiscarded: s.was_discarded,
       })),
       challengers: (p.challengers || []).map(c => ({

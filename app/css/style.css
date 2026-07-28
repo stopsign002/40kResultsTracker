@@ -683,3 +683,72 @@ td.tabular { font-variant-numeric: tabular-nums; }
   overflow-x: auto;
   border: 1px solid var(--border);
 }
+
+/* ── Game photos ─────────────────────────────────────────────── */
+/* Thumbnails in the games list. Fixed box so rows keep a uniform height
+   whatever aspect ratio the photo has. */
+.list-thumb-wrap { position: relative; display: inline-block; line-height: 0; }
+.list-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.list-thumb.placeholder {
+  background: var(--bg);
+  border-style: dashed;
+  opacity: 0.35;
+}
+.list-thumb-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-muted);
+}
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.photo-tile { position: relative; margin: 0; }
+.photo-thumb {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  transition: border-color 0.15s ease;
+}
+.photo-tile:hover .photo-thumb { border-color: var(--accent); }
+.photo-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: var(--accent);
+  color: #14141a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+/* Actions sit under the image rather than overlaying it — on touch there is no
+   hover, so an overlay would either always show or never be reachable. */
+.photo-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+@media (max-width: 700px) {
+  .photo-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}

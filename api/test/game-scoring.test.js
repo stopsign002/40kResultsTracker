@@ -115,3 +115,79 @@ test('validateGameInput: passes a well-formed payload', () => {
     players: [blankPlayer({ guestName: 'A' }), blankPlayer({ guestName: 'B' })],
   }));
 });
+
+// ── 11th edition scoring ──────────────────────────────────────
+// 11e replaces 10e's single 100-point ceiling with two independent 45-point
+// halves and drops challenger cards. Reproduces the numbers from the reference
+// screenshot the feature was built against: primary rounds 4/8/11/8/15 = 46 raw
+// clipped to 45, secondaries 32, final 77.
+
+function e11Player(over = {}) {
+  return blankPlayer({ rounds: emptyRounds(), ...over });
+}
+function withPrimary(p, perRound) {
+  p.rounds = perRound.map((v, i) => ({ roundNumber: i + 1, primaryScore: v, secondaryScore: 0 }));
+  return p;
+}
+
+test('computeFinalScores 11e: reproduces the reference game (46 primary clips to 45, +32 = 77)', () => {
+  const a = withPrimary(e11Player({ guestName: 'Steve' }), [4, 8, 11, 8, 15]);
+  a.secondaries = [
+    { cardName: 'A Grievous Blow', drawnRound: 1, roundNumber: 3, score: 5 },
+    { cardName: 'Assassination', drawnRound: 4, roundNumber: 5, score: 5 },
+    { cardName: 'Beacon', drawnRound: 1, roundNumber: 2, score: 5 },
+    { cardName: 'Behind Enemy Lines', drawnRound: 4, roundNumber: 5, score: 3 },
+    { cardName: 'Bring It Down', drawnRound: 3, roundNumber: 3, score: 5 },
+    { cardName: 'Burden Of Trust', drawnRound: 2, roundNumber: 2, score: 4 },
+    { cardName: 'Cleanse', drawnRound: 3, roundNumber: null, score: 0 },
+    { cardName: 'Secure No Man\'s Land', drawnRound: 5, roundNumber: 5, score: 5 },
+  ];
+  const b = e11Player({ guestName: 'Brendon' });
+  computeFinalScores([a, b], '11');
+  assert.equal(a.finalScore, 77);
+  assert.equal(a.result, 'win');
+});
+
+test('computeFinalScores 11e: each half caps independently, no cross-subsidy', () => {
+  const p = withPrimary(e11Player(), [20, 20, 20, 0, 0]);      // 60 primary → 45
+  p.secondaries = [{ cardName: 'X', roundNumber: 1, score: 10 }];
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.finalScore, 55, 'primary overflow must not top up the secondary half');
+});
+
+test('computeFinalScores 11e: secondary half caps at 45 too', () => {
+  const p = e11Player();
+  p.secondaries = ROUNDS.map(rn => ({ cardName: 'C' + rn, roundNumber: rn, score: 15 }));
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.finalScore, 45);
+});
+
+test('computeFinalScores 11e: challenger cards are ignored', () => {
+  const p = withPrimary(e11Player(), [5, 0, 0, 0, 0]);
+  p.challengers = [{ cardName: 'Old Gambit', roundNumber: 1, score: 20 }];
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.finalScore, 5);
+});
+
+test('computeFinalScores 11e: a held card scores on its scored round, not its draw round', () => {
+  const p = e11Player();
+  p.secondaries = [{ cardName: 'A Grievous Blow', drawnRound: 1, roundNumber: 3, score: 5 }];
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.rounds.find(r => r.roundNumber === 1).secondaryScore, 0);
+  assert.equal(p.rounds.find(r => r.roundNumber === 3).secondaryScore, 5);
+});
+
+test('computeFinalScores 11e: an unscored card contributes nothing to any round', () => {
+  const p = e11Player();
+  p.secondaries = [{ cardName: 'Cleanse', drawnRound: 2, roundNumber: null, score: 0 }];
+  computeFinalScores([p, e11Player()], '11');
+  assert.equal(p.rounds.reduce((s, r) => s + r.secondaryScore, 0), 0);
+  assert.equal(p.finalScore, 0);
+});
+
+test('computeFinalScores: 10e default is unchanged when no edition is passed', () => {
+  const p = withPrimary(blankPlayer(), [20, 20, 20, 20, 20]);   // 100 primary
+  p.secondaries = [{ cardName: 'X', roundNumber: 1, score: 15 }];
+  computeFinalScores([p, blankPlayer()]);
+  assert.equal(p.finalScore, 100, '10e clamps the combined total at 100');
+});
