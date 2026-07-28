@@ -570,27 +570,121 @@ SELECT id, n FROM mission_packs, (VALUES
 -- season_id is attached to the currently-active season.
 -- ── 2026 - 2027 Chapter Approved (11th edition) ────────────────
 -- 11e drops challenger cards entirely, so none are seeded for this pack.
--- Primary missions are deliberately NOT seeded: they're typed free-text in the
--- game form for now, and resolveGameLookups() files each new name under this
--- pack, so the autocomplete list builds itself until the real list lands.
 --
--- The secondary deck below is transcribed from a game screenshot and is very
--- likely PARTIAL (it jumps Cleanse -> Outflank, and every card shown had been
--- drawn in that one game). The card input stays free-text, so anything missing
--- can just be typed and it files itself under this pack the same way.
+-- Casing fix, and it must run BEFORE the deck insert below. The first 10 cards
+-- were transcribed from a screenshot of an app that title-cases every word, so
+-- two landed as 'Bring It Down' / 'Burden Of Trust'. Renaming in place (rather
+-- than letting the insert add a second, correctly-cased row) keeps the card_id
+-- that already-recorded games point at, and drags the denormalised
+-- player_secondaries.card_name along with it. Idempotent: finds nothing once
+-- applied, and the NOT EXISTS guard means it can never collide with the insert.
+DO $$
+DECLARE
+  pack_id INTEGER;
+  fix     RECORD;
+BEGIN
+  SELECT id INTO pack_id FROM mission_packs WHERE name = '2026 - 2027 Chapter Approved';
+  IF pack_id IS NULL THEN RETURN; END IF;
+  FOR fix IN SELECT * FROM (VALUES
+      ('Bring It Down',   'Bring it Down'),
+      ('Burden Of Trust', 'Burden of Trust')
+    ) AS t(old_name, new_name)
+  LOOP
+    IF EXISTS (SELECT 1 FROM secondary_cards
+                WHERE mission_pack_id = pack_id AND name = fix.old_name)
+       AND NOT EXISTS (SELECT 1 FROM secondary_cards
+                        WHERE mission_pack_id = pack_id AND name = fix.new_name)
+    THEN
+      UPDATE secondary_cards SET name = fix.new_name
+       WHERE mission_pack_id = pack_id AND name = fix.old_name;
+    END IF;
+    UPDATE player_secondaries ps SET card_name = fix.new_name
+      FROM secondary_cards sc
+     WHERE sc.id = ps.card_id
+       AND sc.mission_pack_id = pack_id
+       AND sc.name = fix.new_name
+       AND ps.card_name = fix.old_name;
+  END LOOP;
+END $$;
+
+-- The full 18-card 11e secondary deck. All 18 are drawable as Tactical, so all
+-- are seeded 'tactical' — card_type only drives sort order in reference.js, it
+-- gates nothing. Four of them (A Grievous Blow, Assassination, Bring it Down,
+-- Engage on All Fronts) are additionally the Fixed-mission options; that isn't
+-- representable here without a second row per card, and nothing consumes it.
 INSERT INTO secondary_cards (mission_pack_id, name, card_type)
 SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('A Grievous Blow'),
+  ('A Tempting Target'),
   ('Assassination'),
   ('Beacon'),
   ('Behind Enemy Lines'),
-  ('Bring It Down'),
-  ('Burden Of Trust'),
+  ('Bring it Down'),
+  ('Burden of Trust'),
+  ('Centre Ground'),
   ('Cleanse'),
+  ('Defend Stronghold'),
+  ('Display of Might'),
+  ('Engage on All Fronts'),
+  ('Forward Position'),
+  ('No Prisoners'),
   ('Outflank'),
+  ('Overwhelming Force'),
   ('Plunder'),
   ('Secure No Man''s Land')
 ) AS s(n) WHERE mission_packs.name = '2026 - 2027 Chapter Approved' ON CONFLICT DO NOTHING;
+
+-- 11e primary missions. There are five Force Dispositions (Take and Hold,
+-- Purge the Foe, Disruption, Reconnaissance, Priority Assets); the pairing of
+-- yours against your opponent's decides the named mission EACH of you plays,
+-- which is why the primary is per-player here and not per-game. 5 dispositions
+-- x 5 opponents = the 25 named missions below, grouped by the disposition that
+-- generates them. The disposition itself is not currently recorded — only the
+-- resulting mission name.
+INSERT INTO primary_missions (mission_pack_id, name)
+SELECT id, n FROM mission_packs, (VALUES
+  -- Take and Hold: vs T&H / Disruption / Purge the Foe / Priority Assets / Recon
+  ('Battlefield Dominance'),
+  ('Determined Acquisition'),
+  ('Immovable Object'),
+  ('Inescapable Dominion'),
+  ('Purge and Secure'),
+  -- Purge the Foe: vs Take and Hold / PtF / Disruption / Recon / Priority Assets
+  ('Unstoppable Force'),
+  ('Meatgrinder'),
+  ('Punishment'),
+  ('Consecrate'),
+  ('Destroyer''s Wrath'),
+  -- Disruption: vs Take and Hold / Purge the Foe / Disruption / Recon / Priority Assets
+  ('Death Trap'),
+  ('Delaying Action'),
+  ('Outmanoeuvre'),
+  ('Smoke and Mirrors'),
+  ('Locate and Deny'),
+  -- Reconnaissance: vs Take and Hold / Purge the Foe / Disruption / Recon / Priority Assets
+  ('Reconnaissance Sweep'),
+  ('Triangulation'),
+  ('Surveil the Foe'),
+  ('Gather Intel'),
+  ('Search and Scour'),
+  -- Priority Assets: vs Take and Hold / Purge the Foe / Disruption / Recon / PA
+  ('Secure Asset'),
+  ('Vital Link'),
+  ('Extract Relic'),
+  ('Vanguard Operation'),
+  ('Sabotage')
+) AS m(n) WHERE mission_packs.name = '2026 - 2027 Chapter Approved' ON CONFLICT DO NOTHING;
+
+-- ── Backfill: game_players.detachment_name -> player_detachments ───
+-- Detachments moved to a child table when 11e allowed more than one per
+-- player. Every historical row holds exactly one name, so it becomes one child
+-- row. Idempotent: the NOT EXISTS guard means re-runs find nothing.
+INSERT INTO player_detachments (game_player_id, detachment_id, detachment_name, sort_order)
+SELECT gp.id, gp.detachment_id, TRIM(gp.detachment_name), 0
+  FROM game_players gp
+ WHERE gp.detachment_name IS NOT NULL
+   AND TRIM(gp.detachment_name) <> ''
+   AND NOT EXISTS (SELECT 1 FROM player_detachments pd WHERE pd.game_player_id = gp.id);
 
 INSERT INTO seasons (name, map_seed, is_active)
 SELECT 'Season 1', 14589504::bigint, TRUE

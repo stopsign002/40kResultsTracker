@@ -15,6 +15,52 @@ const DEFAULT_EDITION = '11';
 const E11_PRIMARY_CAP = 45;
 const E11_SECONDARY_CAP = 45;
 
+// 11e Force Dispositions. Each player picks one (every detachment is associated
+// with one); cross-referencing yours against your opponent's is what decides
+// the named primary mission EACH of you plays — hence PRIMARY_MATRIX below,
+// keyed [yours][theirs]. Source: the Chapter Approved 2026-27 mission matrix.
+const FORCE_DISPOSITIONS = [
+  'Take and Hold', 'Purge the Foe', 'Disruption', 'Reconnaissance', 'Priority Assets',
+];
+
+const PRIMARY_MATRIX = {
+  'Take and Hold': {
+    'Take and Hold': 'Battlefield Dominance',
+    'Purge the Foe': 'Immovable Object',
+    'Disruption': 'Determined Acquisition',
+    'Reconnaissance': 'Purge and Secure',
+    'Priority Assets': 'Inescapable Dominion',
+  },
+  'Purge the Foe': {
+    'Take and Hold': 'Unstoppable Force',
+    'Purge the Foe': 'Meatgrinder',
+    'Disruption': 'Punishment',
+    'Reconnaissance': 'Consecrate',
+    'Priority Assets': "Destroyer's Wrath",
+  },
+  'Disruption': {
+    'Take and Hold': 'Death Trap',
+    'Purge the Foe': 'Delaying Action',
+    'Disruption': 'Outmanoeuvre',
+    'Reconnaissance': 'Smoke and Mirrors',
+    'Priority Assets': 'Locate and Deny',
+  },
+  'Reconnaissance': {
+    'Take and Hold': 'Reconnaissance Sweep',
+    'Purge the Foe': 'Triangulation',
+    'Disruption': 'Surveil the Foe',
+    'Reconnaissance': 'Gather Intel',
+    'Priority Assets': 'Search and Scour',
+  },
+  'Priority Assets': {
+    'Take and Hold': 'Secure Asset',
+    'Purge the Foe': 'Vital Link',
+    'Disruption': 'Extract Relic',
+    'Reconnaissance': 'Vanguard Operation',
+    'Priority Assets': 'Sabotage',
+  },
+};
+
 let comboSeq = 0;
 function comboField(items, currentId, currentName, onChange, opts = {}) {
   const listId = `combo-${++comboSeq}`;
@@ -113,6 +159,23 @@ export async function renderGameForm(state, gameId) {
   }
 
   const is11 = () => (draft.edition || DEFAULT_EDITION) === '11';
+
+  // Once both dispositions are known the pairing dictates both primaries, so
+  // fill them in. Still editable afterwards — this is a shortcut, not a lock.
+  function applyPrimaryMatrix() {
+    const [a, b] = draft.players;
+    if (!a || !b) return;
+    const setFor = (me, opp) => {
+      const name = PRIMARY_MATRIX[me.forceDisposition]?.[opp.forceDisposition];
+      if (!name) return;
+      const match = (missionDetails.primaryMissions || [])
+        .find(m => (m.name || '').toLowerCase() === name.toLowerCase());
+      me.primaryMissionId = match ? match.id : null;
+      me.primaryMissionName = match ? null : name;
+    };
+    setFor(a, b);
+    setFor(b, a);
+  }
 
   function rerender() {
     persistDraft();
@@ -282,20 +345,16 @@ export async function renderGameForm(state, gameId) {
       rerender();
     });
 
-    const detachmentListId = `detachments-${idx}`;
-    const detachmentInput = el('input', {
-      type: 'text',
-      placeholder: p.factionId ? 'Detachment' : 'Pick a faction first',
-      value: p.detachmentName ?? '',
-      list: detachmentListId,
-      autocomplete: 'off',
+    const dispositionSel = el('select', {}, [
+      el('option', { value: '' }, '— Select —'),
+      ...FORCE_DISPOSITIONS.map(d => el('option', { value: d }, d)),
+    ]);
+    dispositionSel.value = p.forceDisposition || '';
+    dispositionSel.addEventListener('change', () => {
+      p.forceDisposition = dispositionSel.value || null;
+      applyPrimaryMatrix();
+      rerender();
     });
-    detachmentInput.addEventListener('input', () => {
-      p.detachmentName = detachmentInput.value || null;
-    });
-    const detachmentDatalist = el('datalist', { id: detachmentListId },
-      (detachmentsByFaction[p.factionId] || []).map(d => el('option', { value: d.name }, ''))
-    );
 
     const wentFirstChk = el('input', { type: 'checkbox' });
     wentFirstChk.checked = !!p.wentFirst;
@@ -330,19 +389,20 @@ export async function renderGameForm(state, gameId) {
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Faction', factionSel),
-        el('div', { class: 'form-group' }, [
-          el('label', {}, 'Detachment'),
-          detachmentInput,
-          detachmentDatalist,
-        ]),
+        buildDetachments(p, idx),
       ]),
       is11()
-        ? el('div', { class: 'form-row' }, [
+        ? el('div', { class: 'form-row cols-2' }, [
+            field('Force Disposition', dispositionSel),
             el('div', { class: 'form-group' }, [
               el('label', {}, 'Primary Mission'),
               comboField(missionDetails.primaryMissions, p.primaryMissionId, p.primaryMissionName,
                 (id, name) => { p.primaryMissionId = id; p.primaryMissionName = id ? null : name; },
                 { placeholder: draft.missionPackId ? 'Pick or type' : 'Choose a mission pack first' }),
+              el('div', { class: 'dim', style: { fontSize: '11px', marginTop: '4px' } },
+                bothDispositionsSet()
+                  ? 'Set from the disposition pairing — override if needed.'
+                  : 'Set both players\' dispositions to fill this in automatically.'),
             ]),
           ])
         : null,
@@ -354,6 +414,69 @@ export async function renderGameForm(state, gameId) {
       buildRoundsTable(p),
       is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p),
     ].filter(Boolean));
+  }
+
+  const bothDispositionsSet = () =>
+    draft.players.every(pl => !!pl.forceDisposition);
+
+  // 11e allows more than one detachment per player, so this is a list of
+  // inputs rather than one field. Always renders at least one row; empties are
+  // stripped at serialize time.
+  function buildDetachments(p, idx) {
+    if (!Array.isArray(p.detachments)) {
+      p.detachments = p.detachmentName ? [p.detachmentName] : [];
+    }
+    if (!p.detachments.length) p.detachments.push('');
+
+    const listId = `detachments-${idx}`;
+    const datalist = el('datalist', { id: listId },
+      (detachmentsByFaction[p.factionId] || []).map(d => el('option', { value: d.name }, ''))
+    );
+
+    const syncJoined = () => {
+      p.detachmentName = p.detachments.map(d => (d || '').trim()).filter(Boolean).join(', ') || null;
+    };
+
+    const rows = p.detachments.map((name, di) => {
+      const inp = el('input', {
+        type: 'text',
+        placeholder: p.factionId ? 'Detachment' : 'Pick a faction first',
+        value: name ?? '',
+        list: listId,
+        autocomplete: 'off',
+      });
+      inp.addEventListener('input', () => { p.detachments[di] = inp.value; syncJoined(); });
+
+      const remove = p.detachments.length > 1
+        ? el('button', { class: 'btn small', type: 'button', title: 'Remove detachment' }, '×')
+        : null;
+      if (remove) {
+        remove.addEventListener('click', () => {
+          p.detachments.splice(di, 1);
+          syncJoined();
+          rerender();
+        });
+      }
+
+      return el('div', {
+        style: {
+          display: 'grid',
+          gridTemplateColumns: remove ? '1fr 30px' : '1fr',
+          gap: '6px',
+          marginBottom: '4px',
+        },
+      }, [inp, remove].filter(Boolean));
+    });
+
+    const add = el('button', { class: 'btn small', type: 'button' }, '+ Add detachment');
+    add.addEventListener('click', () => { p.detachments.push(''); rerender(); });
+
+    return el('div', { class: 'form-group' }, [
+      el('label', {}, p.detachments.length > 1 ? 'Detachments' : 'Detachment'),
+      ...rows,
+      datalist,
+      add,
+    ]);
   }
 
   function buildRoundsTable(p) {
@@ -846,6 +969,10 @@ function makeDraft(existing) {
       detachmentName: p.detachment_name,
       primaryMissionId: p.primary_mission_id ?? null,
       primaryMissionName: p.primary_mission_name ?? null,
+      forceDisposition: p.force_disposition ?? null,
+      detachments: Array.isArray(p.detachments) && p.detachments.length
+        ? p.detachments.slice()
+        : (p.detachment_name ? [p.detachment_name] : []),
       armyListCode: p.army_list_code,
       wentFirst: p.went_first,
       isAttacker: p.is_attacker,
@@ -876,6 +1003,7 @@ function emptyPlayer() {
     userId: null, guestName: null,
     factionId: null, detachmentId: null, detachmentName: null,
     primaryMissionId: null, primaryMissionName: null,
+    forceDisposition: null, detachments: [],
     armyListCode: null, wentFirst: false, isAttacker: null,
     manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),
@@ -906,6 +1034,7 @@ function serializeDraft(d) {
     edition: d.edition || DEFAULT_EDITION,
     players: d.players.map(p => ({
       ...p,
+      detachments: (p.detachments || []).map(x => (x || '').trim()).filter(Boolean),
       secondaries: (p.secondaries || []).filter(s => s.cardName),
       challengers: (d.edition || DEFAULT_EDITION) === '11'
         ? []
@@ -964,6 +1093,10 @@ function restorePayload(g) {
       detachmentName: p.detachment_name,
       primaryMissionId: p.primary_mission_id ?? null,
       primaryMissionName: p.primary_mission_name ?? null,
+      forceDisposition: p.force_disposition ?? null,
+      detachments: Array.isArray(p.detachments) && p.detachments.length
+        ? p.detachments.slice()
+        : (p.detachment_name ? [p.detachment_name] : []),
       armyListCode: p.army_list_code,
       wentFirst: p.went_first,
       isAttacker: p.is_attacker,

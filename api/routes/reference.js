@@ -10,18 +10,20 @@ router.get('/factions', async (_req, res) => {
 
 router.get('/factions/:id/detachments', async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  // Union the seeded detachments with any free-text detachment_name strings
-  // that have ever been entered for this faction in a game. Once Joe types
-  // "Custom Crusade" once, everyone else sees it as an autocomplete suggestion.
+  // Union the seeded detachments with any free-text names ever entered for this
+  // faction in a game. Once Joe types "Custom Crusade" once, everyone else sees
+  // it as an autocomplete suggestion. Reads player_detachments, NOT the joined
+  // game_players.detachment_name display string — otherwise a player who
+  // fielded two detachments would suggest "A, B" as if it were one.
   const { rows } = await pool.query(`
     SELECT name FROM (
       SELECT name FROM detachments WHERE faction_id = $1
       UNION
-      SELECT TRIM(gp.detachment_name) AS name
-      FROM game_players gp
+      SELECT TRIM(pd.detachment_name) AS name
+      FROM player_detachments pd
+      JOIN game_players gp ON gp.id = pd.game_player_id
       WHERE gp.faction_id = $1
-        AND gp.detachment_name IS NOT NULL
-        AND TRIM(gp.detachment_name) <> ''
+        AND TRIM(pd.detachment_name) <> ''
     ) names
     ORDER BY name
   `, [id]);

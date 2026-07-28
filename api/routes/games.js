@@ -191,7 +191,7 @@ router.get('/:id', async (req, res) => {
     [id]
   );
   const playerIds = players.rows.map(p => p.id);
-  const [rounds, secondaries, challengers] = await Promise.all([
+  const [rounds, secondaries, challengers, detachments] = await Promise.all([
     playerIds.length
       ? pool.query(`SELECT * FROM game_rounds WHERE game_player_id = ANY($1::int[]) ORDER BY round_number`, [playerIds])
       : { rows: [] },
@@ -201,12 +201,18 @@ router.get('/:id', async (req, res) => {
     playerIds.length
       ? pool.query(`SELECT * FROM player_challengers WHERE game_player_id = ANY($1::int[]) ORDER BY id`, [playerIds])
       : { rows: [] },
+    playerIds.length
+      ? pool.query(`SELECT * FROM player_detachments WHERE game_player_id = ANY($1::int[]) ORDER BY sort_order, id`, [playerIds])
+      : { rows: [] },
   ]);
 
   for (const p of players.rows) {
     p.rounds = rounds.rows.filter(r => r.game_player_id === p.id);
     p.secondaries = secondaries.rows.filter(s => s.game_player_id === p.id);
     p.challengers = challengers.rows.filter(c => c.game_player_id === p.id);
+    p.detachments = detachments.rows
+      .filter(d => d.game_player_id === p.id)
+      .map(d => d.detachment_name);
   }
   res.json({ ...game.rows[0], players: players.rows });
 });
@@ -355,7 +361,46 @@ async function resolveGameLookups(client, b) {
   }
 }
 
+// The five 11e Force Dispositions. Yours vs your opponent's decides the named
+// primary mission each of you plays.
+const FORCE_DISPOSITIONS = new Set([
+  'Take and Hold', 'Purge the Foe', 'Disruption', 'Reconnaissance', 'Priority Assets',
+]);
+
+// 11e allows more than one detachment per player. The list is authoritative
+// (player_detachments); `detachment_name` on game_players is the joined display
+// string kept for the list/detail views and older queries.
+function detachmentList(p) {
+  const raw = Array.isArray(p.detachments) && p.detachments.length
+    ? p.detachments
+    : [p.detachmentName];
+  const seen = new Set();
+  const out = [];
+  for (const d of raw) {
+    const name = typeof d === 'string' ? d.trim() : (d && d.name ? String(d.name).trim() : '');
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(name);
+  }
+  return out;
+}
+
+function joinDetachments(p) {
+  const list = detachmentList(p);
+  return list.length ? list.join(', ') : null;
+}
+
 async function insertPlayerChildren(client, gamePlayerId, p) {
+  const detachments = detachmentList(p);
+  for (let i = 0; i < detachments.length; i++) {
+    await client.query(
+      `INSERT INTO player_detachments (game_player_id, detachment_name, sort_order)
+       VALUES ($1, $2, $3)`,
+      [gamePlayerId, detachments[i], i]
+    );
+  }
   for (const r of p.rounds || []) {
     await client.query(
       `INSERT INTO game_rounds (game_player_id, round_number, primary_score, secondary_score, cp_remaining)
@@ -422,17 +467,18 @@ router.post('/', requireAuth, async (req, res) => {
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
              detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-             primary_mission_id, primary_mission_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             primary_mission_id, primary_mission_name, force_disposition)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
            RETURNING id`,
           [
             gameId, seat, p.userId ?? null, p.guestName ?? null,
             p.factionId ?? null, p.detachmentId ?? null,
-            (p.detachmentName && p.detachmentName.trim()) || null,
+            joinDetachments(p),
             p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
             p.primaryMissionId ?? null,
             (p.primaryMissionName && p.primaryMissionName.trim()) || null,
+            FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);
@@ -507,17 +553,18 @@ router.put('/:id', requireAuth, async (req, res) => {
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
              detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-             primary_mission_id, primary_mission_name)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             primary_mission_id, primary_mission_name, force_disposition)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
            RETURNING id`,
           [
             id, seat, p.userId ?? null, p.guestName ?? null,
             p.factionId ?? null, p.detachmentId ?? null,
-            (p.detachmentName && p.detachmentName.trim()) || null,
+            joinDetachments(p),
             p.armyListCode ?? null,
             !!p.wentFirst, p.isAttacker ?? null, p.finalScore || 0, p.result ?? null,
             p.primaryMissionId ?? null,
             (p.primaryMissionName && p.primaryMissionName.trim()) || null,
+            FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);

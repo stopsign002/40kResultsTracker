@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS game_players (
   detachment_name TEXT,
   primary_mission_id   INTEGER REFERENCES primary_missions(id),
   primary_mission_name TEXT,
+  force_disposition    TEXT CHECK (force_disposition IN
+    ('Take and Hold','Purge the Foe','Disruption','Reconnaissance','Priority Assets')),
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -154,6 +156,21 @@ CREATE TABLE IF NOT EXISTS game_rounds (
   cp_remaining     INTEGER,
   UNIQUE (game_player_id, round_number)
 );
+
+-- 11e lets a player field more than one detachment, so detachments are a child
+-- table rather than a single column. game_players.detachment_name is kept as a
+-- DERIVED display string (the names joined with ', ') so the game list, detail
+-- view and any older query keep working — this table is the source of truth,
+-- and analytics/autocomplete read it, not the joined string.
+CREATE TABLE IF NOT EXISTS player_detachments (
+  id              SERIAL PRIMARY KEY,
+  game_player_id  INTEGER NOT NULL REFERENCES game_players(id) ON DELETE CASCADE,
+  detachment_id   INTEGER REFERENCES detachments(id),
+  detachment_name TEXT NOT NULL,
+  sort_order      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_player_detachments_gp ON player_detachments(game_player_id);
+CREATE INDEX IF NOT EXISTS idx_player_detachments_name ON player_detachments(detachment_name);
 
 -- Tactical secondaries drawn per round, OR fixed secondaries (round_number = NULL means fixed-pick total)
 CREATE TABLE IF NOT EXISTS player_secondaries (
@@ -267,6 +284,18 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE player_secondaries ADD COLUMN drawn_round INTEGER
       CHECK (drawn_round BETWEEN 1 AND 5);
+  END IF;
+END $$;
+
+-- Migration: 11e Force Disposition (per player). Yours vs your opponent's is
+-- what decides the named primary mission each of you plays. NULL on 10e games.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='force_disposition'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN force_disposition TEXT CHECK (force_disposition IN
+      ('Take and Hold','Purge the Foe','Disruption','Reconnaissance','Priority Assets'));
   END IF;
 END $$;
 

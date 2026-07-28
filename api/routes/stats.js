@@ -219,6 +219,9 @@ router.get('/secondary-averages', async (_req, res) => {
 // Groups game_players by (faction, detachment_name) to surface which
 // detachments actually win. Detachments are free-text now, so unknown
 // or empty values bucket into "(unspecified)".
+// One row per (faction, detachment). A player who fielded two detachments in
+// 11e counts once under each, so the games column can exceed the game count for
+// that faction — that's the nature of a multi-valued dimension, not a bug.
 router.get('/detachment-winrates', async (req, res) => {
   const factionId = req.query.factionId ? parseInt(req.query.factionId, 10) : null;
   const where = [COUNTED_GAMES];
@@ -229,7 +232,7 @@ router.get('/detachment-winrates', async (req, res) => {
     SELECT
       f.id                                             AS faction_id,
       f.name                                           AS faction,
-      COALESCE(NULLIF(TRIM(gp.detachment_name), ''), '(unspecified)') AS detachment,
+      COALESCE(NULLIF(TRIM(pd.detachment_name), ''), '(unspecified)') AS detachment,
       COUNT(*)::int                                    AS games,
       SUM(CASE WHEN gp.result = 'win'  THEN 1 ELSE 0 END)::int AS wins,
       SUM(CASE WHEN gp.result = 'loss' THEN 1 ELSE 0 END)::int AS losses,
@@ -238,6 +241,7 @@ router.get('/detachment-winrates', async (req, res) => {
     FROM game_players gp
     JOIN games g ON g.id = gp.game_id
     JOIN factions f ON f.id = gp.faction_id
+    LEFT JOIN player_detachments pd ON pd.game_player_id = gp.id
     WHERE ${where.join(' AND ')}
     GROUP BY f.id, f.name, detachment
     ORDER BY games DESC, f.name, detachment

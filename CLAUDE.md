@@ -405,11 +405,12 @@ Tables (snake_case throughout):
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
 | `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), edition ('10'\|'11' — DB default '11'; pre-existing rows backfilled to '10'), season_id (FK seasons.id), created_at, updated_at |
-| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy — populated for old games only), detachment_name (free-text; how new games store the detachment), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
+| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy), detachment_name (**DERIVED** — `player_detachments` joined with ', '), force_disposition (**11e only**, 5-value CHECK), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (10e: the round scored; **11e: the round the card SCORED, NULL if it never did**), drawn_round (**11e only** — the round it entered hand; NULL on 10e where draw and score coincide), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
 | `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, width, height, bytes, created_at. Partial unique index `(game_id) WHERE is_thumbnail` — at most one cover per game |
+| `player_detachments` | a player's detachments; 11e allows more than one. **Source of truth** — `game_players.detachment_name` is the derived display string | id, game_player_id (CASCADE), detachment_id (nullable), detachment_name, sort_order |
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
 | `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
@@ -623,7 +624,9 @@ backfilled to **10** (see the invariant table).
 
 | | 10e | 11e |
 |---|---|---|
-| Primary mission | one per game (`games.primary_mission_id`) | **one per player** (`game_players.primary_mission_id` / `_name`) |
+| Primary mission | one per game (`games.primary_mission_id`) | **one per player**, decided by the Force Disposition pairing (`game_players.primary_mission_id` / `_name`) |
+| Force Disposition | n/a | one per player (`game_players.force_disposition`), 5 values |
+| Detachments | one per player | **many** per player (`player_detachments`) |
 | Secondaries | 2 slots per round; drawn and scored in the same round | cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored) |
 | Challenger cards | yes | **none** — `serializeDraft()` drops them and `computeFinalScores` ignores them |
 | Score ceiling | `min(100, primary + secondary + challengers)` | `min(45, primary) + min(45, secondary)` — two independent halves, no cross-subsidy |
@@ -648,12 +651,57 @@ backfilled to **10** (see the invariant table).
   round, a scored round or a score — untouched rows never reach the payload,
   and a row that's cleared back to empty is pruned. Cards the seed list is
   missing can still be added via "+ Card not listed".
-- **Mission pack `2026 - 2027 Chapter Approved`** carries the 11e deck. Its
-  primary missions are deliberately **unseeded** — they're typed free-text and
-  `resolveGameLookups()` files each new name under the pack, so the autocomplete
-  list grows itself. The seeded secondary deck (10 cards) was transcribed from a
-  single game screenshot and is **probably incomplete** (it jumps Cleanse →
-  Outflank). Adding the rest is a `seed.sql` append, nothing else.
+- **Force Dispositions** are the 11e mission generator. There are five — Take
+  and Hold, Purge the Foe, Disruption, Reconnaissance, Priority Assets — and
+  every detachment is associated with one. Cross-referencing your pick against
+  your opponent's yields the named primary mission **each** of you plays, which
+  is the whole reason the primary is per-player. 5 x 5 = the 25 named missions
+  seeded for the pack. `PRIMARY_MATRIX` in `game-form.js` mirrors that table
+  (keyed `[yours][theirs]`) and auto-fills both players' primaries once both
+  dispositions are set; the field stays editable, so it's a shortcut not a lock.
+  The matrix is duplicated in the client only — the server just stores whatever
+  primary it's sent, and validates `force_disposition` against the 5-value
+  whitelist (anything else is stored as NULL).
+- **Mission pack `2026 - 2027 Chapter Approved`** carries the full 11e deck:
+  **18 secondaries** and **25 primary missions**, sourced from the GDM 2026
+  mission database (game-datamissions.com / gdmissions.app) and cross-checked
+  against Warhammer Community + Spikey Bits for the disposition list. Four
+  secondaries (A Grievous Blow, Assassination, Bring it Down, Engage on All
+  Fronts) are additionally the **Fixed** options; all 18 are seeded `tactical`
+  because they're all drawable in a Tactical game and `card_type` only drives
+  sort order in `reference.js` — it gates nothing.
+- **Card name casing** — the first 10 secondaries were transcribed from a
+  screenshot of an app that title-cases every word, giving `Bring It Down` /
+  `Burden Of Trust`. `seed.sql` carries a guarded rename to GW's casing that
+  runs **before** the deck insert, so the existing `card_id` survives and the
+  denormalised `player_secondaries.card_name` on already-recorded games is
+  dragged along. If you ever re-source card names, follow that pattern rather
+  than inserting a second row.
+
+---
+
+## Detachments (multi-valued since 11e)
+
+11e lets a player field more than one detachment, so `player_detachments` is the
+source of truth — one row per (game_player, detachment), `sort_order` preserving
+entry order.
+
+- **`game_players.detachment_name` is now DERIVED**: the names joined with
+  `', '`. It's kept so the game list, detail view and any older query keep
+  working unchanged. Never write it directly — `joinDetachments()` in
+  `routes/games.js` computes it from the same list that populates the child
+  table, and `detachmentList()` trims, drops blanks and de-duplicates
+  case-insensitively first.
+- **Anything analytical reads the child table, not the joined string.** Both
+  `/reference/factions/:id/detachments` (autocomplete) and
+  `/stats/detachment-winrates` were repointed — otherwise a player who fielded
+  two detachments would suggest `"A, B"` as if it were a single detachment, and
+  would form its own bogus win-rate bucket. Post-change, a two-detachment player
+  counts once under **each**, so that stat's `games` column can exceed the
+  faction's game count. That's inherent to a multi-valued dimension.
+- **Back-compat**: a payload with no `detachments` array falls back to the
+  legacy `detachmentName` string, so an old client still saves correctly.
+  `seed.sql` backfills one child row per historical `detachment_name`.
 
 ---
 

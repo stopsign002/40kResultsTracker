@@ -372,10 +372,13 @@ function buildPlayerCard(p, g) {
       p.went_first ? pill('Went 1st', 'first') : pill('Went 2nd', ''),
     ]),
     el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, [
-      [p.faction_name, p.detachment_name].filter(Boolean).join(' — ') || 'Faction unknown',
+      [
+        p.faction_name,
+        (p.detachments && p.detachments.length ? p.detachments.join(', ') : p.detachment_name),
+      ].filter(Boolean).join(' — ') || 'Faction unknown',
     ]),
     is11 ? el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } },
-      `Primary: ${p.primary_mission_name || p.primary_mission_ref || '—'}`) : null,
+      `${p.force_disposition ? p.force_disposition + ' · ' : ''}Primary: ${p.primary_mission_name || p.primary_mission_ref || '—'}`) : null,
     el('h3', {}, 'Rounds'),
     el('div', {}, roundRows),
     secondaries,
