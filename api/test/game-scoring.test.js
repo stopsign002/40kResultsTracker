@@ -245,3 +245,52 @@ test('computeFinalScores 10e: a challenger alone still counts as card detail', (
   assert.equal(p.rounds[0].secondaryScore, 8);
   assert.equal(p.finalScore, 18);
 });
+
+// ── Chess-clock times ─────────────────────────────────────────
+import { resolvePlayerTimes } from '../lib/game-scoring.js';
+
+function timedPlayer(perRound, total) {
+  const p = blankPlayer({ rounds: emptyRounds() });
+  if (perRound) perRound.forEach((v, i) => { p.rounds[i].timeSeconds = v; });
+  if (total !== undefined) p.timeSeconds = total;
+  return p;
+}
+
+test('resolvePlayerTimes: per-round entries sum to the player total', () => {
+  const p = timedPlayer([300, 420, 600, 180, 240]);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 1740);
+});
+
+test('resolvePlayerTimes: a partially-clocked game sums only what is there', () => {
+  const p = timedPlayer([300, null, 600, null, null]);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 900);
+});
+
+test('resolvePlayerTimes: per-round wins over a stale typed total', () => {
+  const p = timedPlayer([300, 300], 99999);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 600, 'granular and headline figures must not disagree');
+});
+
+test('resolvePlayerTimes: typed total stands when no round has a time', () => {
+  const p = timedPlayer(null, 3600);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 3600);
+});
+
+test('resolvePlayerTimes: an unclocked game stays null rather than 0', () => {
+  const p = timedPlayer(null);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, null, 'untimed is not a 0-second game');
+});
+
+test('resolvePlayerTimes: junk and negatives are discarded', () => {
+  const p = timedPlayer(null, -5);
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, null);
+  const q = timedPlayer(null, 'abc');
+  resolvePlayerTimes([q]);
+  assert.equal(q.timeSeconds, null);
+});

@@ -3,7 +3,7 @@ import { pool, withTx } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
-import { computeFinalScores, validateGameInput } from '../lib/game-scoring.js';
+import { computeFinalScores, validateGameInput, resolvePlayerTimes } from '../lib/game-scoring.js';
 import { FACTION_HOMES, chooseSpareAnchor } from '../lib/faction-anchors.js';
 import { notify } from '../lib/mail.js';
 
@@ -412,9 +412,10 @@ async function insertPlayerChildren(client, gamePlayerId, p) {
   }
   for (const r of p.rounds || []) {
     await client.query(
-      `INSERT INTO game_rounds (game_player_id, round_number, primary_score, secondary_score, cp_remaining)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [gamePlayerId, r.roundNumber, r.primaryScore || 0, r.secondaryScore || 0, r.cpRemaining ?? null]
+      `INSERT INTO game_rounds (game_player_id, round_number, primary_score, secondary_score, cp_remaining, time_seconds)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [gamePlayerId, r.roundNumber, r.primaryScore || 0, r.secondaryScore || 0,
+       r.cpRemaining ?? null, r.timeSeconds ?? null]
     );
   }
   for (const s of p.secondaries || []) {
@@ -442,6 +443,7 @@ router.post('/', requireAuth, async (req, res) => {
   }
   await resolvePlayerIdentities(req.body.players);
   computeFinalScores(req.body.players, req.body.edition === '11' ? '11' : '10');
+  resolvePlayerTimes(req.body.players);
   const b = req.body;
 
   try {
@@ -476,8 +478,8 @@ router.post('/', requireAuth, async (req, res) => {
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
              detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-             primary_mission_id, primary_mission_name, force_disposition)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             primary_mission_id, primary_mission_name, force_disposition, time_seconds)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
            RETURNING id`,
           [
             gameId, seat, p.userId ?? null, p.guestName ?? null,
@@ -488,6 +490,7 @@ router.post('/', requireAuth, async (req, res) => {
             p.primaryMissionId ?? null,
             (p.primaryMissionName && p.primaryMissionName.trim()) || null,
             FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
+            p.timeSeconds ?? null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);
@@ -515,6 +518,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   }
   await resolvePlayerIdentities(req.body.players);
   computeFinalScores(req.body.players, req.body.edition === '11' ? '11' : '10');
+  resolvePlayerTimes(req.body.players);
   const b = req.body;
 
   try {
@@ -562,8 +566,8 @@ router.put('/:id', requireAuth, async (req, res) => {
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
              detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-             primary_mission_id, primary_mission_name, force_disposition)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+             primary_mission_id, primary_mission_name, force_disposition, time_seconds)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
            RETURNING id`,
           [
             id, seat, p.userId ?? null, p.guestName ?? null,
@@ -574,6 +578,7 @@ router.put('/:id', requireAuth, async (req, res) => {
             p.primaryMissionId ?? null,
             (p.primaryMissionName && p.primaryMissionName.trim()) || null,
             FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
+            p.timeSeconds ?? null,
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);

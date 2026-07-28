@@ -80,6 +80,38 @@ export function computeFinalScores(players, edition = '10') {
 }
 
 /**
+ * Chess-clock times. Per-round entries are optional detail: if ANY round for a
+ * player carries a time, the player's total is their sum — so the granular and
+ * headline figures can never disagree. With no per-round data the typed total
+ * stands on its own. Same shape as the secondary card/round-total rule.
+ *
+ * Mutates each player in place, setting `p.timeSeconds`.
+ *
+ * @param {PlayerPayload[]} players
+ * @returns {void}
+ */
+export function resolvePlayerTimes(players) {
+  for (const p of players || []) {
+    const perRound = (p.rounds || [])
+      .map(r => toSeconds(r.timeSeconds))
+      .filter(v => v != null);
+    if (perRound.length) {
+      p.timeSeconds = perRound.reduce((sum, v) => sum + v, 0);
+    } else {
+      p.timeSeconds = toSeconds(p.timeSeconds);
+    }
+  }
+}
+
+/** Non-negative whole seconds, or null for anything unusable. */
+function toSeconds(v) {
+  if (v == null || v === '') return null;
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/**
  * Throws if the inbound game payload is missing required fields. Run before
  * computeFinalScores / insertPlayerChildren / etc.
  *

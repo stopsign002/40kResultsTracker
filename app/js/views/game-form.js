@@ -1,5 +1,5 @@
 import { games, reference } from '../api.js';
-import { el, clear, toast, selectOptions, confirmModal } from '../components.js';
+import { el, clear, toast, selectOptions, confirmModal, fmtDuration } from '../components.js';
 
 const ROUNDS = [1, 2, 3, 4, 5];
 
@@ -64,6 +64,24 @@ const PRIMARY_MATRIX = {
     'Priority Assets': 'Sabotage',
   },
 };
+
+// Chess-clock entry. Accepts what people actually type off a clock: "12:34",
+// "1:05:30", or a bare number meaning minutes ("12" = 12 minutes). Returns
+// whole seconds, or null for blank/unparseable.
+function parseDuration(text) {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const mins = parseFloat(raw);
+    return Number.isFinite(mins) ? Math.round(mins * 60) : null;
+  }
+  const parts = raw.split(':');
+  if (parts.length < 2 || parts.length > 3 || parts.some(x => !/^\d+$/.test(x.trim()))) return null;
+  const nums = parts.map(x => parseInt(x.trim(), 10));
+  const [h, m, s] = nums.length === 3 ? nums : [0, nums[0], nums[1]];
+  if (m > 59 || s > 59) return null;
+  return h * 3600 + m * 60 + s;
+}
 
 let comboSeq = 0;
 function comboField(items, currentId, currentName, onChange, opts = {}) {
@@ -476,9 +494,10 @@ export async function renderGameForm(state, gameId) {
             ]),
           ])
         : null,
-      el('div', { class: 'form-row cols-2' }, [
+      el('div', { class: 'form-row cols-3' }, [
         field('Went First', wentFirstChk, true),
         field('Winner', winnerChk, true),
+        buildTotalTime(p, idx),
       ]),
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
       buildRoundsTable(p),
@@ -596,6 +615,38 @@ export async function renderGameForm(state, gameId) {
     ]);
   }
 
+  const roundsAreClocked = (p) => (p.rounds || []).some(r => r.timeSeconds != null);
+
+  // Total chess-clock time. Read-only and derived once any round carries a
+  // time, so the headline can never contradict the per-round breakdown — the
+  // same rule the server applies in resolvePlayerTimes().
+  function buildTotalTime(p, idx) {
+    const derived = roundsAreClocked(p);
+    const total = derived
+      ? (p.rounds || []).reduce((sum, r) => sum + (r.timeSeconds || 0), 0)
+      : p.timeSeconds;
+
+    const inp = el('input', {
+      type: 'text', inputmode: 'numeric',
+      placeholder: derived ? '' : 'e.g. 1:12:30',
+      value: fmtDuration(total) ?? '',
+      readonly: derived ? '' : null,
+      'data-time-total': String(idx),
+      style: derived ? { opacity: '0.7' } : null,
+    });
+    if (!derived) {
+      inp.addEventListener('change', () => {
+        p.timeSeconds = parseDuration(inp.value);
+        inp.value = fmtDuration(p.timeSeconds) ?? '';
+      });
+    }
+
+    return el('div', { class: 'form-group' }, [
+      el('label', {}, derived ? 'Total Time (from rounds)' : 'Total Time'),
+      inp,
+    ]);
+  }
+
   function buildSecondaryModeToggle(p) {
     const sel = el('select', { style: { width: 'auto' } }, [
       el('option', { value: 'cards' }, 'Track each secondary'),
@@ -642,6 +693,19 @@ export async function renderGameForm(state, gameId) {
         });
         cells.push(el('td', {}, sec));
       }
+
+      const time = el('input', {
+        type: 'text', inputmode: 'numeric', placeholder: '–',
+        value: fmtDuration(r.timeSeconds) ?? '',
+        style: { textAlign: 'center' },
+      });
+      time.addEventListener('change', () => {
+        r.timeSeconds = parseDuration(time.value);
+        time.value = fmtDuration(r.timeSeconds) ?? '';
+        refreshTotals();
+      });
+      cells.push(el('td', {}, time));
+
       return el('tr', {}, cells);
     });
 
@@ -659,6 +723,7 @@ export async function renderGameForm(state, gameId) {
           el('th', {}, ''),
           el('th', {}, 'Primary'),
           roundTotals ? el('th', {}, 'Secondary') : null,
+          el('th', { title: 'Chess clock — m:ss, or a plain number of minutes' }, 'Time'),
         ].filter(Boolean))),
         el('tbody', {}, rows),
       ]),
@@ -676,6 +741,10 @@ export async function renderGameForm(state, gameId) {
       if (sec) sec.textContent = capLabel(sumSecondaryPoints(pl), E11_SECONDARY_CAP);
       const pri = root.querySelector(`[data-pri-total="${i}"]`);
       if (pri) pri.textContent = capLabel(sumPrimary(pl), E11_PRIMARY_CAP);
+      const t = root.querySelector(`[data-time-total="${i}"]`);
+      if (t && roundsAreClocked(pl)) {
+        t.value = fmtDuration((pl.rounds || []).reduce((sum, r) => sum + (r.timeSeconds || 0), 0)) ?? '';
+      }
     });
   }
 
@@ -1142,6 +1211,7 @@ function makeDraft(existing) {
       primaryMissionId: p.primary_mission_id ?? null,
       primaryMissionName: p.primary_mission_name ?? null,
       forceDisposition: p.force_disposition ?? null,
+      timeSeconds: p.time_seconds ?? null,
       detachments: Array.isArray(p.detachments) && p.detachments.length
         ? p.detachments.slice()
         : (p.detachment_name ? [p.detachment_name] : []),
@@ -1156,6 +1226,7 @@ function makeDraft(existing) {
         primaryScore: r.primary_score,
         secondaryScore: r.secondary_score,
         cpRemaining: r.cp_remaining,
+        timeSeconds: r.time_seconds ?? null,
       })),
       secondaries: (p.secondaries || []).map(s => ({
         cardId: s.card_id, cardName: s.card_name, roundNumber: s.round_number,
@@ -1175,7 +1246,7 @@ function emptyPlayer() {
     userId: null, guestName: null,
     factionId: null, detachmentId: null, detachmentName: null,
     primaryMissionId: null, primaryMissionName: null,
-    forceDisposition: null, detachments: [],
+    forceDisposition: null, detachments: [], timeSeconds: null,
     armyListCode: null, wentFirst: false, isAttacker: null,
     manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),
@@ -1267,6 +1338,7 @@ function restorePayload(g) {
       primaryMissionId: p.primary_mission_id ?? null,
       primaryMissionName: p.primary_mission_name ?? null,
       forceDisposition: p.force_disposition ?? null,
+      timeSeconds: p.time_seconds ?? null,
       detachments: Array.isArray(p.detachments) && p.detachments.length
         ? p.detachments.slice()
         : (p.detachment_name ? [p.detachment_name] : []),
@@ -1281,6 +1353,7 @@ function restorePayload(g) {
         primaryScore: r.primary_score,
         secondaryScore: r.secondary_score,
         cpRemaining: r.cp_remaining,
+        timeSeconds: r.time_seconds ?? null,
       })),
       secondaries: (p.secondaries || []).map(s => ({
         cardId: s.card_id, cardName: s.card_name, roundNumber: s.round_number,

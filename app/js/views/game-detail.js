@@ -1,6 +1,6 @@
 import { games, admin, gameImages, mapImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
-import { el, fmtDate, pill, toast, confirmModal } from '../components.js';
+import { el, fmtDate, pill, toast, confirmModal, fmtDuration } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
   const root = el('div', { class: 'fade-in' });
@@ -423,7 +423,10 @@ function buildPlayerCard(p, g) {
       el('div', { class: 'cell', style: { textAlign: 'center', color: 'var(--text-muted)' } }, `R${rn}`),
       el('div', { class: 'cell tabular' }, `Pri: ${r.primary_score}`),
       el('div', { class: 'cell tabular' }, `Sec: ${r.secondary_score}`),
-    ]);
+      r.time_seconds != null
+        ? el('div', { class: 'cell tabular muted' }, `⏱ ${fmtDuration(r.time_seconds)}`)
+        : null,
+    ].filter(Boolean));
   });
 
   const is11 = g.edition === '11';
@@ -483,7 +486,9 @@ function buildPlayerCard(p, g) {
       pill(p.result || '—', p.result),
       ' ',
       p.went_first ? pill('Went 1st', 'first') : pill('Went 2nd', ''),
-    ]),
+      p.time_seconds != null ? ' ' : null,
+      p.time_seconds != null ? pill(`⏱ ${fmtDuration(p.time_seconds)}`, '') : null,
+    ].filter(Boolean)),
     el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, [
       [
         p.faction_name,

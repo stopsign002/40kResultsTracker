@@ -694,6 +694,26 @@ backfilled to **10** (see the invariant table).
 
 ---
 
+## Chess-clock timing
+
+Optional, and granular only if you want it. `game_players.time_seconds` is the
+player total; `game_rounds.time_seconds` is the optional per-round breakdown.
+
+- **`resolvePlayerTimes()`** in `lib/game-scoring.js` (called from both write
+  paths) applies the same rule as the secondary card/round-total split: **if any
+  round carries a time, the player total is their sum**; otherwise the typed
+  total stands alone. The headline and the breakdown therefore can never
+  disagree. Junk, negatives and blanks resolve to `null` — an unclocked game is
+  *untimed*, not a 0-second game, so don't let it become 0 or averages will lie.
+- The form's Total Time box goes **read-only and derived** as soon as one round
+  is clocked, mirroring the server rule in the UI.
+- **Entry format** (`parseDuration()` in `game-form.js`): `m:ss`, `h:mm:ss`, or
+  a bare number meaning **minutes** (`90` → 1:30:00, `7.5` → 7:30). Rejects
+  `12:99` and other nonsense rather than coercing. `fmtDuration()` in
+  `components.js` renders it back as `m:ss` / `h:mm:ss`.
+
+---
+
 ## Detachments (multi-valued since 11e)
 
 11e lets a player field more than one detachment, so `player_detachments` is the

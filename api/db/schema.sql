@@ -128,6 +128,9 @@ CREATE TABLE IF NOT EXISTS game_players (
   primary_mission_name TEXT,
   force_disposition    TEXT CHECK (force_disposition IN
     ('Take and Hold','Purge the Foe','Disruption','Reconnaissance','Priority Assets')),
+  -- Chess-clock time for this player. DERIVED (the sum) whenever any round
+  -- carries a time; otherwise it's whatever total was typed directly.
+  time_seconds         INTEGER CHECK (time_seconds >= 0),
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -159,6 +162,7 @@ CREATE TABLE IF NOT EXISTS game_rounds (
   primary_score    INTEGER NOT NULL DEFAULT 0,
   secondary_score  INTEGER NOT NULL DEFAULT 0,
   cp_remaining     INTEGER,
+  time_seconds     INTEGER CHECK (time_seconds >= 0),
   UNIQUE (game_player_id, round_number)
 );
 
@@ -289,6 +293,23 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE player_secondaries ADD COLUMN drawn_round INTEGER
       CHECK (drawn_round BETWEEN 1 AND 5);
+  END IF;
+END $$;
+
+-- Migration: chess-clock timings. Per-round is optional detail; the player
+-- total is the sum when any round has one, else the typed total.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='time_seconds'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN time_seconds INTEGER CHECK (time_seconds >= 0);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_rounds' AND column_name='time_seconds'
+  ) THEN
+    ALTER TABLE game_rounds ADD COLUMN time_seconds INTEGER CHECK (time_seconds >= 0);
   END IF;
 END $$;
 

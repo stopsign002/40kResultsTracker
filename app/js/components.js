@@ -42,6 +42,19 @@ export function fmtDate(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Seconds -> "M:SS", or "H:MM:SS" past an hour. Chess-clock totals routinely
+// run over an hour, per-round figures almost never do.
+export function fmtDuration(seconds) {
+  if (seconds == null || seconds === '') return null;
+  const total = Math.max(0, Math.round(Number(seconds)));
+  if (!Number.isFinite(total)) return null;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 export function fmtScore(n) {
   if (n == null) return '–';
   return String(n);
