@@ -261,6 +261,18 @@ function attachHoverPreview(imgEl, src) {
 window.addEventListener('scroll', hidePreview, { passive: true, capture: true });
 window.addEventListener('resize', hidePreview, { passive: true });
 
+// 10e has one mission for the game; 11e gives each player their own (decided by
+// the Force Disposition pairing), so there's nothing to show in a single slot —
+// render it as the matchup instead. Falls back to whichever side is known so a
+// half-filled game still says something useful rather than just '—'.
+function missionLabel(g, p1, p2) {
+  if (g.edition !== '11') return g.primary_mission || '—';
+  const a = p1?.primaryMission;
+  const b = p2?.primaryMission;
+  if (a && b) return `${a} vs ${b}`;
+  return a || b || '—';
+}
+
 function thumbWithPreview(g) {
   const src = gameImages.url(g.id, g.thumb_name);
   const im = el('img', { class: 'list-thumb', src, alt: '', loading: 'lazy' });
@@ -304,7 +316,7 @@ function buildTable(list) {
       ].filter(Boolean)),
       el('td', { class: 'muted' }, factions),
       el('td', {}, [
-        g.primary_mission || '—',
+        missionLabel(g, p1, p2),
         g.deployment_map ? el('div', { class: 'dim', style: { fontSize: '11px' } }, g.deployment_map) : null,
       ].filter(Boolean)),
       el('td', { class: 'tabular', style: { textAlign: 'right' } }, score),

@@ -624,7 +624,7 @@ backfilled to **10** (see the invariant table).
 
 | | 10e | 11e |
 |---|---|---|
-| Primary mission | one per game (`games.primary_mission_id`) | **one per player**, decided by the Force Disposition pairing (`game_players.primary_mission_id` / `_name`) |
+| Primary mission | one per game (`games.primary_mission_id`) | **one per player**, decided by the Force Disposition pairing (`game_players.primary_mission_id` / `_name`). The games list renders it as `"A vs B"` (`missionLabel()`), since there's no single game-level mission to put in that column |
 | Force Disposition | n/a | one per player (`game_players.force_disposition`), 5 values |
 | Detachments | one per player | **many** per player (`player_detachments`) |
 | Secondaries | 2 slots per round; drawn and scored in the same round | cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored) |

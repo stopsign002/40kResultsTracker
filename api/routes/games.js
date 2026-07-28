@@ -143,7 +143,9 @@ router.get('/', async (req, res) => {
         'factionName', f.name,
         'finalScore', gp.final_score,
         'result', gp.result,
-        'wentFirst', gp.went_first
+        'wentFirst', gp.went_first,
+        'primaryMission', COALESCE(gp.primary_mission_name, ppm.name),
+        'forceDisposition', gp.force_disposition
       ) ORDER BY gp.seat) AS players
     FROM games g
     LEFT JOIN mission_packs mp ON mp.id = g.mission_pack_id
@@ -152,6 +154,7 @@ router.get('/', async (req, res) => {
     LEFT JOIN game_players gp ON gp.game_id = g.id
     LEFT JOIN users u ON u.id = gp.user_id
     LEFT JOIN factions f ON f.id = gp.faction_id
+    LEFT JOIN primary_missions ppm ON ppm.id = gp.primary_mission_id
     ${whereSql}
     GROUP BY g.id, mp.name, pm.name, dm.name
     ORDER BY g.played_at DESC, g.id DESC
