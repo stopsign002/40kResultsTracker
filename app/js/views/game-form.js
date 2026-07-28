@@ -532,7 +532,15 @@ export async function renderGameForm(state, gameId) {
   function buildHeldSecondaries(p) {
     const idx = draft.players.indexOf(p);
     const COLS = '1fr 88px 88px 64px 30px';
-    const deck = missionDetails.secondaryCards || [];
+    // Alphabetical, explicitly: the API orders by (card_type, name), which is
+    // only alphabetical while every card shares a type. Entry is "find the card
+    // that came up", so a stable A-Z beats deck order. Codepoint compare on the
+    // lowercased name — deterministic, and correct for these ASCII names.
+    const deck = (missionDetails.secondaryCards || []).slice().sort((a, b) => {
+      const x = (a.name || '').toLowerCase();
+      const y = (b.name || '').toLowerCase();
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
     const deckNames = new Set(deck.map(c => (c.name || '').toLowerCase()));
 
     const findEntry = (card) => (p.secondaries || []).find(s =>

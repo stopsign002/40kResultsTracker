@@ -1,4 +1,5 @@
 import { games, admin, gameImages } from '../api.js';
+import { openLightbox } from '../lightbox.js';
 import { el, fmtDate, pill, toast, confirmModal } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
@@ -101,22 +102,44 @@ async function buildPhotosPanel(state, g) {
   const canEdit = (img) => state.user &&
     (state.user.role === 'admin' || img.uploaded_by_user_id === state.user.id);
 
+  // Rebuilt by paint(); the lightbox needs the live element per index so it can
+  // zoom back into whichever photo you cycled to, not the one you opened.
+  let thumbEls = [];
+
   function paint() {
     grid.textContent = '';
+    thumbEls = [];
     if (!images.length) {
       grid.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
         state.user ? 'No photos yet.' : 'No photos.'));
       return;
     }
-    for (const img of images) {
+    images.forEach((img, i) => {
       const thumb = el('img', {
         class: 'photo-thumb',
         src: gameImages.url(g.id, img.thumb_name),
         alt: img.caption || 'Game photo',
         loading: 'lazy',
       });
+      thumbEls[i] = thumb;
+      const opener = el('button', {
+        class: 'photo-open',
+        type: 'button',
+        'aria-label': `Open photo ${i + 1} of ${images.length}`,
+      }, thumb);
+      opener.addEventListener('click', () => {
+        openLightbox({
+          items: images.map(x => ({
+            full: gameImages.url(g.id, x.file_name),
+            thumb: gameImages.url(g.id, x.thumb_name),
+            caption: x.caption || '',
+          })),
+          startIndex: i,
+          thumbFor: (idx) => thumbEls[idx] || null,
+        });
+      });
       const tile = el('figure', { class: 'photo-tile' }, [
-        el('a', { href: gameImages.url(g.id, img.file_name), target: '_blank', rel: 'noopener' }, thumb),
+        opener,
         img.is_thumbnail ? el('span', { class: 'photo-badge' }, 'COVER') : null,
         state.user ? el('div', { class: 'photo-actions' }, [
           img.is_thumbnail ? null : el('button', {
@@ -152,7 +175,7 @@ async function buildPhotosPanel(state, g) {
         ].filter(Boolean)) : null,
       ].filter(Boolean));
       grid.appendChild(tile);
-    }
+    });
   }
 
   uploadBtn.addEventListener('click', () => fileInput.click());
@@ -327,7 +350,17 @@ function buildPlayerCard(p, g) {
 
   const is11 = g.edition === '11';
 
-  const secondaries = (p.secondaries || []).length ? el('div', {}, [
+  // Entry is alphabetical (easy to find a card); review is chronological (easy
+  // to read the game back). 11e only — in 10e a card is drawn and scored in the
+  // same round, so there's no separate draw order to sort by.
+  const orderedSecondaries = is11
+    ? (p.secondaries || []).slice().sort((a, b) =>
+        (a.drawn_round ?? 99) - (b.drawn_round ?? 99) ||
+        (a.round_number ?? 99) - (b.round_number ?? 99) ||
+        ((a.card_name || '') < (b.card_name || '') ? -1 : 1))
+    : (p.secondaries || []);
+
+  const secondaries = orderedSecondaries.length ? el('div', {}, [
     el('h3', { style: { marginTop: '14px' } }, 'Secondaries'),
     el('table', {}, [
       el('thead', {}, el('tr', {}, [
@@ -336,7 +369,7 @@ function buildPlayerCard(p, g) {
         el('th', {}, is11 ? 'Scored' : 'Round'),
         el('th', { style: { textAlign: 'right' } }, 'Score'),
       ].filter(Boolean))),
-      el('tbody', {}, (p.secondaries || []).map(s => el('tr', {}, [
+      el('tbody', {}, orderedSecondaries.map(s => el('tr', {}, [
         el('td', {}, s.card_name),
         is11 ? el('td', { class: 'muted' }, s.drawn_round ? `R${s.drawn_round}` : '—') : null,
         el('td', { class: 'muted' },

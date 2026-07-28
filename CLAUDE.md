@@ -647,6 +647,9 @@ backfilled to **10** (see the invariant table).
   tab-type. Round fields are lenient while typing and clamped to 1-5 on blur,
   so a stray "7" visibly becomes 5 rather than being dropped at save; blank
   means "not drawn" / "never scored".
+  The deck is sorted **alphabetically** for entry (you're hunting for the card
+  that came up); the game-detail view re-sorts the saved cards **by round
+  drawn** so the game reads back chronologically.
   A row only becomes a stored `player_secondaries` entry once it has a drawn
   round, a scored round or a score — untouched rows never reach the payload,
   and a row that's cleared back to empty is pruned. Cards the seed list is
@@ -702,6 +705,32 @@ entry order.
 - **Back-compat**: a payload with no `detachments` array falls back to the
   legacy `detachmentName` string, so an old client still saves correctly.
   `seed.sql` backfills one child row per historical `detachment_name`.
+
+---
+
+## Photo viewer + hover preview
+
+- **`app/js/lightbox.js`** — `openLightbox({ items, startIndex, thumbFor })`.
+  Opens with a **FLIP** zoom out of the clicked thumbnail: the image is laid out
+  at its final size, then transformed back onto the thumbnail's rect and
+  released. Only `transform`/`opacity` are animated — they're the two properties
+  the compositor handles without re-running layout, which is the difference
+  between smooth and janky on a phone. `thumbFor(index)` is re-queried on close
+  so it zooms back into whichever photo you cycled to, not the one you opened.
+  The thumbnail is `object-fit: cover` and the full image `contain`, so a
+  uniform scale can't match both edges — it scales to cover and fades over the
+  difference rather than attempting a true crop morph.
+- Cycling (arrows / chevrons / horizontal swipe) uses a short directional slide,
+  **not** the zoom — the zoom means "this came from that tile". Swipe-down
+  closes. Esc closes, neighbours are preloaded, body scroll is locked, focus is
+  restored on close, and `prefers-reduced-motion` skips the animation.
+- **Hover preview** (`games-list.js`) — enlarged copy of the row thumbnail after
+  a 130ms delay. It is appended to `<body>`, **not** the row: `.panel` is
+  `overflow: hidden`, so anything scaled up inside the table gets clipped at the
+  panel edge. It reuses the already-loaded 400px thumb file (no extra request),
+  flips to the other side near the viewport edge, and is gated behind
+  `(hover: hover) and (pointer: fine)` so a tap on touch doesn't strand one
+  on screen. Hidden on scroll/resize, since it's anchored to a rect.
 
 ---
 

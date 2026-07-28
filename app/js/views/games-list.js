@@ -188,6 +188,86 @@ export async function renderGamesList(state) {
   return root;
 }
 
+// ── Thumbnail hover preview ──────────────────────────────────
+// Shows an enlarged copy of the row thumbnail beside the cursor. Appended to
+// <body> because .panel is overflow:hidden and would clip anything grown
+// inside the table. Reuses the already-loaded 400px thumb file, so it needs no
+// extra request and pops up instantly.
+const HOVER_DELAY_MS = 130;
+const PREVIEW_MAX_PX = 280;
+
+let previewEl = null;
+let previewTimer = null;
+
+function hidePreview() {
+  clearTimeout(previewTimer);
+  previewTimer = null;
+  if (previewEl) { previewEl.remove(); previewEl = null; }
+}
+
+function showPreview(anchor, src) {
+  const probe = new Image();
+  probe.src = src;
+
+  const place = () => {
+    // The anchor can be gone by now (list refreshed, or the pointer left
+    // during decode) — bail rather than positioning against a stale rect.
+    if (!document.body.contains(anchor)) return;
+    const nw = probe.naturalWidth || 4;
+    const nh = probe.naturalHeight || 3;
+    const scale = PREVIEW_MAX_PX / Math.max(nw, nh);
+    const w = Math.round(nw * scale);
+    const h = Math.round(nh * scale);
+
+    const box = el('div', { class: 'thumb-preview' },
+      el('img', { src, alt: '', width: String(w), height: String(h) }));
+    document.body.appendChild(box);
+
+    const r = anchor.getBoundingClientRect();
+    const pad = 10;
+    let left = r.right + 12;
+    let origin = 'left center';
+    if (left + w + pad > window.innerWidth) {
+      left = r.left - w - 12;          // flip to the left edge
+      origin = 'right center';
+    }
+    left = Math.max(pad, Math.min(left, window.innerWidth - w - pad));
+    let top = r.top + r.height / 2 - h / 2;
+    top = Math.max(pad, Math.min(top, window.innerHeight - h - pad));
+
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    box.style.transformOrigin = origin;
+    previewEl = box;
+    requestAnimationFrame(() => box.classList.add('is-in'));
+  };
+
+  if (probe.complete) place();
+  else probe.addEventListener('load', place, { once: true });
+}
+
+function attachHoverPreview(imgEl, src) {
+  // Touch devices fire synthetic hover on tap, which would leave a preview
+  // stranded over the page while navigating.
+  if (!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
+  imgEl.addEventListener('mouseenter', () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => showPreview(imgEl, src), HOVER_DELAY_MS);
+  });
+  imgEl.addEventListener('mouseleave', hidePreview);
+}
+
+// A preview anchored to a rect that just moved would float in the wrong place.
+window.addEventListener('scroll', hidePreview, { passive: true, capture: true });
+window.addEventListener('resize', hidePreview, { passive: true });
+
+function thumbWithPreview(g) {
+  const src = gameImages.url(g.id, g.thumb_name);
+  const im = el('img', { class: 'list-thumb', src, alt: '', loading: 'lazy' });
+  attachHoverPreview(im, src);
+  return im;
+}
+
 function buildTable(list) {
   if (!list.length) return el('div', { class: 'muted' }, 'No games match these filters.');
   const head = el('thead', {}, el('tr', {}, [
@@ -211,12 +291,7 @@ function buildTable(list) {
     const tr = el('tr', { class: 'row-link', onClick: () => window.__nav('/games/' + g.id) }, [
       el('td', {}, g.thumb_name
         ? el('span', { class: 'list-thumb-wrap' }, [
-            el('img', {
-              class: 'list-thumb',
-              src: gameImages.url(g.id, g.thumb_name),
-              alt: '',
-              loading: 'lazy',
-            }),
+            thumbWithPreview(g),
             g.image_count > 1
               ? el('span', { class: 'list-thumb-count' }, String(g.image_count))
               : null,

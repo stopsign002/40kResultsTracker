@@ -730,6 +730,21 @@ td.tabular { font-variant-numeric: tabular-nums; }
   transition: border-color 0.15s ease;
 }
 .photo-tile:hover .photo-thumb { border-color: var(--accent); }
+/* The thumbnail is a <button> so it's keyboard-reachable and announces itself;
+   strip the native chrome so it looks like a plain image tile. */
+.photo-open {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  line-height: 0;
+  border-radius: 4px;
+}
+.photo-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.photo-open .photo-thumb { transition: border-color 0.15s ease, transform 0.15s ease; }
+.photo-open:hover .photo-thumb { transform: scale(1.015); }
 .photo-badge {
   position: absolute;
   top: 6px;
@@ -751,4 +766,130 @@ td.tabular { font-variant-numeric: tabular-nums; }
 }
 @media (max-width: 700px) {
   .photo-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+
+/* ── Lightbox ────────────────────────────────────────────────── */
+body.lb-lock { overflow: hidden; }
+
+.lb-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 10, 12, 0.92);
+  opacity: 0;
+  transition: opacity 220ms ease;
+  /* backdrop-blur is a nice touch but costs a lot on phones over a full-screen
+     image, so it's deliberately left off. */
+}
+.lb-overlay.is-open { opacity: 1; }
+
+.lb-stage {
+  max-width: 94vw;
+  max-height: 88vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lb-img {
+  max-width: 94vw;
+  max-height: 88vh;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  /* will-change keeps the compositor layer warm for the open/close FLIP */
+  will-change: transform, opacity;
+}
+
+.lb-chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  pointer-events: none;
+}
+.lb-chrome > * { pointer-events: auto; }
+.lb-counter {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.lb-caption {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16px 20px 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+.lb-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: var(--text);
+  border-radius: 999px;
+  cursor: pointer;
+  line-height: 1;
+  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+.lb-btn:hover { background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.32); }
+.lb-btn:active { transform: scale(0.94); }
+.lb-close { width: 38px; height: 38px; font-size: 15px; }
+.lb-prev, .lb-next {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  font-size: 26px;
+  padding-bottom: 4px;
+}
+.lb-prev:active, .lb-next:active { transform: translateY(-50%) scale(0.94); }
+.lb-prev { left: 14px; }
+.lb-next { right: 14px; }
+
+@media (max-width: 700px) {
+  /* No hover on touch, and the chevrons crowd a phone screen — swipe covers it. */
+  .lb-prev, .lb-next { display: none; }
+  .lb-img, .lb-stage { max-width: 100vw; max-height: 82vh; }
+}
+
+/* ── Games-list thumbnail hover preview ──────────────────────── */
+/* Appended to <body>, not the row: .panel sets overflow:hidden, so anything
+   scaled up inside the table would be clipped at the panel edge. */
+.thumb-preview {
+  position: fixed;
+  z-index: 800;
+  padding: 4px;
+  background: var(--panel-bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transform: scale(0.88);
+  transition: opacity 130ms ease-out, transform 130ms cubic-bezier(.2,.7,.3,1);
+  pointer-events: none;
+  line-height: 0;
+}
+.thumb-preview.is-in { opacity: 1; transform: scale(1); }
+.thumb-preview img { display: block; border-radius: 3px; }
+
+.list-thumb { transition: transform 130ms ease-out, border-color 130ms ease-out; }
+@media (hover: hover) and (pointer: fine) {
+  tr:hover .list-thumb { transform: scale(1.08); border-color: var(--accent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-overlay, .lb-img, .thumb-preview, .list-thumb { transition-duration: 1ms !important; }
 }
