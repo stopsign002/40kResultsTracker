@@ -1,5 +1,6 @@
 import { games, admin, gameImages, mapImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
+import { extractImagesFromZip, isZipFile } from '../zip.js';
 import { el, fmtDate, pill, toast, confirmModal, fmtDuration } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
@@ -172,7 +173,9 @@ async function buildPhotosPanel(state, g) {
 
   const grid = el('div', { class: 'photo-grid' });
   const fileInput = el('input', {
-    type: 'file', accept: 'image/*', multiple: true, style: { display: 'none' },
+    // .zip because Google Photos bundles a multi-photo download into one.
+    type: 'file', accept: 'image/*,.zip,application/zip', multiple: true,
+    style: { display: 'none' },
   });
   const uploadBtn = el('button', { class: 'btn small primary' }, 'Add photos');
   const status = el('span', { class: 'muted', style: { fontSize: '12px', marginLeft: '8px' } }, '');
@@ -272,10 +275,31 @@ async function buildPhotosPanel(state, g) {
 
   uploadBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', async () => {
-    const files = Array.from(fileInput.files || []);
+    const picked = Array.from(fileInput.files || []);
     fileInput.value = '';
-    if (!files.length) return;
+    if (!picked.length) return;
     uploadBtn.disabled = true;
+
+    // Expand any zips up front so the progress count reflects the real number
+    // of photos, not "1 of 1" for an archive holding thirty.
+    const files = [];
+    for (const f of picked) {
+      if (!isZipFile(f)) { files.push(f); continue; }
+      status.textContent = `Unpacking ${f.name}…`;
+      try {
+        const found = await extractImagesFromZip(f);
+        if (!found.length) toast(`${f.name}: no pictures in that zip`, 'error');
+        files.push(...found);
+      } catch (e) {
+        toast(`${f.name}: ${e.message}`, 'error');
+      }
+    }
+    if (!files.length) {
+      uploadBtn.disabled = false;
+      status.textContent = '';
+      return;
+    }
+
     let done = 0;
     for (const file of files) {
       status.textContent = `Uploading ${done + 1} of ${files.length}…`;

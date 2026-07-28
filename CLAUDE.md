@@ -835,6 +835,17 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
   "request entity too large" while the tests passed, because the test fixture
   was a 352-byte JPEG. **Any size-limit test needs a realistically-sized
   payload.** Every other route stays at 256kb.
+- **Zip uploads** — Google Photos hands you a `.zip` when you download more than
+  one picture, so `app/js/zip.js` unpacks it client-side and feeds each image
+  into the same `shrink()` pipeline. **No library**: the browser's
+  `DecompressionStream('deflate-raw')` does the inflating. It handles STORED and
+  DEFLATE entries in a classic (non-Zip64) archive, finds the end-of-central-
+  directory by scanning backwards (it moves when the archive has a trailing
+  comment), reads the data offset from the **local** header rather than the
+  central directory (their name/extra lengths can differ), and skips
+  directories, `__MACOSX/`, dot-files and non-images. An unsupported entry is
+  skipped rather than failing the batch. Zips are expanded before the upload
+  loop starts so progress reads "3 of 12", not "1 of 1".
 - **Resizing happens in the browser** (`shrink()` in `game-detail.js`): a
   ~2048px full and a ~400px thumb, both JPEG q0.82, posted as base64 data URLs.
   That keeps `sharp`/imagemagick out of the image and means a 12MP phone photo
