@@ -434,23 +434,35 @@ export async function renderGameForm(state, gameId) {
       }
     };
 
-    const roundSel = (selected, blankLabel) => {
-      const sel = el('select', { style: { width: '100%' } }, [
-        el('option', { value: '' }, blankLabel),
-        ...ROUNDS.map(rn => el('option', { value: String(rn) }, `R${rn}`)),
-      ]);
-      sel.value = selected == null ? '' : String(selected);
-      return sel;
+    // Plain number boxes rather than <select>s: entry is type-tab-type-tab-type
+    // down a row, which a dropdown breaks. Blank means "not applicable" — a
+    // card never drawn, or drawn but never scored.
+    const roundInput = (selected) => el('input', {
+      type: 'number', min: '1', max: '5', step: '1', inputmode: 'numeric',
+      value: selected == null ? '' : String(selected),
+      style: { width: '100%', textAlign: 'center' },
+    });
+
+    // Lenient while typing, clamped on blur, so a stray "7" becomes 5 visibly
+    // instead of being silently dropped on save.
+    const readRound = (inp) => {
+      const raw = (inp.value || '').trim();
+      if (!raw) return null;
+      const n = parseInt(raw, 10);
+      if (!Number.isFinite(n)) return null;
+      return Math.min(ROUNDS.length, Math.max(1, n));
     };
+    const normalise = (inp, value) => { inp.value = value == null ? '' : String(value); };
 
     // A deck row: fixed card name, three inputs. Dimmed until it has data, so
     // the cards that actually came up stand out from the full list.
     const deckRow = (card) => {
       const existing = findEntry(card);
-      const drawn = roundSel(existing?.drawnRound, '—');
-      const scored = roundSel(existing?.roundNumber, '—');
+      const drawn = roundInput(existing?.drawnRound);
+      const scored = roundInput(existing?.roundNumber);
       const scoreInp = el('input', {
-        type: 'number', min: '0', max: '20', value: existing?.score ?? 0,
+        type: 'number', min: '0', max: '20', step: '1', inputmode: 'numeric',
+        value: existing?.score ?? 0,
         style: { width: '100%', textAlign: 'center' },
       });
 
@@ -475,11 +487,11 @@ export async function renderGameForm(state, gameId) {
         refreshTotals();
       };
 
-      drawn.addEventListener('change', () =>
-        commit(e => { e.drawnRound = drawn.value ? parseInt(drawn.value, 10) : null; }));
-      scored.addEventListener('change', () =>
-        commit(e => { e.roundNumber = scored.value ? parseInt(scored.value, 10) : null; }));
-      scoreInp.addEventListener('change', () =>
+      drawn.addEventListener('input', () => commit(e => { e.drawnRound = readRound(drawn); }));
+      drawn.addEventListener('change', () => normalise(drawn, readRound(drawn)));
+      scored.addEventListener('input', () => commit(e => { e.roundNumber = readRound(scored); }));
+      scored.addEventListener('change', () => normalise(scored, readRound(scored)));
+      scoreInp.addEventListener('input', () =>
         commit(e => { e.score = parseInt(scoreInp.value, 10) || 0; }));
 
       return row;
@@ -497,20 +509,21 @@ export async function renderGameForm(state, gameId) {
         (id, name) => { entry.cardId = id; entry.cardName = name || 'Unspecified'; },
         { placeholder: 'Card name' });
 
-      const drawn = roundSel(entry.drawnRound, '—');
-      drawn.addEventListener('change', () => {
-        entry.drawnRound = drawn.value ? parseInt(drawn.value, 10) : null;
-      });
-      const scored = roundSel(entry.roundNumber, '—');
-      scored.addEventListener('change', () => {
-        entry.roundNumber = scored.value ? parseInt(scored.value, 10) : null;
+      const drawn = roundInput(entry.drawnRound);
+      drawn.addEventListener('input', () => { entry.drawnRound = readRound(drawn); });
+      drawn.addEventListener('change', () => normalise(drawn, entry.drawnRound));
+      const scored = roundInput(entry.roundNumber);
+      scored.addEventListener('input', () => {
+        entry.roundNumber = readRound(scored);
         refreshTotals();
       });
+      scored.addEventListener('change', () => normalise(scored, entry.roundNumber));
       const scoreInp = el('input', {
-        type: 'number', min: '0', max: '20', value: entry.score ?? 0,
+        type: 'number', min: '0', max: '20', step: '1', inputmode: 'numeric',
+        value: entry.score ?? 0,
         style: { width: '100%', textAlign: 'center' },
       });
-      scoreInp.addEventListener('change', () => {
+      scoreInp.addEventListener('input', () => {
         entry.score = parseInt(scoreInp.value, 10) || 0;
         refreshTotals();
       });
@@ -551,7 +564,7 @@ export async function renderGameForm(state, gameId) {
       ]),
       deck.length || extras.length
         ? el('div', { style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '2px' } },
-            [hdr('Card'), hdr('Drawn', 'center'), hdr('Scored', 'center'), hdr('VP', 'center'), el('div', {})])
+            [hdr('Card'), hdr('Drawn R#', 'center'), hdr('Scored R#', 'center'), hdr('VP', 'center'), el('div', {})])
         : el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '6px' } },
             'Choose a mission pack to list its secondaries.'),
       ...deck.map(deckRow),

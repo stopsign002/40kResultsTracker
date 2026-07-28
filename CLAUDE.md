@@ -640,6 +640,10 @@ backfilled to **10** (see the invariant table).
   `POST` defaults to 11.
 - **The 11e form** lays out the pack's **entire** secondary deck as rows (card
   name fixed, you fill Drawn / Scored / VP), mirroring the War Journal app.
+  Those three are **number inputs, not dropdowns**, so a row is type-tab-type-
+  tab-type. Round fields are lenient while typing and clamped to 1-5 on blur,
+  so a stray "7" visibly becomes 5 rather than being dropped at save; blank
+  means "not drawn" / "never scored".
   A row only becomes a stored `player_secondaries` entry once it has a drawn
   round, a scored round or a score — untouched rows never reach the payload,
   and a row that's cleared back to empty is pruned. Cards the seed list is
