@@ -294,3 +294,65 @@ test('resolvePlayerTimes: junk and negatives are discarded', () => {
   resolvePlayerTimes([q]);
   assert.equal(q.timeSeconds, null);
 });
+
+// ── Final-score-only entry ────────────────────────────────────
+// The bottom rung: no cards, no round figures, just "it was 62-55". Anything
+// that recomputed from the (empty) breakdown would score it 0-0 and record a
+// draw, which is worse than not logging the game at all.
+
+test('computeFinalScores 11e: a bare final score is kept as submitted', () => {
+  const a = e11Player({ guestName: 'A', finalScore: 62 });
+  const b = e11Player({ guestName: 'B', finalScore: 55 });
+  computeFinalScores([a, b], '11');
+  assert.equal(a.finalScore, 62);
+  assert.equal(b.finalScore, 55);
+  assert.equal(a.result, 'win');
+  assert.equal(b.result, 'loss');
+});
+
+test('computeFinalScores 11e: a bare final score is clamped to the 90 ceiling', () => {
+  const p = e11Player({ finalScore: 140 });
+  computeFinalScores([p, e11Player({ finalScore: 10 })], '11');
+  assert.equal(p.finalScore, 90);
+});
+
+test('computeFinalScores 10e: a bare final score is clamped to 100', () => {
+  const p = blankPlayer({ finalScore: 250 });
+  computeFinalScores([p, blankPlayer({ finalScore: 10 })]);
+  assert.equal(p.finalScore, 100);
+});
+
+test('computeFinalScores: a single round figure outranks a submitted total', () => {
+  const p = withPrimary(e11Player({ finalScore: 62 }), [10, 0, 0, 0, 0]);
+  computeFinalScores([p, e11Player({ finalScore: 5 })], '11');
+  assert.equal(p.finalScore, 10, 'once anything is broken down, the breakdown wins');
+});
+
+test('computeFinalScores: cards outrank a submitted total too', () => {
+  const p = e11Player({ finalScore: 62 });
+  p.secondaries = [{ cardName: 'Beacon', drawnRound: 1, roundNumber: 1, score: 5 }];
+  computeFinalScores([p, e11Player({ finalScore: 5 })], '11');
+  assert.equal(p.finalScore, 5);
+});
+
+test('computeFinalScores: an empty game is still 0-0 and a draw', () => {
+  const a = e11Player({ guestName: 'A' });
+  const b = e11Player({ guestName: 'B' });
+  computeFinalScores([a, b], '11');
+  assert.equal(a.finalScore, 0);
+  assert.equal(a.result, 'draw');
+});
+
+test('computeFinalScores: junk in a bare final score becomes 0, not NaN', () => {
+  const p = e11Player({ finalScore: 'abc' });
+  computeFinalScores([p, e11Player({ finalScore: 3 })], '11');
+  assert.equal(p.finalScore, 0);
+});
+
+test('computeFinalScores: manual winner still overrides a bare final score', () => {
+  const a = e11Player({ guestName: 'A', finalScore: 40, manualWinner: true });
+  const b = e11Player({ guestName: 'B', finalScore: 70 });
+  computeFinalScores([a, b], '11');
+  assert.equal(a.result, 'win', 'concessions beat the scoreline');
+  assert.equal(b.result, 'loss');
+});

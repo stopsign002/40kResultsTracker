@@ -11,6 +11,7 @@
 // at 100 and folds challenger cards into the secondary half.
 export const E11_PRIMARY_CAP = 45;
 export const E11_SECONDARY_CAP = 45;
+export const E11_TOTAL_CAP = E11_PRIMARY_CAP + E11_SECONDARY_CAP;
 export const E10_TOTAL_CAP = 100;
 
 /**
@@ -40,6 +41,20 @@ export function computeFinalScores(players, edition = '10') {
     // whole secondary half. When cards ARE present they remain the source of
     // truth and the per-round figure is derived from them as before.
     const hasCardDetail = cards.length > 0 || chals.length > 0;
+
+    // The third rung of the ladder: some games are reported as nothing but a
+    // final score. With neither cards nor any round figure there is nothing to
+    // add up, so the submitted total is the record — recomputing would score
+    // the game 0-0 and file it as a draw.
+    const hasRoundDetail = (p.rounds || []).some(
+      r => (r.primaryScore || 0) > 0 || (r.secondaryScore || 0) > 0);
+
+    if (!hasCardDetail && !hasRoundDetail) {
+      const cap = is11 ? E11_TOTAL_CAP : E10_TOTAL_CAP;
+      const raw = Math.round(Number(p.finalScore));
+      p.finalScore = Number.isFinite(raw) ? Math.min(cap, Math.max(0, raw)) : 0;
+      continue;
+    }
 
     if (hasCardDetail) {
       // In 11e a card's roundNumber is the round it SCORED (null if it never

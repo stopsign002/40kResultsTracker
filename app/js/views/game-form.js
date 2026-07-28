@@ -500,41 +500,59 @@ export async function renderGameForm(state, gameId) {
         buildTotalTime(p, idx),
       ]),
       el('div', { class: 'form-row' }, [field('Army List', armyListArea)]),
-      buildRoundsTable(p),
-      buildSecondaryModeToggle(p),
-      secondaryMode(p) === 'rounds'
-        ? null
-        : (is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p)),
+      scoreMode(p) === 'final' ? null : buildRoundsTable(p),
+      buildScoreModeToggle(p),
+      scoreMode(p) === 'final' ? buildFinalScoreOnly(p, idx) : null,
+      scoreMode(p) === 'cards'
+        ? (is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p))
+        : null,
     ].filter(Boolean));
   }
 
-  // 'cards' = record which secondary scored and when; 'rounds' = only the
-  // per-round secondary totals, for games nobody tracked card-by-card.
-  // Derived on load rather than stored: if a player has cards they tracked
-  // them, and if they don't but have round totals they didn't.
-  function secondaryMode(p) {
-    if (!p.secondaryMode) {
+  // Three rungs of "how much did anyone actually write down":
+  //   cards  — which secondary scored, and when
+  //   rounds — per-round primary/secondary totals only
+  //   final  — nothing but the final score
+  // Derived from the data on load rather than stored, so an old game opens in
+  // whichever mode matches what it actually holds.
+  function scoreMode(p) {
+    if (!p.scoreMode) {
       const hasCards = (p.secondaries || []).length > 0;
-      const hasRoundTotals = (p.rounds || []).some(r => (r.secondaryScore || 0) > 0);
-      p.secondaryMode = (!hasCards && hasRoundTotals) ? 'rounds' : 'cards';
+      const hasRounds = (p.rounds || []).some(
+        r => (r.primaryScore || 0) > 0 || (r.secondaryScore || 0) > 0);
+      if (hasCards) p.scoreMode = 'cards';
+      else if (hasRounds) p.scoreMode = 'rounds';
+      else if ((p.finalScore || 0) > 0) p.scoreMode = 'final';
+      else p.scoreMode = 'cards';
     }
-    return p.secondaryMode;
+    return p.scoreMode;
   }
 
-  async function setSecondaryMode(p, mode) {
-    if (mode === secondaryMode(p)) return;
+  async function setScoreMode(p, mode) {
+    const from = scoreMode(p);
+    if (mode === from) return;
+
     const cardsWithData = (p.secondaries || []).filter(
       s => s.drawnRound != null || s.roundNumber != null || (s.score || 0) > 0);
+    const roundsWithData = (p.rounds || []).filter(
+      r => (r.primaryScore || 0) > 0 || (r.secondaryScore || 0) > 0);
+
+    // Anything being coarsened loses detail; say so once rather than silently.
+    const losing = mode === 'final'
+      ? cardsWithData.length + roundsWithData.length
+      : (mode === 'rounds' ? cardsWithData.length : 0);
+    if (losing) {
+      const ok = await confirmModal({
+        title: mode === 'final' ? 'Switch to final score only?' : 'Switch to round totals?',
+        body: mode === 'final'
+          ? 'The per-round breakdown for this player will be cleared. The total carries over, but the round-by-round detail is lost.'
+          : 'The cards recorded for this player will be replaced by per-round totals. The points carry over, but which card scored them is lost.',
+        confirmLabel: 'Switch',
+      });
+      if (!ok) { rerender(); return; }
+    }
 
     if (mode === 'rounds') {
-      if (cardsWithData.length) {
-        const ok = await confirmModal({
-          title: 'Switch to round totals?',
-          body: `The ${cardsWithData.length} card${cardsWithData.length === 1 ? '' : ''} recorded for this player will be replaced by per-round totals. The points carry over, but which card scored them is lost.`,
-          confirmLabel: 'Switch',
-        });
-        if (!ok) { rerender(); return; }
-      }
       // Carry the numbers across so nothing has to be re-typed.
       for (const r of p.rounds || []) {
         r.secondaryScore = (p.secondaries || [])
@@ -542,13 +560,17 @@ export async function renderGameForm(state, gameId) {
           .reduce((sum, x) => sum + (x.score || 0), 0);
       }
       p.secondaries = [];
+    } else if (mode === 'final') {
+      p.finalScore = calcTotal(p, draft.edition);
+      p.secondaries = [];
+      for (const r of p.rounds || []) { r.primaryScore = 0; r.secondaryScore = 0; }
     } else {
       // Card scoring re-derives the per-round figure, so stale manual totals
       // would be overwritten on save anyway — clear them now so the live
       // readout matches what will be stored.
       for (const r of p.rounds || []) r.secondaryScore = 0;
     }
-    p.secondaryMode = mode;
+    p.scoreMode = mode;
     rerender();
   }
 
@@ -647,29 +669,50 @@ export async function renderGameForm(state, gameId) {
     ]);
   }
 
-  function buildSecondaryModeToggle(p) {
+  function buildScoreModeToggle(p) {
     const sel = el('select', { style: { width: 'auto' } }, [
       el('option', { value: 'cards' }, 'Track each secondary'),
       el('option', { value: 'rounds' }, 'Round totals only'),
+      el('option', { value: 'final' }, 'Final score only'),
     ]);
-    sel.value = secondaryMode(p);
-    sel.addEventListener('change', () => { setSecondaryMode(p, sel.value); });
+    sel.value = scoreMode(p);
+    sel.addEventListener('change', () => { setScoreMode(p, sel.value); });
+
+    const hint = {
+      rounds: 'Enter what scored each round in the Secondary column above.',
+      final: 'For games where nobody kept a breakdown.',
+    }[scoreMode(p)];
 
     return el('div', {
       style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', flexWrap: 'wrap' },
     }, [
       el('span', { class: 'dim', style: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em' } },
-        'Secondary detail'),
+        'Score detail'),
       sel,
-      secondaryMode(p) === 'rounds'
-        ? el('span', { class: 'muted', style: { fontSize: '11px' } },
-            'Enter what scored each round in the Secondary column above.')
-        : null,
+      hint ? el('span', { class: 'muted', style: { fontSize: '11px' } }, hint) : null,
     ].filter(Boolean));
   }
 
+  // Sole input in 'final' mode. The rounds table and card grid are hidden, so
+  // this number IS the record and the server stores it verbatim.
+  function buildFinalScoreOnly(p, idx) {
+    const inp = el('input', {
+      type: 'number', min: '0', max: String(is11() ? 90 : 100), step: '1', inputmode: 'numeric',
+      value: p.finalScore ?? 0,
+      style: { maxWidth: '140px', fontSize: '18px', textAlign: 'center' },
+    });
+    inp.addEventListener('input', () => {
+      p.finalScore = parseInt(inp.value, 10) || 0;
+      refreshTotals();
+    });
+    return el('div', { class: 'form-group', style: { marginTop: '10px' } }, [
+      el('label', {}, `Final Score (max ${is11() ? 90 : 100})`),
+      inp,
+    ]);
+  }
+
   function buildRoundsTable(p) {
-    const roundTotals = secondaryMode(p) === 'rounds';
+    const roundTotals = scoreMode(p) === 'rounds';
     const rows = ROUNDS.map(rn => {
       const r = p.rounds.find(x => x.roundNumber === rn) || { roundNumber: rn, primaryScore: 0, secondaryScore: 0 };
       if (!p.rounds.find(x => x.roundNumber === rn)) p.rounds.push(r);
@@ -1144,6 +1187,12 @@ function capLabel(raw, cap) {
 function calcTotal(p, edition) {
   const primary = sumPrimary(p);
   const sec = sumSecondaryPoints(p);
+  // Same ladder as computeFinalScores: with nothing broken down, the submitted
+  // total is the record.
+  if (!(p.secondaries || []).length && primary === 0 && sec === 0) {
+    const cap = edition === '11' ? 90 : 100;
+    return Math.min(cap, Math.max(0, parseInt(p.finalScore, 10) || 0));
+  }
   if (edition === '11') {
     return Math.min(E11_PRIMARY_CAP, primary) + Math.min(E11_SECONDARY_CAP, sec);
   }
@@ -1277,7 +1326,7 @@ function serializeDraft(d) {
     edition: d.edition || DEFAULT_EDITION,
     players: d.players.map(p => ({
       ...p,
-      secondaryMode: undefined,
+      scoreMode: undefined,
       detachments: (p.detachments || []).map(x => (x || '').trim()).filter(Boolean),
       secondaries: (p.secondaries || []).filter(s => s.cardName),
       challengers: (d.edition || DEFAULT_EDITION) === '11'

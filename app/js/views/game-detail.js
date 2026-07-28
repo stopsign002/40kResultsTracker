@@ -417,6 +417,11 @@ function buildPlayerCard(p, g) {
   const isWinner = p.result === 'win';
   const totalRoundScore = (p.rounds || []).reduce((s, r) => s + r.primary_score + r.secondary_score, 0);
 
+  // A game logged as nothing but a final score has an all-zero rounds grid,
+  // which reads as "they scored nothing" rather than "nobody wrote it down".
+  const hasRoundDetail = (p.rounds || []).some(
+    r => (r.primary_score || 0) > 0 || (r.secondary_score || 0) > 0);
+
   const roundRows = [1,2,3,4,5].map(rn => {
     const r = (p.rounds || []).find(x => x.round_number === rn) || { primary_score: 0, secondary_score: 0 };
     return el('div', { class: 'round-grid' }, [
@@ -497,10 +502,12 @@ function buildPlayerCard(p, g) {
     ]),
     is11 ? el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } },
       `${p.force_disposition ? p.force_disposition + ' · ' : ''}Primary: ${p.primary_mission_name || p.primary_mission_ref || '—'}`) : null,
-    el('h3', {}, 'Rounds'),
-    el('div', {}, roundRows),
+    hasRoundDetail ? el('h3', {}, 'Rounds') : null,
+    hasRoundDetail ? el('div', {}, roundRows) : null,
+    hasRoundDetail ? null : el('div', { class: 'muted', style: { fontSize: '13px' } },
+      'Final score only — no round breakdown was recorded.'),
     secondaries,
     challengers,
     armyList,
-  ]);
+  ].filter(Boolean));
 }
