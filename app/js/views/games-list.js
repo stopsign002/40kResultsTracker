@@ -1,4 +1,4 @@
-import { games, reference, gameImages } from '../api.js';
+import { games, reference, gameImages, mapImages } from '../api.js';
 import { el, clear, fmtDate, pill, selectOptions } from '../components.js';
 
 const filterState = {
@@ -194,7 +194,11 @@ export async function renderGamesList(state) {
 // inside the table. Reuses the already-loaded 400px thumb file, so it needs no
 // extra request and pops up instantly.
 const HOVER_DELAY_MS = 130;
-const PREVIEW_MAX_PX = 280;
+// Longest edge of the hover preview. Deliberately a big slice of the viewport —
+// the point is to actually see the photo, not squint at it — but clamped so it
+// never overflows a small window.
+const previewMaxPx = () =>
+  Math.min(680, Math.round(window.innerWidth * 0.46), Math.round(window.innerHeight * 0.72));
 
 let previewEl = null;
 let previewTimer = null;
@@ -205,7 +209,10 @@ function hidePreview() {
   if (previewEl) { previewEl.remove(); previewEl = null; }
 }
 
-function showPreview(anchor, src) {
+// `src` is the small thumb (already cached, shows instantly); `fullSrc` is the
+// full-resolution file, fetched only once someone actually lingers, and swapped
+// in when it arrives so a large preview isn't a blown-up 400px thumbnail.
+function showPreview(anchor, src, fullSrc) {
   const probe = new Image();
   probe.src = src;
 
@@ -215,13 +222,22 @@ function showPreview(anchor, src) {
     if (!document.body.contains(anchor)) return;
     const nw = probe.naturalWidth || 4;
     const nh = probe.naturalHeight || 3;
-    const scale = PREVIEW_MAX_PX / Math.max(nw, nh);
+    const max = previewMaxPx();
+    const scale = max / Math.max(nw, nh);
     const w = Math.round(nw * scale);
     const h = Math.round(nh * scale);
 
-    const box = el('div', { class: 'thumb-preview' },
-      el('img', { src, alt: '', width: String(w), height: String(h) }));
+    const imgEl = el('img', { src, alt: '', width: String(w), height: String(h) });
+    const box = el('div', { class: 'thumb-preview' }, imgEl);
     document.body.appendChild(box);
+
+    if (fullSrc && fullSrc !== src) {
+      const hi = new Image();
+      hi.src = fullSrc;
+      hi.addEventListener('load', () => {
+        if (document.body.contains(box)) imgEl.src = fullSrc;
+      }, { once: true });
+    }
 
     const r = anchor.getBoundingClientRect();
     const pad = 10;
@@ -246,13 +262,13 @@ function showPreview(anchor, src) {
   else probe.addEventListener('load', place, { once: true });
 }
 
-function attachHoverPreview(imgEl, src) {
+function attachHoverPreview(imgEl, src, fullSrc) {
   // Touch devices fire synthetic hover on tap, which would leave a preview
   // stranded over the page while navigating.
   if (!window.matchMedia?.('(hover: hover) and (pointer: fine)').matches) return;
   imgEl.addEventListener('mouseenter', () => {
     clearTimeout(previewTimer);
-    previewTimer = setTimeout(() => showPreview(imgEl, src), HOVER_DELAY_MS);
+    previewTimer = setTimeout(() => showPreview(imgEl, src, fullSrc), HOVER_DELAY_MS);
   });
   imgEl.addEventListener('mouseleave', hidePreview);
 }
@@ -273,17 +289,45 @@ function missionLabel(g, p1, p2) {
   return a || b || '—';
 }
 
-function thumbWithPreview(g) {
-  const src = gameImages.url(g.id, g.thumb_name);
-  const im = el('img', { class: 'list-thumb', src, alt: '', loading: 'lazy' });
-  attachHoverPreview(im, src);
+function previewThumb({ src, fullSrc, alt, cls }) {
+  const im = el('img', { class: `list-thumb ${cls || ''}`.trim(), src, alt: alt || '', loading: 'lazy' });
+  attachHoverPreview(im, src, fullSrc);
   return im;
+}
+
+// Two thumbnails per row: the game's cover photo, and a picture of the terrain
+// layout it was played on. Either can be absent.
+function thumbCell(g) {
+  const tiles = [];
+  if (g.thumb_name) {
+    tiles.push(el('span', { class: 'list-thumb-wrap' }, [
+      previewThumb({
+        src: gameImages.url(g.id, g.thumb_name),
+        fullSrc: g.cover_file_name ? gameImages.url(g.id, g.cover_file_name) : null,
+        alt: 'Game photo',
+      }),
+      g.image_count > 1 ? el('span', { class: 'list-thumb-count' }, String(g.image_count)) : null,
+    ].filter(Boolean)));
+  }
+  if (g.map_thumb_name) {
+    tiles.push(el('span', { class: 'list-thumb-wrap', title: g.deployment_map || 'Terrain layout' }, [
+      previewThumb({
+        src: mapImages.url(g.map_thumb_name),
+        fullSrc: g.map_image_name ? mapImages.url(g.map_image_name) : null,
+        alt: g.deployment_map || 'Terrain layout',
+        cls: 'is-map',
+      }),
+      el('span', { class: 'list-thumb-tag' }, 'MAP'),
+    ]));
+  }
+  if (!tiles.length) return el('span', { class: 'list-thumb placeholder' }, '');
+  return el('span', { class: 'list-thumb-cell' }, tiles);
 }
 
 function buildTable(list) {
   if (!list.length) return el('div', { class: 'muted' }, 'No games match these filters.');
   const head = el('thead', {}, el('tr', {}, [
-    el('th', { style: { width: '52px' } }, ''),
+    el('th', { style: { width: '104px' } }, ''),
     el('th', {}, 'Date'),
     el('th', {}, 'Players'),
     el('th', {}, 'Factions'),
@@ -301,14 +345,7 @@ function buildTable(list) {
     const score = `${p1.finalScore ?? '–'} – ${p2.finalScore ?? '–'}`;
     const winner = p1.result === 'win' ? p1 : p2.result === 'win' ? p2 : null;
     const tr = el('tr', { class: 'row-link', onClick: () => window.__nav('/games/' + g.id) }, [
-      el('td', {}, g.thumb_name
-        ? el('span', { class: 'list-thumb-wrap' }, [
-            thumbWithPreview(g),
-            g.image_count > 1
-              ? el('span', { class: 'list-thumb-count' }, String(g.image_count))
-              : null,
-          ].filter(Boolean))
-        : el('span', { class: 'list-thumb placeholder' }, '')),
+      el('td', {}, thumbCell(g)),
       el('td', {}, fmtDate(g.played_at)),
       el('td', {}, [
         playersText,

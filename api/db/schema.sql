@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS deployment_maps (
   id              SERIAL PRIMARY KEY,
   mission_pack_id INTEGER NOT NULL REFERENCES mission_packs(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,
+  -- Optional picture of the terrain layout, uploaded once and then shown on
+  -- every game that used it. File lives at UPLOAD_DIR/maps/<image_name>,
+  -- served by Caddy at /uploads/maps/<image_name> like game photos.
+  image_name       TEXT,
+  image_thumb_name TEXT,
   UNIQUE (mission_pack_id, name)
 );
 
@@ -284,6 +289,17 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE player_secondaries ADD COLUMN drawn_round INTEGER
       CHECK (drawn_round BETWEEN 1 AND 5);
+  END IF;
+END $$;
+
+-- Migration: terrain-layout picture on a deployment map.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='deployment_maps' AND column_name='image_name'
+  ) THEN
+    ALTER TABLE deployment_maps ADD COLUMN image_name TEXT;
+    ALTER TABLE deployment_maps ADD COLUMN image_thumb_name TEXT;
   END IF;
 END $$;
 

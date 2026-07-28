@@ -634,6 +634,16 @@ SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('Secure No Man''s Land')
 ) AS s(n) WHERE mission_packs.name = '2026 - 2027 Chapter Approved' ON CONFLICT DO NOTHING;
 
+-- GW publishes three recommended terrain layouts per 11e matched-play mission.
+-- Anything else a group plays on is entered as a custom layout and files itself
+-- under this pack the same way free-text missions do.
+INSERT INTO deployment_maps (mission_pack_id, name)
+SELECT id, n FROM mission_packs, (VALUES
+  ('Layout A'),
+  ('Layout B'),
+  ('Layout C')
+) AS d(n) WHERE mission_packs.name = '2026 - 2027 Chapter Approved' ON CONFLICT DO NOTHING;
+
 -- 11e primary missions. There are five Force Dispositions (Take and Hold,
 -- Purge the Foe, Disruption, Reconnaissance, Priority Assets); the pairing of
 -- yours against your opponent's decides the named mission EACH of you plays,

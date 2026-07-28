@@ -708,6 +708,30 @@ entry order.
 
 ---
 
+## Terrain layouts
+
+GW publishes **three recommended terrain layouts per 11e matched-play mission**,
+so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
+/ C) or **Custom** (free text for your own table).
+
+- **Stored in the existing `deployment_map` slot**, not a new column — `Layout
+  A` is just a `deployment_maps` row for the pack. That's why the games-list
+  Deployment filter, `/stats/faction-deployment-breakdown` and the detail view
+  all kept working without changes. 10e still shows the plain combo box.
+- Which mode is selected is remembered on the draft (`draft.mapMode`) rather
+  than re-derived from the stored name each render — otherwise picking Custom
+  and not yet typing would snap straight back to Matched Play.
+- **Layout pictures** live on the `deployment_maps` row (`image_name` /
+  `image_thumb_name`, files under `UPLOAD_DIR/maps/`), so one upload shows on
+  **every** game played on that layout. Uploaded via `POST /maps/:id/image`,
+  same browser-downscale + base64 contract as game photos; a replace unlinks the
+  previous pair only after the row points at the new one.
+- **These are deliberately user-supplied.** GW's own layout diagrams are
+  copyrighted, so the app neither ships nor fetches them — you photograph your
+  table or draw your own. Don't "helpfully" scrape them in later.
+
+---
+
 ## Photo viewer + hover preview
 
 - **`app/js/lightbox.js`** — `openLightbox({ items, startIndex, thumbFor })`.
@@ -725,7 +749,11 @@ entry order.
   closes. Esc closes, neighbours are preloaded, body scroll is locked, focus is
   restored on close, and `prefers-reduced-motion` skips the animation.
 - **Hover preview** (`games-list.js`) — enlarged copy of the row thumbnail after
-  a 130ms delay. It is appended to `<body>`, **not** the row: `.panel` is
+  a 130ms delay, sized to `min(680px, 46vw, 72vh)`. It shows the cached small
+  thumb immediately and swaps in the full-resolution file once that loads, so a
+  large preview isn't just a blown-up 400px thumbnail and the big file is only
+  fetched when someone actually lingers. Rows can carry **two** thumbnails —
+  the game's cover photo and the terrain layout it was played on. It is appended to `<body>`, **not** the row: `.panel` is
   `overflow: hidden`, so anything scaled up inside the table gets clipped at the
   panel edge. It reuses the already-loaded 400px thumb file (no extra request),
   flips to the other side near the viewport edge, and is gated behind

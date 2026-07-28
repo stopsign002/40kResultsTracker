@@ -12,6 +12,10 @@ const DEFAULT_EDITION = '11';
 // mission, secondaries persist in hand (so a card has a draw round distinct
 // from the round it scores), challenger cards no longer exist, and each half
 // of the score caps at 45 independently.
+// GW ships three recommended terrain layouts per 11e matched-play mission.
+// Anything else is a table you laid out yourself.
+const MATCHED_PLAY_LAYOUTS = ['Layout A', 'Layout B', 'Layout C'];
+
 const E11_PRIMARY_CAP = 45;
 const E11_SECONDARY_CAP = 45;
 
@@ -226,6 +230,7 @@ export async function renderGameForm(state, gameId) {
       draft.primaryMissionName = null;
       draft.deploymentMapId = null;
       draft.deploymentMapName = null;
+      draft.mapMode = null;
       draft.missionRuleId = null;
       draft.missionRuleName = null;
       // Clear secondaries/challengers since they belong to a different pack.
@@ -247,6 +252,71 @@ export async function renderGameForm(state, gameId) {
     const deploySel = comboField(missionDetails.deploymentMaps, draft.deploymentMapId, draft.deploymentMapName,
       (id, name) => { draft.deploymentMapId = id; draft.deploymentMapName = id ? null : name; },
       { placeholder: 'Pick or type' });
+
+    // 11e: the map is one of GW's three recommended matched-play terrain
+    // layouts, or a table you laid out yourself. It's stored in the SAME
+    // deployment_map slot as 10e — 'Layout A' just becomes a deployment_maps
+    // row for the pack — so the games-list filter, /stats/faction-deployment-
+    // breakdown and the detail view all keep working untouched.
+    function buildMapField() {
+      if (!is11()) return field('Deployment Map', deploySel);
+
+      const currentName = draft.deploymentMapName
+        ?? (draft.deploymentMapId != null
+            ? ((missionDetails.deploymentMaps || []).find(d => d.id == draft.deploymentMapId)?.name ?? null)
+            : null);
+
+      const setMap = (name) => {
+        const clean = (name || '').trim();
+        const match = (missionDetails.deploymentMaps || [])
+          .find(d => (d.name || '').toLowerCase() === clean.toLowerCase());
+        draft.deploymentMapId = match ? match.id : null;
+        draft.deploymentMapName = match ? null : (clean || null);
+      };
+
+      // The chosen mode is remembered on the draft rather than re-derived from
+      // the value every render, or picking Custom and not yet typing anything
+      // would snap straight back to Matched Play.
+      if (!draft.mapMode) {
+        draft.mapMode = (currentName && !MATCHED_PLAY_LAYOUTS.includes(currentName))
+          ? 'custom'
+          : 'matched';
+      }
+
+      const modeSel = el('select', {}, [
+        el('option', { value: 'matched' }, 'Matched Play Maps'),
+        el('option', { value: 'custom' }, 'Custom'),
+      ]);
+      modeSel.value = draft.mapMode;
+      modeSel.addEventListener('change', () => {
+        draft.mapMode = modeSel.value;
+        setMap(null);
+        rerender();
+      });
+
+      let picker;
+      if (draft.mapMode === 'matched') {
+        picker = el('select', {}, [
+          el('option', { value: '' }, '— Select layout —'),
+          ...MATCHED_PLAY_LAYOUTS.map(n => el('option', { value: n }, n)),
+        ]);
+        picker.value = MATCHED_PLAY_LAYOUTS.includes(currentName) ? currentName : '';
+        picker.addEventListener('change', () => setMap(picker.value));
+      } else {
+        // Suggest only layouts people have actually named, not the stock three.
+        const customSeen = (missionDetails.deploymentMaps || [])
+          .filter(d => !MATCHED_PLAY_LAYOUTS.includes(d.name));
+        picker = comboField(customSeen, draft.deploymentMapId, draft.deploymentMapName,
+          (id, name) => { draft.deploymentMapId = id; draft.deploymentMapName = id ? null : name; },
+          { placeholder: 'Name your layout' });
+      }
+
+      return el('div', { class: 'form-group' }, [
+        el('label', {}, 'Terrain Layout'),
+        el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', alignItems: 'center' } },
+          [modeSel, picker]),
+      ]);
+    }
 
     const ruleSel = comboField(missionDetails.missionRules, draft.missionRuleId, draft.missionRuleName,
       (id, name) => { draft.missionRuleId = id; draft.missionRuleName = id ? null : name; },
@@ -291,13 +361,13 @@ export async function renderGameForm(state, gameId) {
       is11()
         ? el('div', { class: 'form-row cols-3' }, [
             field('Mission Pack', packSel),
-            field('Deployment Map', deploySel),
+            buildMapField(),
             field('Mission Rule', ruleSel),
           ])
         : el('div', { class: 'form-row cols-4' }, [
             field('Mission Pack', packSel),
             field('Primary Mission', primarySel),
-            field('Deployment Map', deploySel),
+            buildMapField(),
             field('Mission Rule', ruleSel),
           ]),
       el('div', { class: 'form-row cols-4' }, [

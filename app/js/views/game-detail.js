@@ -1,4 +1,4 @@
-import { games, admin, gameImages } from '../api.js';
+import { games, admin, gameImages, mapImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
 import { el, fmtDate, pill, toast, confirmModal } from '../components.js';
 
@@ -55,6 +55,8 @@ export async function renderGameDetail(state, gameId) {
 
   root.appendChild(header);
   root.appendChild(players);
+  const mapPanel = buildMapPanel(state, g);
+  if (mapPanel) root.appendChild(mapPanel);
   root.appendChild(await buildPhotosPanel(state, g));
   if (progression) root.appendChild(progression);
   if (notes) root.appendChild(notes);
@@ -84,6 +86,82 @@ async function shrink(file, maxDim, quality) {
   canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
   bitmap.close?.();
   return { dataUrl: canvas.toDataURL('image/jpeg', quality), width: w, height: h };
+}
+
+// Picture of the terrain layout this game was played on. It belongs to the
+// layout (deployment_maps row), not the game, so uploading it once makes it
+// show on every game played on that layout. GW's own layout diagrams are
+// copyrighted, so nothing is bundled or fetched — this is your own photo.
+function buildMapPanel(state, g) {
+  if (!g.deployment_map_id) return null;
+  const name = g.deployment_map_name || 'Terrain layout';
+  const body = el('div', { class: 'panel-body' });
+
+  const fileInput = el('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
+  const status = el('span', { class: 'muted', style: { fontSize: '12px', marginLeft: '8px' } }, '');
+
+  let imageName = g.map_image_name || null;
+  let thumbName = g.map_thumb_name || null;
+
+  function paint() {
+    body.textContent = '';
+    if (imageName) {
+      const thumb = el('img', {
+        class: 'map-image',
+        src: mapImages.url(thumbName || imageName),
+        alt: name,
+        loading: 'lazy',
+      });
+      const opener = el('button', { class: 'photo-open map-open', type: 'button', 'aria-label': `Open ${name}` }, thumb);
+      opener.addEventListener('click', () => openLightbox({
+        items: [{ full: mapImages.url(imageName), thumb: mapImages.url(thumbName || imageName), caption: name }],
+        startIndex: 0,
+        thumbFor: () => thumb,
+      }));
+      body.appendChild(opener);
+    } else {
+      body.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
+        state.user
+          ? `No picture for ${name} yet — add one and it'll show on every game played on it.`
+          : `No picture for ${name}.`));
+    }
+  }
+
+  fileInput.addEventListener('change', async () => {
+    const file = (fileInput.files || [])[0];
+    fileInput.value = '';
+    if (!file) return;
+    status.textContent = 'Uploading…';
+    try {
+      const [full, thumb] = await Promise.all([
+        shrink(file, FULL_MAX_PX, JPEG_QUALITY),
+        shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
+      ]);
+      const row = await mapImages.upload(g.deployment_map_id, {
+        dataUrl: full.dataUrl, thumbDataUrl: thumb.dataUrl,
+      });
+      imageName = row.image_name;
+      thumbName = row.image_thumb_name;
+      paint();
+      toast('Layout picture saved');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    status.textContent = '';
+  });
+
+  const uploadBtn = el('button', { class: 'btn small' }, imageName ? 'Replace' : 'Add picture');
+  uploadBtn.addEventListener('click', () => fileInput.click());
+
+  paint();
+
+  return el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [
+      el('h2', {}, `Terrain Layout — ${name}`),
+      state.user ? el('div', {}, [uploadBtn, status, fileInput]) : null,
+    ].filter(Boolean)),
+    body,
+  ]);
 }
 
 async function buildPhotosPanel(state, g) {

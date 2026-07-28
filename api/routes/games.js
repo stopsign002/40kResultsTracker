@@ -134,6 +134,11 @@ router.get('/', async (req, res) => {
       (SELECT gi.thumb_name FROM game_images gi
         WHERE gi.game_id = g.id
         ORDER BY gi.is_thumbnail DESC, gi.id ASC LIMIT 1) AS thumb_name,
+      (SELECT gi.file_name FROM game_images gi
+        WHERE gi.game_id = g.id
+        ORDER BY gi.is_thumbnail DESC, gi.id ASC LIMIT 1) AS cover_file_name,
+      dm.image_name       AS map_image_name,
+      dm.image_thumb_name AS map_thumb_name,
       (SELECT COUNT(*)::int FROM game_images gi WHERE gi.game_id = g.id) AS image_count,
       json_agg(json_build_object(
         'seat', gp.seat,
@@ -156,7 +161,7 @@ router.get('/', async (req, res) => {
     LEFT JOIN factions f ON f.id = gp.faction_id
     LEFT JOIN primary_missions ppm ON ppm.id = gp.primary_mission_id
     ${whereSql}
-    GROUP BY g.id, mp.name, pm.name, dm.name
+    GROUP BY g.id, mp.name, pm.name, dm.name, dm.image_name, dm.image_thumb_name
     ORDER BY g.played_at DESC, g.id DESC
     LIMIT $${i++} OFFSET $${i}
   `;
@@ -170,6 +175,7 @@ router.get('/:id', async (req, res) => {
   const game = await pool.query(
     `SELECT g.*, mp.name AS mission_pack_name, pm.name AS primary_mission_name,
             dm.name AS deployment_map_name, mr.name AS mission_rule_name,
+            dm.image_name AS map_image_name, dm.image_thumb_name AS map_thumb_name,
             cu.display_name AS created_by_name
      FROM games g
      LEFT JOIN mission_packs mp ON mp.id = g.mission_pack_id

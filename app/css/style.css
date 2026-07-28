@@ -893,3 +893,29 @@ body.lb-lock { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .lb-overlay, .lb-img, .thumb-preview, .list-thumb { transition-duration: 1ms !important; }
 }
+
+/* Two thumbnails per games-list row: the cover photo and the terrain layout. */
+.list-thumb-cell { display: inline-flex; gap: 6px; align-items: center; }
+.list-thumb.is-map { border-style: dashed; }
+.list-thumb-tag {
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  line-height: 11px;
+  color: var(--text-dim);
+}
+.map-image {
+  max-width: 100%;
+  max-height: 340px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  display: block;
+}
+.map-open { width: auto; cursor: zoom-in; }
