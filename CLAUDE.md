@@ -716,8 +716,17 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
   fallback. Caddy serves them read-only at `/uploads/<game_id>/<file>` with a
   1-year immutable cache header (filenames are UUIDs, so they never collide).
   The Node process is not in the read path.
+- **Body limits — the sharp edge.** `server.js` applies
+  `express.json({ limit: '256kb' })` app-wide, and it runs **before** the
+  routers, so a route-level parser with a bigger limit is dead code: the global
+  one 413s the request first. The upload path is therefore explicitly skipped by
+  the global parser (`IMAGE_UPLOAD_PATH`) and parses itself at 12mb in
+  `routes/images.js`. This shipped broken once — every real photo failed with
+  "request entity too large" while the tests passed, because the test fixture
+  was a 352-byte JPEG. **Any size-limit test needs a realistically-sized
+  payload.** Every other route stays at 256kb.
 - **Resizing happens in the browser** (`shrink()` in `game-detail.js`): a
-  ~1600px full and a ~400px thumb, both JPEG q0.82, posted as base64 data URLs.
+  ~2048px full and a ~400px thumb, both JPEG q0.82, posted as base64 data URLs.
   That keeps `sharp`/imagemagick out of the image and means a 12MP phone photo
   never crosses the wire at full size. `createImageBitmap(file, {
   imageOrientation: 'from-image' })` is load-bearing — without it, portrait

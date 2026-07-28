@@ -19,7 +19,16 @@ const PgSession = connectPgSimple(session);
 const app = express();
 
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '256kb' }));
+// Small default body limit for the whole API. The photo-upload route needs a
+// far bigger one, and because this parser runs BEFORE the routers it would
+// reject the body with a 413 before the route's own parser ever saw it — so
+// that one path is skipped here and parses itself (see routes/images.js).
+const jsonBody = express.json({ limit: '256kb' });
+const IMAGE_UPLOAD_PATH = /^\/games\/\d+\/images\/?$/;
+app.use((req, res, next) => {
+  if (req.method === 'POST' && IMAGE_UPLOAD_PATH.test(req.path)) return next();
+  return jsonBody(req, res, next);
+});
 
 app.use(session({
   store: new PgSession({ pool, tableName: 'session' }),
@@ -65,9 +74,13 @@ app.use('/ratings', ratingsRoutes);
 app.use((err, _req, res, _next) => {
   console.error(err);
   const status = err.status || 500;
+  // body-parser's raw "request entity too large" says nothing actionable.
+  const tooLarge = status === 413 || err.type === 'entity.too.large';
   res.status(status).json({
-    error: err.publicMessage || (status >= 500 ? 'internal error' : err.message || 'error'),
-    code: err.code || undefined,
+    error: tooLarge
+      ? 'that file is too large to upload — try a smaller image'
+      : (err.publicMessage || (status >= 500 ? 'internal error' : err.message || 'error')),
+    code: err.code || (tooLarge ? 'too_large' : undefined),
   });
 });
 

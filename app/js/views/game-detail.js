@@ -63,7 +63,9 @@ export async function renderGameDetail(state, gameId) {
 // Longest edge of the stored full-size image and of the list thumbnail. The
 // browser does the resizing (see shrink()), so the server never needs an image
 // library and a 12MP phone photo never crosses the wire at full size.
-const FULL_MAX_PX = 1600;
+// 2048 keeps a photo sharp when opened full-screen; at q0.82 that is typically
+// 400-900KB, well inside the upload route's 12mb body limit.
+const FULL_MAX_PX = 2048;
 const THUMB_MAX_PX = 400;
 const JPEG_QUALITY = 0.82;
 
