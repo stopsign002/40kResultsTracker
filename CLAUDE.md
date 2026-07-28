@@ -155,6 +155,16 @@ DO $$ BEGIN
 END $$;
 ```
 
+**Put the block BELOW that table's `CREATE TABLE`, not wherever the other
+migrations happen to live.** The guard only checks whether the *column* exists —
+on a fresh database the *table* doesn't either, so an ALTER (or a
+`CREATE INDEX`) placed earlier in the file throws, `initSchema()` aborts, and
+**nothing at all gets created**. An existing install won't notice, because the
+table is already there; only a new install or a restore-from-backup breaks.
+This shipped once with the `game_images.is_map` migration sitting ~50 lines
+above its own `CREATE TABLE`. Always smoke-test schema changes against an
+empty database, not just the live one.
+
 ### 4. Caddy mount is read-only and roots at `app/`
 
 `/srv/40kResultsTracker/app` is what's served. Backend code at `/srv/40kResultsTracker/api` is invisible to the public web. **Don't put anything sensitive in `app/`** assuming privacy.
@@ -789,7 +799,10 @@ so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
   closes. Esc closes, neighbours are preloaded, body scroll is locked, focus is
   restored on close, and `prefers-reduced-motion` skips the animation.
 - **Hover preview** (`games-list.js`) — enlarged copy of the row thumbnail after
-  a 130ms delay, sized to `min(680px, 46vw, 72vh)`. It shows the cached small
+  a 130ms delay. It grows until it hits whichever viewport dimension runs out
+  first, less a 28px cushion, so a panorama is bounded by width and a portrait
+  shot by height. It sits beside the row when there's room and **centres** when
+  there isn't — at near-fullscreen there is no "beside" left. It shows the cached small
   thumb immediately and swaps in the full-resolution file once that loads, so a
   large preview isn't just a blown-up 400px thumbnail and the big file is only
   fetched when someone actually lingers. Rows can carry **two** thumbnails —
@@ -831,6 +844,11 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
 - **Cover photo** — `is_thumbnail` picks the one shown in the games list, with a
   partial unique index enforcing at most one per game. The first upload becomes
   the cover automatically; deleting the cover promotes the oldest survivor.
+- **Map photo** — `is_map` works the same way (own partial unique index, toggled
+  from the same panel) and marks the shot of the terrain layout. The two flags
+  are independent, so one photo can be both. The games list's second thumbnail
+  prefers this per-game photo and falls back to the picture attached to the
+  `deployment_maps` row, which is shared by every game on that layout.
 - **Deleting a game** cascades `game_images` rows, but files need an explicit
   unlink — `routes/admin.js` calls `removeGameImageFiles(id)` from
   `routes/images.js`. If you add another game-deletion path, call it there too.

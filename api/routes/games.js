@@ -139,6 +139,10 @@ router.get('/', async (req, res) => {
         ORDER BY gi.is_thumbnail DESC, gi.id ASC LIMIT 1) AS cover_file_name,
       dm.image_name       AS map_image_name,
       dm.image_thumb_name AS map_thumb_name,
+      (SELECT gi.thumb_name FROM game_images gi
+        WHERE gi.game_id = g.id AND gi.is_map ORDER BY gi.id LIMIT 1) AS map_photo_thumb,
+      (SELECT gi.file_name FROM game_images gi
+        WHERE gi.game_id = g.id AND gi.is_map ORDER BY gi.id LIMIT 1) AS map_photo_file,
       (SELECT COUNT(*)::int FROM game_images gi WHERE gi.game_id = g.id) AS image_count,
       json_agg(json_build_object(
         'seat', gp.seat,

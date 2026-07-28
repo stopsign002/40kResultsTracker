@@ -194,11 +194,23 @@ export async function renderGamesList(state) {
 // inside the table. Reuses the already-loaded 400px thumb file, so it needs no
 // extra request and pops up instantly.
 const HOVER_DELAY_MS = 130;
-// Longest edge of the hover preview. Deliberately a big slice of the viewport —
-// the point is to actually see the photo, not squint at it — but clamped so it
-// never overflows a small window.
-const previewMaxPx = () =>
-  Math.min(680, Math.round(window.innerWidth * 0.46), Math.round(window.innerHeight * 0.72));
+// Breathing room left around the preview so it never looks jammed against an
+// edge. The preview otherwise grows until it hits whichever viewport dimension
+// runs out first.
+const PREVIEW_CUSHION_PX = 28;
+// The tile's own padding + border, which sit outside the <img> box.
+const PREVIEW_CHROME_PX = 10;
+
+// Largest image box that fits the window with the cushion (and the tile's own
+// chrome) subtracted. Floors guard against a comically small window rather than
+// producing a negative box.
+function previewBounds() {
+  const spare = PREVIEW_CUSHION_PX * 2 + PREVIEW_CHROME_PX;
+  return {
+    w: Math.max(160, window.innerWidth - spare),
+    h: Math.max(120, window.innerHeight - spare),
+  };
+}
 
 let previewEl = null;
 let previewTimer = null;
@@ -222,8 +234,11 @@ function showPreview(anchor, src, fullSrc) {
     if (!document.body.contains(anchor)) return;
     const nw = probe.naturalWidth || 4;
     const nh = probe.naturalHeight || 3;
-    const max = previewMaxPx();
-    const scale = max / Math.max(nw, nh);
+    // Fit-to-box on BOTH axes, so a panorama is limited by width and a portrait
+    // shot by height — whichever runs out first. Upscaling past the thumb's own
+    // 400px is fine: the full-resolution file swaps in below.
+    const bounds = previewBounds();
+    const scale = Math.min(bounds.w / nw, bounds.h / nh);
     const w = Math.round(nw * scale);
     const h = Math.round(nh * scale);
 
@@ -240,14 +255,28 @@ function showPreview(anchor, src, fullSrc) {
     }
 
     const r = anchor.getBoundingClientRect();
-    const pad = 10;
-    let left = r.right + 12;
-    let origin = 'left center';
-    if (left + w + pad > window.innerWidth) {
-      left = r.left - w - 12;          // flip to the left edge
+    const pad = PREVIEW_CUSHION_PX;
+    const gap = 12;
+
+    // Prefer sitting beside the row. Once the preview is most of the screen
+    // there is no "beside" left, so fall back to centring it rather than
+    // shoving it against an edge.
+    let left;
+    let origin;
+    if (r.right + gap + w + pad <= window.innerWidth) {
+      left = r.right + gap;
+      origin = 'left center';
+    } else if (r.left - gap - w >= pad) {
+      left = r.left - gap - w;
       origin = 'right center';
+    } else {
+      left = Math.round((window.innerWidth - w) / 2);
+      origin = 'center center';
     }
     left = Math.max(pad, Math.min(left, window.innerWidth - w - pad));
+
+    // Vertically centred on the row, then clamped into the cushion; a preview
+    // taller than the window simply pins to the top of it.
     let top = r.top + r.height / 2 - h / 2;
     top = Math.max(pad, Math.min(top, window.innerHeight - h - pad));
 
@@ -309,11 +338,21 @@ function thumbCell(g) {
       g.image_count > 1 ? el('span', { class: 'list-thumb-count' }, String(g.image_count)) : null,
     ].filter(Boolean)));
   }
-  if (g.map_thumb_name) {
+  // A photo tagged MAP on this game wins; otherwise fall back to the picture
+  // attached to the layout itself, which is shared by every game played on it.
+  const mapSrc = g.map_photo_thumb
+    ? { src: gameImages.url(g.id, g.map_photo_thumb),
+        full: g.map_photo_file ? gameImages.url(g.id, g.map_photo_file) : null }
+    : (g.map_thumb_name
+        ? { src: mapImages.url(g.map_thumb_name),
+            full: g.map_image_name ? mapImages.url(g.map_image_name) : null }
+        : null);
+
+  if (mapSrc) {
     tiles.push(el('span', { class: 'list-thumb-wrap', title: g.deployment_map || 'Terrain layout' }, [
       previewThumb({
-        src: mapImages.url(g.map_thumb_name),
-        fullSrc: g.map_image_name ? mapImages.url(g.map_image_name) : null,
+        src: mapSrc.src,
+        fullSrc: mapSrc.full,
         alt: g.deployment_map || 'Terrain layout',
         cls: 'is-map',
       }),

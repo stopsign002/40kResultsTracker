@@ -348,6 +348,10 @@ CREATE TABLE IF NOT EXISTS game_images (
   thumb_name           TEXT NOT NULL,
   caption              TEXT,
   is_thumbnail         BOOLEAN NOT NULL DEFAULT FALSE,
+  -- Marks the shot of the terrain layout this game was played on, shown as the
+  -- second thumbnail in the games list. Independent of is_thumbnail: one photo
+  -- can be both the cover and the map.
+  is_map               BOOLEAN NOT NULL DEFAULT FALSE,
   width                INTEGER,
   height               INTEGER,
   bytes                INTEGER,
@@ -358,6 +362,21 @@ CREATE INDEX IF NOT EXISTS idx_game_images_game ON game_images(game_id);
 -- a concurrent "set as thumbnail" can't leave two winners.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_thumb
   ON game_images(game_id) WHERE is_thumbnail;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_map
+  ON game_images(game_id) WHERE is_map;
+
+-- Migration: per-game map-layout photo flag. MUST sit below the CREATE TABLE
+-- above — a guarded ALTER placed earlier in the file still fails on a FRESH
+-- database, because the table it references does not exist yet and initSchema
+-- aborts before anything is created.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_images' AND column_name='is_map'
+  ) THEN
+    ALTER TABLE game_images ADD COLUMN is_map BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+END $$;
 
 -- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
 CREATE TABLE IF NOT EXISTS audit_log (

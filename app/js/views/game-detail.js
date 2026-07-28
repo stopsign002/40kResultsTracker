@@ -219,6 +219,7 @@ async function buildPhotosPanel(state, g) {
       const tile = el('figure', { class: 'photo-tile' }, [
         opener,
         img.is_thumbnail ? el('span', { class: 'photo-badge' }, 'COVER') : null,
+        img.is_map ? el('span', { class: 'photo-badge is-map' }, 'MAP') : null,
         state.user ? el('div', { class: 'photo-actions' }, [
           img.is_thumbnail ? null : el('button', {
             class: 'btn small',
@@ -232,6 +233,19 @@ async function buildPhotosPanel(state, g) {
               } catch (e) { toast(e.message, 'error'); }
             },
           }, 'Cover'),
+          el('button', {
+            class: `btn small${img.is_map ? ' primary' : ''}`,
+            title: 'Use as the terrain-layout photo for this game',
+            onClick: async () => {
+              const next = !img.is_map;
+              try {
+                await gameImages.update(g.id, img.id, { isMap: next });
+                images = images.map(x => ({ ...x, is_map: next && x.id === img.id }));
+                paint();
+                toast(next ? 'Map photo set' : 'Map photo cleared');
+              } catch (e) { toast(e.message, 'error'); }
+            },
+          }, img.is_map ? 'Map ✓' : 'Map'),
           canEdit(img) ? el('button', {
             class: 'btn small danger',
             onClick: async () => {

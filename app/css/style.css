@@ -919,3 +919,11 @@ body.lb-lock { overflow: hidden; }
   display: block;
 }
 .map-open { width: auto; cursor: zoom-in; }
+
+/* Second role badge on a photo tile; offset so COVER and MAP can coexist. */
+.photo-badge.is-map {
+  left: auto;
+  right: 6px;
+  background: var(--info);
+  color: #14141a;
+}

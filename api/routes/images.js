@@ -58,7 +58,7 @@ router.get('/:gameId/images', async (req, res) => {
   if (!Number.isInteger(gameId)) return res.status(400).json({ error: 'bad game id' });
   const { rows } = await pool.query(
     `SELECT gi.id, gi.game_id, gi.file_name, gi.thumb_name, gi.caption,
-            gi.is_thumbnail, gi.width, gi.height, gi.bytes, gi.created_at,
+            gi.is_thumbnail, gi.is_map, gi.width, gi.height, gi.bytes, gi.created_at,
             gi.uploaded_by_user_id, u.display_name AS uploaded_by_name
        FROM game_images gi
        LEFT JOIN users u ON u.id = gi.uploaded_by_user_id
@@ -142,6 +142,14 @@ router.patch('/:gameId/images/:imageId', requireAuth, async (req, res, next) => 
       // reject the set if a previous winner were still flagged.
       await pool.query('UPDATE game_images SET is_thumbnail = FALSE WHERE game_id = $1 AND is_thumbnail', [gameId]);
       await pool.query('UPDATE game_images SET is_thumbnail = TRUE WHERE id = $1', [imageId]);
+    }
+    if (typeof req.body?.isMap === 'boolean') {
+      // Clear-then-set, same as the cover: the partial unique index rejects a
+      // second winner while the previous one is still flagged.
+      await pool.query('UPDATE game_images SET is_map = FALSE WHERE game_id = $1 AND is_map', [gameId]);
+      if (req.body.isMap) {
+        await pool.query('UPDATE game_images SET is_map = TRUE WHERE id = $1', [imageId]);
+      }
     }
     if (typeof req.body?.caption === 'string') {
       await pool.query('UPDATE game_images SET caption = $2 WHERE id = $1',
