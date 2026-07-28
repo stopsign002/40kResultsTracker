@@ -7,9 +7,9 @@ Every file exports one async function: `export async function renderXxx(state, .
 | File | Route | Notes |
 |---|---|---|
 | `login.js` | (no session) | Public login form. Rendered directly by `app.js` `renderShell(null)`. |
-| `games-list.js` | `/games` | Filter panel (player/faction/mission/date/visibility/free-text search) + paginated game table. Subscribes to `live:game.saved` for real-time refresh. Reads URL hash params via `applyHashParams()` so click-throughs from stats / matchups work. |
-| `game-detail.js` | `/games/:id` | Single game view with per-player breakdown. Admin-only Hide / Delete buttons (Delete uses `confirmModal`). |
-| `game-form.js` | `/games/new`, `/games/:id/edit` | **HEAVIEST file.** Per-round scoring grid, secondary/challenger card slots, draft persistence to `localStorage`, undo-last-save toast on edit. Uses `rerender()` for structural changes; mutates draft directly on score-input change to preserve focus. |
+| `games-list.js` | `/games` | Filter panel (player/faction/mission/edition/medium/date/visibility/free-text search) + paginated game table. Each row carries up to **two thumbnails** (cover photo + terrain layout) with a hover preview, the players' chess-clock times, and — for 11e — the mission rendered as `"A vs B"` since the primary is per-player. Subscribes to `live:game.saved`. Reads URL hash params via `applyHashParams()` so click-throughs from stats / matchups work. |
+| `game-detail.js` | `/games/:id` | Single game view with per-player breakdown. Secondaries are re-sorted **by round drawn** so the game reads back chronologically (entry is alphabetical). Hides the rounds grid entirely for a final-score-only game — an all-zero grid reads as "they scored nothing" rather than "nobody wrote it down". Photos panel (upload, incl. `.zip`; Cover / Map flags; lightbox) and a Terrain Layout panel. Admin-only Hide / Delete buttons (Delete uses `confirmModal`). |
+| `game-form.js` | `/games/new`, `/games/:id/edit` | **HEAVIEST file.** Branches on edition throughout — see CLAUDE.md "10th vs 11th edition". Per-player **Score detail** toggle (track each secondary / round totals / final score only), per-player Force Disposition driving `PRIMARY_MATRIX`, multi-detachment list, Matched Play vs Custom terrain layout, chess-clock entry. Draft persistence to `localStorage`, undo-last-save toast on edit. Uses `rerender()` for structural changes; mutates draft directly on score-input change to preserve focus. Client-only draft keys (`scoreMode`, `mapMode`) are stripped in `serializeDraft()`. |
 | `stats.js` | `/stats` | Chart.js dashboard: faction/player win rates, head-to-head, faction matchup heatmap, drill-down with detachment breakdown, calendar heatmap, trends. Click bars/cells to drill through to filtered `/games`. |
 | `warmap.js` | `/`, `/war` | **Theatre of War.** Canvas-based deterministic map. **DO NOT TOUCH constants** — see CLAUDE.md "Critical invariants". Hover tooltip, faction glyphs on fortresses, legend toggle, season picker. |
 | `admin.js` | `/admin` | User CRUD, change own password, audit log viewer, seasons panel (start new), **Guest Accounts** panel (preview + promote guests to inactive accounts). Admin-only nav gating. |
@@ -40,6 +40,14 @@ export async function renderFoo(state, fooId) {
 }
 ```
 
+- **Derive UI mode from data, not from a saved flag.** `game-form.js` works out
+  which score-detail rung a game is on by looking at what it actually holds
+  (cards → rounds → final), mirroring the server. The mode lives on the draft
+  only so a half-filled choice doesn't snap back mid-edit; it never reaches the
+  payload, and the server never trusts it.
+- **Mirror server maths, don't invent a second rule.** `calcTotal()` exists
+  purely for the live readout and must track `computeFinalScores` exactly —
+  including the caps and the detail ladder. The server value is authoritative.
 - **One `rerender()` closure per form-heavy view.** Score-input changes mutate the draft directly; only structural changes (mission pack changes, faction changes, add/remove a card slot) call `rerender()`. Calling `rerender()` on every keystroke blows away input focus.
 - **Use `el()` from `components.js`.** Don't template-string HTML. Don't introduce a framework.
 - **Modal dialogs via `confirmModal()` / `promptModal()`.** Don't use native `confirm()` / `prompt()`.

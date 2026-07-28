@@ -3,7 +3,13 @@
 Two `.sql` files run on every container start by `lib/db.js#initSchema()`:
 
 1. `schema.sql` — table definitions, indexes, the `v_game_player_stats` view
-2. `seed.sql` — reference data (factions, detachments, mission packs, cards), Season 1 bootstrap, idempotent guest→user backfill
+2. `seed.sql` — reference data (factions, detachments, mission packs, cards), Season 1 bootstrap, idempotent guest→user and detachment backfills
+
+`seed.sql` also carries a **guarded rename** for secondary-card casing, which
+runs *before* the deck insert so an existing `card_id` survives and the
+denormalised `player_secondaries.card_name` on already-recorded games is dragged
+along. Follow that pattern if reference names ever need correcting — inserting a
+correctly-spelled second row instead would orphan the games pointing at the old one.
 
 Both **must stay idempotent** so they're safe to re-run on every boot. There is no migration tool. There is no "schema version" tracker.
 
@@ -29,6 +35,25 @@ DO $$ BEGIN
     ALTER TABLE X ADD COLUMN Y …;
   END IF;
 END $$;
+```
+
+**Put the guarded block BELOW that table's own `CREATE TABLE`.** The guard only
+asks whether the *column* exists — on a **fresh** database the *table* doesn't
+exist either, so an `ALTER TABLE` (or a `CREATE INDEX`) sitting earlier in the
+file throws, `initSchema()` aborts, and **not a single table gets created**. An
+existing install never notices, because its table is already there; only a new
+install or a restore-from-backup breaks. This shipped once, with
+`game_images.is_map` migrating ~50 lines above its own `CREATE TABLE`.
+
+**So: always smoke-test a schema change against an empty database**, not just
+the live one:
+
+```bash
+docker exec -i postgres psql -U postgres -c 'CREATE DATABASE scratch_db'
+# point a throwaway container at it, then check every table arrived:
+docker exec postgres psql -U postgres -d scratch_db -tAc \
+  "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'"
+docker exec -i postgres psql -U postgres -c 'DROP DATABASE scratch_db'
 ```
 
 Canonical examples already in the file: `player_challengers.round_number`, `users.army_name`, `games.season_id`. Always add the index in a separate `CREATE INDEX IF NOT EXISTS` after the guard.
@@ -66,6 +91,21 @@ If you add a new backfill: write the predicate so it finds zero matching rows on
 | `banner_first_seen` | One row per `(player_key, faction_id)`. **`first_seen_at` is set on save and never updated** — the war map's home-fortress immutability depends on this. See CLAUDE.md "Why home fortresses can't fall". |
 | `seasons` | Only one `is_active = TRUE` (partial unique index). Closed seasons keep their `map_seed` so archived maps still render. |
 | `audit_log` | Append-only. INSERT only — never UPDATE or DELETE. |
+| `player_detachments` | Source of truth for a player's detachments (11e allows several). `game_players.detachment_name` is the **derived** `', '`-joined display string — never write it directly, and point analytics/autocomplete at this table instead. |
+| `game_images` | Photo metadata; the bytes live on disk under `UPLOAD_DIR`. Two independent role flags, each with its own partial unique index: `is_thumbnail` (games-list cover) and `is_map` (terrain-layout shot). One photo may hold both. Deleting rows does **not** delete files — see `removeGameImageFiles`. |
+| `deployment_maps` | Also carries an optional `image_name` / `image_thumb_name` pair: a picture of that terrain layout, shared by every game played on it. `Layout A/B/C` for the 11e pack are ordinary rows here. |
+
+## Columns whose meaning changed with 11e
+
+Worth knowing before writing a query against them:
+
+| Column | 10e meaning | 11e meaning |
+|---|---|---|
+| `player_secondaries.round_number` | the round the card was drawn *and* scored | the round it **scored**; `NULL` if it never did |
+| `player_secondaries.drawn_round` | unused (`NULL`) | the round the card entered hand |
+| `games.primary_mission_id` | the game's mission | unused — the mission is per player |
+| `game_players.primary_mission_id` / `_name` | unused | that player's mission, set by the Force Disposition pairing |
+| `game_players.detachment_name` | the detachment | derived join of `player_detachments` |
 
 ## Connecting
 

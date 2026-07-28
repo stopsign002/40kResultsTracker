@@ -39,10 +39,14 @@ EOF
 grep ADMIN_PASSWORD .env
 
 # 4) Install Caddy snippet
+#    NOTE: this now includes a /uploads/* file_server block for photos.
+#    An older 40k.caddy without it will 404 every image.
 cp caddy.example ~/sites/base/conf.d/40k.caddy
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 
 # 5) Bring up the API
+#    docker-compose.yml bind-mounts ./uploads -> /data/uploads (UPLOAD_DIR).
+#    The directory is created on first upload; it is gitignored.
 docker compose up -d --build
 
 # 6) Smoke-test (NAT loopback won't work from the host — use --resolve)
@@ -63,6 +67,42 @@ git pull
 docker compose up -d --build
 ```
 
+## Photo / layout-picture storage
+
+Image bytes live **on disk, not in Postgres** — a nightly `pg_dumpall`
+shouldn't carry multi-MB blobs.
+
+| | |
+|---|---|
+| On the host | `~/sites/sites/40kResultsTracker/uploads/` |
+| In the container | `/data/uploads` (`UPLOAD_DIR`, set in `docker-compose.yml`) |
+| Served at | `/uploads/<game_id>/<file>` and `/uploads/maps/<file>` |
+| Served by | **Caddy, off disk** — Node is not in the read path |
+
+The path is the **project root, not `app/`**, deliberately: that keeps uploads
+out of git and out of the SPA's `try_files` fallback, while Caddy can still read
+them through the existing read-only `/srv` mount.
+
+**Backups:** the host's nightly config tarball already archives `sites/sites`
+excluding `*/app`, so `uploads/` is captured with no extra setup. It's a *full*
+tarball every night, so if the photo library ever gets large, split it into an
+incremental `rclone sync` rather than letting the nightly upload grow.
+
+**Files vs rows:** deleting a game cascades `game_images` rows but **not** the
+files — `routes/admin.js` calls `removeGameImageFiles(id)` for that. Any new
+deletion path must do the same or it will leak files onto the volume.
+
+## Migrations
+
+All of these run automatically on container start via the guarded-`ALTER`
+pattern; nothing below needs a manual step.
+
+⚠ **Guarded ALTERs must sit below their own `CREATE TABLE` in `schema.sql`.**
+The guard only tests for the column, so one placed earlier throws on a *fresh*
+database, `initSchema()` aborts, and no tables are created at all. An existing
+install never notices — only a new install or a **restore from backup** breaks.
+Smoke-test schema changes against an empty database. See `api/db/README.md`.
+
 Migrations included in this update path so far:
 
 - `player_challengers.round_number` (nullable INTEGER, 1-5) — added when
@@ -77,6 +117,22 @@ Migrations included in this update path so far:
 - Idempotent `UPDATE game_players SET detachment_name = d.name FROM
   detachments d WHERE detachment_id IS NOT NULL AND detachment_name IS
   NULL` — copies legacy detachment_id rows into the new free-text column
+- `games.play_medium` (`'physical'`|`'digital'`) — Tabletop Simulator flag;
+  existing rows become `physical`
+- `games.edition` (`'10'`|`'11'`) — added with `DEFAULT '10'` so the whole back
+  catalogue backfills as 10th, **then** the default is flipped to `'11'` for new
+  rows. Don't collapse that into a single `DEFAULT '11'`; it would re-label every
+  historical game
+- `game_players.primary_mission_id` + `primary_mission_name` — 11e gives each
+  player their own primary mission
+- `game_players.force_disposition` — 11e Force Disposition, 5-value CHECK
+- `game_players.time_seconds` + `game_rounds.time_seconds` — chess-clock timings
+- `player_secondaries.drawn_round` — 11e cards persist in hand, so the draw round
+  is distinct from the round the card scored
+- `player_detachments` table + backfill of one row per historical
+  `game_players.detachment_name` — 11e allows several detachments per player
+- `game_images` table (+ `is_map` flag) — photo metadata; bytes on disk
+- `deployment_maps.image_name` / `image_thumb_name` — terrain-layout pictures
 
 All run automatically; no manual psql intervention needed.
 
@@ -188,7 +244,8 @@ gunzip -c ~/sites/backups/40k_db_<date>.sql.gz \
 
 - Mobile UX is minimal — desktop-first by request
 - No CSV/JSON export yet
-- No photo uploads (intentionally skipped from v1; would need object storage)
+- ~~No photo uploads~~ — **added**: photos and terrain-layout pictures, stored on
+  a bind-mounted volume and served by Caddy (see "Photo / layout-picture storage")
 - Game deletion not implemented (admin "hide from stats" only — by spec)
 - Faction matchup matrix endpoint exists (`/stats/faction-matchups`) but no UI yet
 - Head-to-head endpoint exists (`/stats/head-to-head`) but no UI yet — good v2 expansion

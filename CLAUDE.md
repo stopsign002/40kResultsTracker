@@ -45,7 +45,7 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 │   │   ├── auth.js         bcrypt helpers, requireAuth / requireAdmin middleware
 │   │   ├── audit.js        fire-and-forget audit log writer
 │   │   ├── events.js       in-process SSE broadcaster (subs Set + broadcast())
-│   │   ├── game-scoring.js computeFinalScores + validateGameInput (pure, tested)
+│   │   ├── game-scoring.js computeFinalScores + resolvePlayerTimes + validateGameInput (pure, tested)
 │   │   ├── glicko2.js      pure Glicko-2 rating math (ratePeriod/expectedScore), tested vs Glickman example
 │   │   ├── whr.js          whole-history rating: global Bradley-Terry fit (retroactive), tested
 │   │   ├── ratings.js      games → all-time ratings (glicko OR whr, margin-of-victory) + balanced matchmaker
@@ -84,6 +84,8 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
         ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions(),
         │                   confirmModal(), promptModal() — USE THESE
         ├── live.js         singleton EventSource → 'live:game.saved' CustomEvent on document
+        ├── lightbox.js     full-screen photo viewer; FLIP zoom + cycle + swipe
+        ├── zip.js          dependency-free ZIP reader (Google Photos multi-download)
         └── views/
             ├── README.md          view convention + how-to recipes
             ├── login.js           public login screen
@@ -365,6 +367,8 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only |
 | PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string }` |
 | DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
+| POST | `/maps/:id/image` | auth | `{ dataUrl, thumbDataUrl? }` — picture of a terrain layout (a `deployment_maps` row), shown on every game played on it. Replacing unlinks the previous pair |
+| DELETE | `/maps/:id/image` | auth | clears the row and unlinks both files |
 | GET | `/stats/overview` | auth | totals + recent activity |
 | GET | `/stats/faction-winrates` | auth | per-faction W/L/D + win% + avg score |
 | GET | `/stats/player-winrates` | auth | per-player W/L/D + win% (groups by user_id OR guest_name) |
@@ -394,7 +398,12 @@ All routes require an authenticated session unless noted. Responses are JSON. Er
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
 | GET | `/events` | auth | Server-Sent Events stream; emits `game.saved`, `season.changed` |
 
-**Total: 45 endpoints** in `routes/*.js` (cross-check: `grep -E "router\.(get|post|put|patch|delete)" api/routes/*.js \| wc -l`), plus `/health` defined inline in `server.js`. `/ratings/*` and the two guest endpoints are admin-only; ratings are computed on the fly (no tables).
+**Total: 51 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
+
+```bash
+grep -hE "(router|mapRouter)\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
+```
+ `/ratings/*` and the two guest endpoints are admin-only; ratings are computed on the fly (no tables).
 
 ---
 
@@ -410,16 +419,16 @@ Tables (snake_case throughout):
 | `detachments` | seeded per-faction detachments — autocomplete only; UNIONed with free-text `game_players.detachment_name` from past games. Consumed by `/stats/detachment-winrates`. | id, faction_id, name; UNIQUE (faction_id, name) |
 | `mission_packs` | e.g. Pariah Nexus, Leviathan | id, name (unique) |
 | `primary_missions` | e.g. Take and Hold | id, mission_pack_id, name |
-| `deployment_maps` | e.g. Hammer and Anvil | id, mission_pack_id, name |
+| `deployment_maps` | e.g. Hammer and Anvil; also the 11e `Layout A/B/C` rows | id, mission_pack_id, name, image_name + image_thumb_name (optional picture of the layout, shared by every game played on it; files under `UPLOAD_DIR/maps/`) |
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
 | `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), edition ('10'\|'11' — DB default '11'; pre-existing rows backfilled to '10'), season_id (FK seasons.id), created_at, updated_at |
-| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy), detachment_name (**DERIVED** — `player_detachments` joined with ', '), force_disposition (**11e only**, 5-value CHECK), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
-| `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining; UNIQUE (game_player_id, round_number) |
+| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy), detachment_name (**DERIVED** — `player_detachments` joined with ', '), force_disposition (**11e only**, 5-value CHECK), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), time_seconds (chess clock — **derived** as the sum whenever any round is clocked), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
+| `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining, time_seconds (optional chess-clock split); UNIQUE (game_player_id, round_number) |
 | `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (10e: the round scored; **11e: the round the card SCORED, NULL if it never did**), drawn_round (**11e only** — the round it entered hand; NULL on 10e where draw and score coincide), card_id, card_name, score, was_discarded |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
-| `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, width, height, bytes, created_at. Partial unique index `(game_id) WHERE is_thumbnail` — at most one cover per game |
+| `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, bytes, created_at. Two partial unique indexes — `(game_id) WHERE is_thumbnail` (cover) and `(game_id) WHERE is_map` (terrain layout). The flags are independent, so one photo can be both |
 | `player_detachments` | a player's detachments; 11e allows more than one. **Source of truth** — `game_players.detachment_name` is the derived display string | id, game_player_id (CASCADE), detachment_id (nullable), detachment_name, sort_order |
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
@@ -433,7 +442,10 @@ Tables (snake_case throughout):
 
 - **28 factions** (Adepta Sororitas through World Eaters)
 - All current 10e detachments per codex
-- 2 mission packs with full primaries / deployments / rules / secondaries / challengers (Pariah Nexus, Leviathan), plus stub names for Tempest of War / Crusade / Open Play / Other
+- 2 **10e** mission packs with full primaries / deployments / rules / secondaries / challengers (Pariah Nexus, Leviathan), plus stub names for Tempest of War / Crusade / Open Play / Other
+- 1 **11e** pack, `2026 - 2027 Chapter Approved`: 18 secondaries, 25 primary
+  missions (the 5x5 Force Disposition matrix) and the 3 matched-play terrain
+  layouts. No challenger cards — 11e dropped them.
 
 When the user adds a new faction or mission pack, see "How to add things" below.
 
@@ -456,6 +468,9 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | View audit log | – | ✓ | `requireAdmin` on `GET /admin/audit`; rendered in the Admin → Audit Log panel |
 | Subscribe to live updates | ✓ | ✓ | `requireAuth` on `GET /events`; `app.js` calls `startLiveFeed()` once a session is established |
 | Change own password | ✓ | ✓ | `POST /auth/change-password` |
+| Upload a game photo | ✓ | ✓ | `requireAuth` on `POST /games/:id/images`; set Cover / Map via `PATCH` |
+| Delete a game photo | own only | ✓ | `DELETE /games/:id/images/:imageId` — uploader **or** admin; unlike games, a photo is just an attachment |
+| Upload / clear a terrain-layout picture | ✓ | ✓ | `requireAuth` on `POST`/`DELETE /maps/:id/image`. It belongs to the layout, so it changes what **every** game on that layout shows |
 
 Server enforcement is the source of truth; client gating is a UX convenience only.
 

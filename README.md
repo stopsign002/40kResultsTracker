@@ -1,6 +1,8 @@
 # 40k Results Tracker
 
-A multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log matches, browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" planetary map called **Boimaggedon**.
+A multi-user Warhammer 40,000 game-results tracker, covering **both 10th and
+11th edition** — each game carries an edition flag and the entry form and
+scoring rules follow it. Friends log matches, browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" planetary map called **Boimaggedon**.
 
 **Live:** https://40k.thewheeliebois.com
 
@@ -9,7 +11,19 @@ A multi-user Warhammer 40,000 10th-edition game-results tracker. Friends log mat
 ## What's inside
 
 - **Game log** — date, mission pack + primary + deployment + mission rule, two players (faction, detachment, army-list paste), per-round primary scoring, per-round tactical secondaries (two slots) and challenger / Secret Mission card, manual winner override, end condition (played-to-time / concession / tabled), tournament metadata, free-form notes
-- **Filtering** — by player, faction, opponent faction, mission, deployment, format, date range, visibility
+- **11th edition support** — per-player primary missions driven by the Force
+  Disposition matrix, secondaries that persist in hand (draw round tracked
+  separately from the round they score), several detachments per player,
+  matched-play terrain layouts, no challenger cards, and 11e's split
+  45-primary + 45-secondary score ceiling
+- **Enter as much detail as you actually kept** — track every secondary card,
+  or only per-round totals, or just the final score. Each level is a first-class
+  entry mode, and coarser entries never get silently zeroed on a re-save
+- **Chess-clock timing** — a total per player, or per-round splits that sum to it
+- **Photos** — attach pictures to a game (including a `.zip` straight from
+  Google Photos), pick a cover and a terrain-layout shot, and browse them in a
+  full-screen viewer. Images are downscaled in the browser and served off disk
+- **Filtering** — by player, faction, opponent faction, mission, deployment, format, edition, play medium (tabletop / Tabletop Simulator), date range, visibility
 - **Stats dashboard** — KPIs, faction win rates (animated bars), per-player W/L/D, going-first impact, faction drilldown by mission and deployment, secondary card averages
 - **Theatre of War map** — Boimaggedon: a procedurally generated continent of ~50 territories. Each `(player, faction)` combo holds its own cluster of land with a fortress that **never falls**. Territory share = 70% games-played (log-scaled) + 30% win-rate, so frequent players dominate without win-rate becoming irrelevant. Same seed → identical map on every device, forever.
 - **Admin tab** — only visible to admins; create users, set army names, promote/demote, deactivate, reset passwords, hide games from stats
@@ -41,6 +55,49 @@ Once you have credentials, log in at https://40k.thewheeliebois.com.
 9. Hit **Save Game**.
 
 The final score is auto-calculated from primary + secondary + challenger totals, capped at 100. You can override the result with the Winner checkbox if you concede or score weirdly.
+
+### Adding an 11th-edition game
+
+Pick **11th Edition** at the top of the form and it reshapes itself:
+
+- **Force Disposition** per player (Take and Hold, Purge the Foe, Disruption,
+  Reconnaissance, Priority Assets). Set both and each player's **primary
+  mission** fills in automatically from the pairing — still editable.
+- **Terrain Layout** — *Matched Play Maps* (Layout A / B / C) or *Custom* for
+  your own table.
+- **Detachments** — add as many as the player fielded.
+- **Secondaries** — the whole deck is listed; for each card that came up, type
+  the round it was **drawn**, the round it **scored**, and the VP. Type-tab-type
+  straight down the column.
+- Primary and secondary each cap at **45** independently (90 total).
+
+### When nobody kept full notes
+
+Each player has a **Score detail** selector:
+
+| Setting | Enter |
+|---|---|
+| Track each secondary | which card scored, and when |
+| Round totals only | per-round primary + secondary |
+| Final score only | just the number |
+
+Pick whichever matches what was actually written down. Switching to a coarser
+setting carries the points across and asks first, so you never lose detail by
+accident.
+
+### Timing a game
+
+If you play on a chess clock, fill in **Total Time** per player — or fill in the
+per-round **Time** column and the total adds itself up. Type `12:34`, `1:05:30`,
+or just a number of minutes. Times show in the games list under each pairing.
+
+### Photos
+
+Open a game and use **Add photos**. You can select several at once, or drop in
+the `.zip` Google Photos gives you when you download multiple pictures — it gets
+unpacked in your browser. Tag one photo **Cover** (the games-list thumbnail) and
+one **Map** (the terrain layout); a photo can be both. Click any photo for the
+full-screen viewer, and use the arrow keys or swipe to cycle.
 
 ### Editing a game
 

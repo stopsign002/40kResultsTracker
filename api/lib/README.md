@@ -10,7 +10,7 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 | `auth.js` | `hashPassword`, `verifyPassword`, `ensureBootstrapAdmin`, `requireAuth`, `requireAdmin` | bcrypt cost-12 password hashing + session-based middleware. `requireAuth` → 401 if no session. `requireAdmin` → 401 then 403. `ensureBootstrapAdmin` only runs when `users` is empty. |
 | `audit.js` | `audit(req, action, opts)` | Fire-and-forget INSERT into `audit_log`. **Never throws** — an audit-write outage cannot block the actual operation. Pass `{ type, id, payload }` for context. Keep the payload small. |
 | `events.js` | `addSubscriber({ res, userId })`, `broadcast(type, data)`, `subscriberCount()` | In-process SSE subscriber set. `routes/events.js` adds subscribers; write-path endpoints call `broadcast('game.saved', ...)` to push. Failed writes silently drop the dead sub. |
-| `game-scoring.js` | `computeFinalScores(players)`, `validateGameInput(body)` | Pure helpers used by `routes/games.js` POST/PUT. Operates on the **camelCase request payload**, not DB rows. Tested in `test/game-scoring.test.js` — pins the camelCase contract that has bitten production once already (see CLAUDE.md pitfall #1). |
+| `game-scoring.js` | `computeFinalScores(players, edition)`, `resolvePlayerTimes(players)`, `validateGameInput(body)`, cap constants | Pure helpers used by `routes/games.js` POST/PUT. Operates on the **camelCase request payload**, not DB rows. `computeFinalScores` resolves a **three-rung detail ladder** (cards → per-round figures → bare final score) and applies the edition's ceiling; `resolvePlayerTimes` applies the same shape to chess-clock times (per-round sum wins over a typed total). Tested in `test/game-scoring.test.js` — pins the camelCase contract that has bitten production once already (see CLAUDE.md pitfall #1). |
 | `glicko2.js` | `ratePeriod`, `decayRd`, `expectedScore`, `newPlayer`, `GLICKO2_DEFAULTS` | Pure Glicko-2 rating math (chess/Lichess system), **forward/causal**. `ratePeriod(player, results)` rates one player over a rating period; `expectedScore(a,b)` is the win-probability used for matchmaking. Pinned to Glickman's worked example in `test/glicko2.test.js`. No DB, no deps. |
 | `whr.js` | `fitGlobal(games)` | **Whole-history** rating: a global Bayesian Bradley-Terry MAP fit over all games at once (retroactive — evidence flows both directions). Prior regularises undefeated players and pins disconnected groups; returns `{rating, rd}` per player on the same ~1500 scale as glicko. Each game may carry a weight `w` (default 1) scaling its evidence + information — used for recency decay. Tested in `test/whr.test.js`. No DB, no deps. |
 | `ratings.js` | `computeRatings(opts)`, `balancedPairings`, `outcomeScore`, `displayRating`, `displayFloor`, `displayConfidence`, `MOV_FULL` | Turns the game record into all-time ratings under either model (`opts.model = 'glicko'|'whr'`): shared parse + connectivity, then `runGlicko` (per-day forward batches, elapsed-time RD decay) or `runWHR` (refit the graph at each game-date, **recency-weighted** via `recencyWeight`/`RECENCY_HALF_LIFE_DAYS`). `displayFloor` (rating − K·RD) is the confidence-adjusted **ranking key**. `db.js` imported lazily so pure helpers test without `pg`. Tunables (`MOV_FULL`, `PERIOD_DAYS`, `RANK_FLOOR_K`, `RECENCY_HALF_LIFE_DAYS`, display scale, provisional thresholds) at the top. |
@@ -23,6 +23,25 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 - **Side-effect-free where possible.** `game-scoring.js` is the model: no DB, no env, no `req`/`res`. Easier to test, easier to reuse.
 - **Transactions:** use `withTx(async (client) => {...})` and pass `client` to inner queries. Don't BEGIN/COMMIT manually.
 - **Audit + broadcast** are paired: when a write-path endpoint changes state, both fire (audit for posterity, broadcast for live UI).
+
+## The detail ladder (`game-scoring.js`)
+
+Games arrive with wildly varying amounts of detail, so both scoring helpers
+resolve **from the data, never from a stored mode flag**. Priority, highest first:
+
+| Rung | Condition | Result |
+|---|---|---|
+| cards | `secondaries[]` (or, in 10e, `challengers[]`) non-empty | cards are the truth; each round's `secondaryScore` is **recomputed** from them |
+| rounds | no cards, but some round has a primary/secondary figure | the typed per-round numbers are taken as given |
+| final | nothing broken down at all | the submitted `finalScore` is kept, clamped to the edition ceiling |
+
+`resolvePlayerTimes` is the same idea for the clock: any per-round time makes the
+player total their sum; otherwise the typed total stands.
+
+Why it matters: the original implementation recomputed unconditionally, so
+**re-saving a game that had no card detail silently zeroed it**. Deriving from
+the data means an edit round-trip is lossless at every rung. If you add another
+rung, keep the same rule — no client-supplied mode flag decides scoring.
 
 ## Notable invariants
 
