@@ -1091,7 +1091,7 @@ function drawTacticalMap(canvas, units, W, H, seed = MAP_SEED) {
   drawBorders(ctx, parentOwnership, subOwnership, owner, GW, GH, CELL);
 
   // ── Step 4: banner labels at each region's densest sub-cell ──
-  drawLabels(ctx, subSites, units, owner, subAdj);
+  drawLabels(ctx, subSites, units, owner, subAdj, subOwnership, GW, GH, CELL, W, H);
 
   // ── Step 5: HUD chrome ───────────────────────────────────────
   drawScanlines(ctx, W, H);
@@ -1232,7 +1232,23 @@ function drawSegment(ctx, x1, y1, x2, y2, sameParent, sameBanner) {
   ctx.stroke();
 }
 
-function drawLabels(ctx, sites, units, owner, adj) {
+// Label layout budget. A banner's name is wrapped and, if needed, stepped
+// down through these sizes so it stays inside its own territory. Text
+// metrics (measureText) vary slightly by platform, so this affects only
+// where glyphs land — never ownership or geometry (see the determinism
+// note in CLAUDE.md).
+const LABEL_SIZES = [12, 11, 10, 9];
+const LABEL_MAX_LINES = 4;
+const LABEL_FALLBACK_LINES = 4;
+const LABEL_SPILL_WIDTH = 170;
+const LABEL_ANCHOR_CANDIDATES = 3;
+const ANCHOR_MIN_SEPARATION = 70;
+const SECONDARY_SIZE = 9;
+
+function labelFont(size) { return `700 ${size}px "Consolas", "Monaco", monospace`; }
+function secondaryFont() { return `500 ${SECONDARY_SIZE}px "Consolas", "Monaco", monospace`; }
+
+function drawLabels(ctx, sites, units, owner, adj, subOwnership, GW, GH, CELL, W, H) {
   ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -1243,37 +1259,211 @@ function drawLabels(ctx, sites, units, owner, adj) {
   // through same-owner cells only. That naturally favours the centre of
   // the largest cluster, ignores thin tendrils, and steers clear of
   // coasts (since coastal cells have fewer nearby same-owner cells).
+  //
+  // The name is then wrapped to the width actually available at that spot,
+  // and shrunk a step if wrapping alone isn't enough, so a long army name
+  // reads as a stacked block inside its own borders instead of a single
+  // line sprawled across half the continent. A region can be too small for
+  // any legible label — in that case the best-scoring layout is drawn
+  // anyway rather than dropping the banner's name entirely.
   for (const u of units) {
     const k = unitKey(u);
-    const tid = findDensestCell(k, owner, adj);
-    if (tid < 0) continue;
-    const cx = sites[tid].x;
-    const cy = sites[tid].y;
+    const anchors = rankDensestCells(k, owner, adj, sites);
+    if (!anchors.length) continue;
+
+    const inside = makeInsideTest(k, subOwnership, owner, GW, GH, CELL);
     const primary = u.army_name || u.player_name;
     const secondary = abbreviate(u.faction);
 
-    ctx.font = '700 12px "Consolas", "Monaco", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.85)';
-    ctx.fillText(primary, cx + 1, cy - 5);
-    ctx.fillStyle = 'rgba(255, 230, 160, 0.95)';
-    ctx.fillText(primary, cx, cy - 6);
-
-    ctx.font = '500 9px "Consolas", "Monaco", monospace';
-    ctx.fillStyle = 'rgba(0,0,0,0.85)';
-    ctx.fillText(secondary, cx + 1, cy + 7);
-    ctx.fillStyle = 'rgba(180, 220, 255, 0.85)';
-    ctx.fillText(secondary, cx, cy + 6);
+    let best = null;
+    for (const tid of anchors) {
+      const layout = layoutLabel(ctx, primary, secondary,
+        sites[tid].x, sites[tid].y, inside, W, H, CELL);
+      if (!layout) continue;
+      if (!best || layout.fit > best.fit) best = layout;
+      if (best.fit >= 1) break;
+    }
+    if (best) paintLabel(ctx, best);
   }
   ctx.restore();
 }
 
+// True when the pixel falls on a sub-cell this banner owns.
+function makeInsideTest(k, subOwnership, owner, GW, GH, CELL) {
+  const mask = new Uint8Array(GW * GH);
+  for (let i = 0; i < mask.length; i++) {
+    const sid = subOwnership[i];
+    if (sid >= 0 && owner[sid] === k) mask[i] = 1;
+  }
+  return (px, py) => {
+    const gx = Math.floor(px / CELL);
+    const gy = Math.floor(py / CELL);
+    if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) return false;
+    return mask[gy * GW + gx] === 1;
+  };
+}
+
+// Widest owned horizontal run through (ax, ay) — the space a centred line
+// of text has to work with before it crosses a border.
+function rowRun(inside, ax, ay, W, CELL) {
+  let left = ax, right = ax;
+  while (left - CELL >= 0 && inside(left - CELL, ay)) left -= CELL;
+  while (right + CELL < W && inside(right + CELL, ay)) right += CELL;
+  return { left, right };
+}
+
+// Try progressively smaller fonts, and within each font progressively more
+// lines, returning the first layout that sits wholly inside the region.
+// Falls back to the highest-scoring near-miss.
+function layoutLabel(ctx, primary, secondary, ax, ay, inside, W, H, CELL) {
+  const run = rowRun(inside, ax, ay, W, CELL);
+  // The anchor is the region's densest cell, not the centre of its widest
+  // row — so the widest single line that fits is the run centred on the
+  // anchor, while the run's own midpoint is often the roomier place to put
+  // the block. Wrap to the former, then try both when placing.
+  const avail = Math.max(48, 2 * Math.min(ax - run.left, run.right - ax) - 6);
+  const runMid = (run.left + run.right) / 2;
+
+  let best = null;
+  for (const size of LABEL_SIZES) {
+    ctx.font = labelFont(size);
+    const full = ctx.measureText(primary).width;
+    for (let n = 1; n <= LABEL_MAX_LINES; n++) {
+      // Two widths per line count: roughly full/n, which balances the lines,
+      // and the region's own width, which packs them. Greedy wrapping at a
+      // fixed width returns the same line count whatever the cap, so the
+      // width is what has to shrink to buy an extra line — but the balanced
+      // one can be too tight to fit in n lines at all, hence both.
+      const balanced = Math.min(avail, (full / n) * 1.08);
+      for (const target of balanced < avail ? [balanced, avail] : [avail]) {
+        const lines = wrapLines(ctx, primary, target, n);
+        if (!lines) continue;
+        const cand = placeBlock(ctx, lines, size, secondary, ax, ay, W, H, inside, runMid);
+        if (!best || cand.fit > best.fit) best = cand;
+        if (cand.fit >= 1) return cand;
+      }
+    }
+  }
+
+  // Last resort: the name is simply longer than its territory can hold. Wrap
+  // it to a readable width instead of the region's, so it spills as a compact
+  // block rather than a tall stack of hyphenated fragments. A banner always
+  // gets a label, even if it has to cross a border.
+  const size = LABEL_SIZES[LABEL_SIZES.length - 1];
+  ctx.font = labelFont(size);
+  const lines = wrapLines(ctx, primary, Math.max(avail, LABEL_SPILL_WIDTH),
+    LABEL_FALLBACK_LINES, true);
+  if (lines) {
+    const cand = placeBlock(ctx, lines, size, secondary, ax, ay, W, H, inside, runMid);
+    if (!best || cand.fit > best.fit) best = cand;
+  }
+  return best;
+}
+
+// Greedy word wrap. Returns null when the text needs more than maxLines, so
+// the caller can try a wider budget — unless `force`, which packs the
+// overflow onto the last line instead. Words are NEVER broken: a word wider
+// than the line takes its own line and overflows the region. Spilling over a
+// border reads better than a hyphenated army name.
+function wrapLines(ctx, text, maxWidth, maxLines, force = false) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if (!cur) {
+      cur = w;
+    } else if (ctx.measureText(cur + ' ' + w).width <= maxWidth) {
+      cur += ' ' + w;
+    } else {
+      lines.push(cur);
+      cur = w;
+    }
+  }
+  if (cur) lines.push(cur);
+
+  if (lines.length <= maxLines) return lines;
+  if (!force) return null;
+  // Over budget and out of alternatives: run the tail together on the last
+  // line and let it spill rather than dropping words off the name.
+  const kept = lines.slice(0, maxLines - 1);
+  kept.push(lines.slice(maxLines - 1).join(' '));
+  return kept;
+}
+
+// Stack the wrapped name plus the faction line into a block and try it at a
+// few positions around the anchor, keeping whichever sits most squarely on
+// the banner's own ground. The nudges matter because the densest cell is the
+// most *central* spot in the region, not necessarily the roomiest one.
+function placeBlock(ctx, lines, size, secondary, ax, ay, W, H, inside, runMid) {
+  const lineH = size + 2;
+  const secH = SECONDARY_SIZE + 2;
+  const gap = 2;
+  const total = lines.length * lineH + gap + secH;
+
+  ctx.font = labelFont(size);
+  const widths = lines.map(l => ctx.measureText(l).width);
+  ctx.font = secondaryFont();
+  const secW = ctx.measureText(secondary).width;
+  const halfW = Math.max(secW, ...widths) / 2;
+
+  const xs = runMid === ax ? [ax] : [ax, runMid, (ax + runMid) / 2];
+  const ys = [ay, ay - lineH, ay + lineH];
+
+  let best = null;
+  for (const x of xs) {
+    const cx = Math.min(Math.max(x, halfW + 6), Math.max(halfW + 6, W - halfW - 6));
+    for (const y of ys) {
+      const top = Math.min(Math.max(y - total / 2, 6), Math.max(6, H - total - 6));
+      const items = [];
+      for (let i = 0; i < lines.length; i++) {
+        items.push({
+          text: lines[i], size, primary: true,
+          w: widths[i], y: top + i * lineH + lineH / 2, h: lineH,
+        });
+      }
+      items.push({
+        text: secondary, size: SECONDARY_SIZE, primary: false,
+        w: secW, y: top + lines.length * lineH + gap + secH / 2, h: secH,
+      });
+
+      let hits = 0, samples = 0;
+      for (const it of items) {
+        const half = it.w / 2;
+        const dy = it.h * 0.3;
+        for (const px of [cx - half, cx - half / 2, cx, cx + half / 2, cx + half]) {
+          for (const py of [it.y - dy, it.y, it.y + dy]) {
+            samples++;
+            if (inside(px, py)) hits++;
+          }
+        }
+      }
+      const fit = samples ? hits / samples : 0;
+      if (!best || fit > best.fit) best = { cx, items, fit };
+      if (fit >= 1) return best;
+    }
+  }
+  return best;
+}
+
+function paintLabel(ctx, layout) {
+  for (const it of layout.items) {
+    ctx.font = it.primary ? labelFont(it.size) : secondaryFont();
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillText(it.text, layout.cx + 1, it.y + 1);
+    ctx.fillStyle = it.primary ? 'rgba(255, 230, 160, 0.95)' : 'rgba(180, 220, 255, 0.85)';
+    ctx.fillText(it.text, layout.cx, it.y);
+  }
+}
+
 // For each k-owned cell, BFS through the k-region only, weighting each
-// other k-cell at hop distance d by 1/(1+d). The cell with the highest
-// total weight is the densest spot in the region. For ties, the lowest
-// tid wins (deterministic).
-function findDensestCell(k, owner, adj) {
-  let bestId = -1;
-  let bestScore = -1;
+// other k-cell at hop distance d by 1/(1+d). The highest total weight is
+// the densest spot in the region; the runners-up are fallback anchors for
+// a label that won't fit at the best one. Ties resolve to the lowest tid
+// (deterministic — no locale-sensitive comparison).
+function rankDensestCells(k, owner, adj, sites) {
+  const scored = [];
   for (let c = 0; c < owner.length; c++) {
     if (owner[c] !== k) continue;
     const dist = new Map();
@@ -1296,12 +1486,23 @@ function findDensestCell(k, owner, adj) {
     }
     let score = 0;
     for (const d of dist.values()) score += 1 / (1 + d);
-    if (score > bestScore) {
-      bestScore = score;
-      bestId = c;
+    scored.push({ tid: c, score });
+  }
+  scored.sort((a, b) => (b.score - a.score) || (a.tid - b.tid));
+
+  // Take the top few outright — cells around the densest one score nearly
+  // the same, and a 20px shift is often all a label needs — then a few
+  // spatially separated ones, which is what reaches the other lobe of a
+  // split region.
+  const picks = scored.slice(0, LABEL_ANCHOR_CANDIDATES).map(s => s.tid);
+  for (const s of scored) {
+    if (picks.length >= LABEL_ANCHOR_CANDIDATES * 2) break;
+    const p = sites[s.tid];
+    if (picks.every(q => Math.hypot(p.x - sites[q].x, p.y - sites[q].y) >= ANCHOR_MIN_SEPARATION)) {
+      picks.push(s.tid);
     }
   }
-  return bestId;
+  return picks;
 }
 
 function drawScanlines(ctx, W, H) {

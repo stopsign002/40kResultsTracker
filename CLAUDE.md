@@ -28,7 +28,8 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 ├── DEPLOY.md               server-side install + env recipe + nightly backups cron
 ├── docker-compose.yml      defines the 40k-api service on the shared 'web' network
 ├── caddy.example           drop into ~/sites/base/conf.d/40k.caddy on the host
-├── .env.example            7 vars; copy to .env on the server (incl. INCLUDE_DIGITAL_IN_STATS)
+├── .env.example            9 vars; copy to .env on the server (incl. INCLUDE_DIGITAL_IN_STATS
+│                           and the optional MAILER_URL / MAILER_TOKEN pair)
 ├── scripts/
 │   ├── README.md           per-script doc
 │   └── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
@@ -37,7 +38,9 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 │   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
 │   ├── package.json        ESM module ("type": "module"); deps: express, pg, bcrypt,
 │   │                       express-session, connect-pg-simple, express-rate-limit
-│   ├── tsconfig.json       editor / `npm run typecheck` only — noEmit, allowJs+checkJs
+│   ├── tsconfig.json       editor / `npm run typecheck` only — noEmit, allowJs+checkJs.
+│   │                       `typescript` is NOT a dependency (there is no devDependencies
+│   │                       block), so typecheck needs a tsc that's already on your PATH
 │   ├── types.js            shared JSDoc typedefs (PlayerPayload, GamePayload, BannerUnit)
 │   ├── server.js           ENTRY: initSchema → ensureBootstrapAdmin → app.listen
 │   ├── lib/                helpers — see api/lib/README.md
@@ -50,29 +53,39 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 │   │   ├── whr.js          whole-history rating: global Bradley-Terry fit (retroactive), tested
 │   │   ├── ratings.js      games → all-time ratings (glicko OR whr, margin-of-victory) + balanced matchmaker
 │   │   ├── adopt-guest.js  promote guests → inactive accounts (preview + promote, war-map-safe)
-│   │   └── game-filter.js  COUNTED_GAMES — the shared "counts toward stats" gate (digital on/off)
+│   │   ├── game-filter.js  COUNTED_GAMES — the shared "counts toward stats" gate (digital on/off)
+│   │   ├── faction-anchors.js  server-side mirror of FACTION_HOMES + SPARE_ANCHORS /
+│   │   │                   chooseSpareAnchor() for the 2nd+ player of a faction
+│   │   └── mail.js         notify(subject, text) → the shared mailer container;
+│   │                       no-ops unless MAILER_URL + MAILER_TOKEN are set
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
 │   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
-│   │   ├── games.js        /games/* — list/get/create/update (HEAVY: insertPlayerChildren)
-│   │   ├── images.js       /games/:id/images — photo upload/cover/delete (bytes on disk)
+│   │   ├── games.js        /games/* — list/get (PUBLIC) + create/update (auth)
+│   │   │                   (HEAVY: insertPlayerChildren, resolvePlayerIdentities)
+│   │   ├── images.js       /games/:id/images — photo upload/cover/delete (bytes on disk);
+│   │   │                   also exports mapRouter, mounted separately at /maps
 │   │   ├── stats.js        /stats/* — overview + 12 stat endpoints (incl. trends, calendar)
-│   │   ├── warmap.js       /stats/warmap — banners feed for the Theatre of War
-│   │   ├── reference.js    /reference/* — factions, detachments, mission packs, names
+│   │   ├── warmap.js       /stats/warmap + /stats/warmap-timeline — banners feed for the
+│   │   │                   Theatre of War, and the game list its time slider scrubs
+│   │   ├── reference.js    /reference/* — factions, detachments, mission packs, users,
+│   │   │                   unified player picker, name autocomplete
 │   │   ├── events.js       /events — SSE long-poll for live updates
 │   │   ├── seasons.js      /seasons — list + start-new (admin)
 │   │   └── ratings.js      /ratings — ADMIN-ONLY Glicko-2 leaderboard + balanced matchmaker
 │   ├── db/
 │   │   ├── README.md       schema/seed conventions, idempotency rules, ALTER pattern
 │   │   ├── schema.sql      tables, indexes, view; idempotent (CREATE IF NOT EXISTS + DO $$..ALTER guard)
-│   │   └── seed.sql        28 factions + detachments + Pariah Nexus + Leviathan packs +
+│   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
+│   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
 │   └── test/
 │       ├── README.md       how to run + what's covered
 │       ├── game-scoring.test.js  11 cases pinning the camelCase payload contract
 │       ├── glicko2.test.js       pins Glicko-2 math to Glickman's worked example
 │       ├── ratings.test.js       margin-of-victory + display mapping + balanced pairing
-│       └── whr.test.js           whole-history fit: transitivity, bounded undefeated, uncertainty
+│       ├── whr.test.js           whole-history fit: transitivity, bounded undefeated, uncertainty
+│       └── game-filter.test.js   COUNTED_GAMES SQL shape with digital on/off
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
     ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
@@ -80,10 +93,12 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
     └── js/
         ├── README.md       module roles
         ├── app.js          hash router, shell renderer, route table, nav links, error boundary
-        ├── api.js          fetch wrapper; exports: api, auth, reference, games, stats, admin, seasons, ratings
-        ├── components.js   el(), clear(), toast(), pill(), fmtDate(), selectOptions(),
-        │                   confirmModal(), promptModal() — USE THESE
-        ├── live.js         singleton EventSource → 'live:game.saved' CustomEvent on document
+        ├── api.js          fetch wrapper; 10 exports: api, auth, reference, games, gameImages,
+        │                   mapImages, stats, admin, seasons, ratings
+        ├── components.js   el(), clear(), toast(), pill(), fmtDate(), fmtDuration(), fmtScore(),
+        │                   selectOptions(), confirmModal(), promptModal() — USE THESE
+        ├── live.js         singleton EventSource on /api/events → 'live:game.saved' CustomEvent
+        │                   on document (only game.saved is re-dispatched client-side)
         ├── lightbox.js     full-screen photo viewer; FLIP zoom + cycle + swipe
         ├── zip.js          dependency-free ZIP reader (Google Photos multi-download)
         └── views/
@@ -117,7 +132,7 @@ These are load-bearing. Changing any of them silently breaks production.
 | 5 battle rounds | everywhere | `ROUNDS = [1,2,3,4,5]` in `game-form.js`; `CHECK (round_number BETWEEN 1 AND 5)` in `schema.sql` (twice). Both 10e and 11e are 5-round games. |
 | Existing games are 10e | `schema.sql` edition migration | Every game logged before the `edition` column existed was 10th edition. The migration adds the column with `DEFAULT '10'` **and then** flips the default to `'11'` — so the backfill lands on 10e and only new rows get 11e. Don't "simplify" that to a single `DEFAULT '11'`; it would silently re-label the entire back catalogue. |
 | No public signup | `routes/auth.js` (no register endpoint) | Admin creates all accounts via `POST /admin/users`. Login page must not have a "Sign up" link. |
-| No game deletion | `routes/games.js` (no DELETE) | Admin can only `PATCH /admin/games/:id/visibility { hidden: true }`. Per the user's spec: results are permanent. |
+| No game deletion **from `/games`** | `routes/games.js` (no DELETE) | Hiding is the normal move — `PATCH /admin/games/:id/visibility { hidden: true }` — because results are meant to be permanent. A hard delete does exist, but only as an admin escape hatch on the *admin* router (`DELETE /admin/games/:id`, which also unlinks the photo files). Don't add a DELETE to `games.js`. |
 | Bootstrap admin only when users table is empty | `lib/auth.js` `ensureBootstrapAdmin()` | After first run, `ADMIN_PASSWORD` env var is ignored. To recover, INSERT directly via psql. |
 
 ---
@@ -191,6 +206,7 @@ The Theatre of War map MUST render byte-identically on every browser, OS and loc
 
 - **`String.prototype.localeCompare`** — uses the user's default locale. `'Bob::5'.localeCompare('alice::5')` can return different signs in `tr-TR` vs `en-US`. We hit this exact bug when two banners shared `first_seen_at` and the tiebreaker decided who claimed the closer seed site. **Always use codepoint comparison** (`a < b ? -1 : a > b ? 1 : 0`) in any sort that affects rendering.
 - **Object property iteration** when keys could be integer-like. V8 reorders integer-string keys (`'42'`, `'7'`) before non-integer keys, regardless of insertion order. Our `unitKey` is `${player_key}::${faction_id}` so the `::` makes keys non-integer; iteration is insertion-order. If you ever change `unitKey` to a bare integer, switch to iterating an explicit array (the existing `sorted` array is the canonical order).
+- **`ctx.measureText`** — font metrics differ by platform and installed fonts, so the label *wrapping* is not byte-identical everywhere. That's tolerated: it only moves glyphs. Keep it that way — never let a text measurement feed back into ownership, geometry or the RNG.
 - **`Math.sin/cos`** — implementation-defined per ECMAScript spec. In practice modern V8/SpiderMonkey/JSC produce identical results, but a last-bit difference at a polygon vertex *could* flip a single grid cell's land-mask result. Hasn't bitten us yet; if it does, replace trig with a polynomial approximation.
 
 When adding any new code that affects map output, run through this checklist mentally. The first symptom of a determinism break is "the map looks the same but territories are slightly differently shaped on Sarah's machine."
@@ -231,17 +247,31 @@ WHERE b.player_key LIKE 'guest:%'
 
 ### Boot sequence (`api/server.js`)
 
-1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`)
+1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`, table `session`, cookie **`tg40k.sid`**, `httpOnly` + `sameSite: 'lax'`, `secure` only when `NODE_ENV === 'production'`, 30-day `maxAge`). `app.set('trust proxy', 1)` — Caddy is in front.
 2. Apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min)
 3. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
 4. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
-5. Mount `/health`, `/auth`, `/admin`, `/games`, `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`, `/ratings`
-6. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`
+5. Mount `/health`, `/auth`, `/admin`, `/maps` (images.js's `mapRouter`), `/games` (twice — `images.js` **before** `games.js`), `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`, `/ratings`
+6. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`. It special-cases 413 / `entity.too.large` into a human "that file is too large to upload" with `code: 'too_large'`
 7. `app.listen(PORT)`
+
+Steps 1–2 also install the split body parser: `express.json({ limit: '256kb' })`
+runs app-wide **except** on paths matching `IMAGE_UPLOAD_PATH`
+(`POST /games/:id/images`, `POST /maps/:id/image`), which parse themselves at
+12mb inside `routes/images.js`. Add any new upload route to that regex or it
+will 413 before the handler is reached.
 
 ### Route module convention
 
-Every `routes/*.js` looks like:
+**Reads are public.** Only `admin.js` and `ratings.js` carry a top-level
+`router.use(requireAdmin)`. `games.js`, `stats.js`, `warmap.js`,
+`reference.js`, `events.js` and `GET /seasons` have **no** auth gate at all — an
+anonymous visitor can browse the whole site — and `images.js`, `auth.js` and
+`seasons.js` apply `requireAuth` / `requireAdmin` per route. Don't add a
+blanket `router.use(requireAuth)` to a read module: it would silently take the
+site private. The template below is for a module that *should* be gated.
+
+A gated `routes/*.js` looks like:
 
 ```js
 import { Router } from 'express';
@@ -291,16 +321,26 @@ const routes = [
   { match: /^\/$/,                   handler: () => renderWarmap(state) },
   { match: /^\/war$/,                handler: () => renderWarmap(state) },
   { match: /^\/games$/,              handler: () => renderGamesList(state) },
-  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null) },
-  { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)) },
+  { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null),                requireAuth: true },
+  { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)), requireAuth: true },
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
   { match: /^\/stats$/,              handler: () => renderStats(state) },
+  { match: /^\/players\/(.+)$/,      handler: (m) => renderPlayer(state, decodeURIComponent(m[1])) },
+  { match: /^\/profile$/,            handler: () => renderProfile(state), requireAuth: true },
   { match: /^\/rankings$/,           handler: () => renderRatings(state), requireAdmin: true },
-  { match: /^\/admin$/,              handler: () => renderAdmin(state) },
+  { match: /^\/admin$/,              handler: () => renderAdmin(state),   requireAdmin: true },
+  { match: /^\/login$/,              handler: () => renderLogin(state, () => navigate('/')) },
 ];
 ```
 
-`route()` runs on `hashchange` and `load`. If no session, `renderShell` short-circuits to the login view. Navigate from anywhere with `window.__nav('/games')` — a global set in `app.js`.
+`route()` runs on `hashchange` and `load`. It tries `auth.me()` once and
+tolerates failure — **no session is not an error**, it just means `state.user`
+stays null and the shell renders a "Sign In" button instead of the user chip.
+Only routes flagged `requireAuth` / `requireAdmin` redirect to `/login`; every
+other view renders for anonymous visitors. Unmatched paths fall back to
+`/games` when logged in and `/` (the war map) when not. Navigate from anywhere
+with `window.__nav('/games')` — a global set in `app.js`. Handler throws are
+caught into an error-boundary panel rather than a blank page.
 
 ### View module convention
 
@@ -315,7 +355,10 @@ Every file in `app/js/views/` exports one async function: `export async function
 - `toast(msg, kind?)` — bottom-right ephemeral toast (3s); kind `'error'` styles red
 - `pill(text, kind?)` — a styled badge; kind `'win'`, `'loss'`, `'draw'`, `'first'`, `'hidden'`
 - `fmtDate(d)` — YYYY-MM-DD
+- `fmtDuration(seconds)` — `m:ss` / `h:mm:ss`; the inverse of `parseDuration()` in `game-form.js`
+- `fmtScore(n)` — score display helper
 - `selectOptions(items, valueKey?, labelKey?, includeBlank?, blankLabel?)` — quick `<option>` array
+- `confirmModal(...)` / `promptModal(...)` — always these, never native `confirm()` / `prompt()`
 
 **Don't introduce React, Vue, lit-html, htm, or template-literal HTML.** This codebase is consciously framework-free; the `el()` pattern is consistent across every view. New code should match.
 
@@ -325,11 +368,14 @@ Always extend the right export object — never call `fetch` directly from a vie
 
 ```js
 export const auth      = { me, login, logout, changePassword, updateMe };
-export const reference = { factions, detachments, missionPacks, missionDetails, users, playerNames };
+export const reference = { factions, detachments, missionPacks, missionDetails, users,
+                            players, playerNames };   // players = unified user+guest picker
 export const games     = { list, get, create, update };
+export const gameImages = { list, upload, update, remove, url };   // url() → /uploads/<gameId>/<file>
+export const mapImages  = { upload, remove, url };                 // url() → /uploads/maps/<file>
 export const stats     = { overview, factionWinRates, playerWinRates, factionMissionBreakdown,
                             factionDeploymentBreakdown, factionMatchups, headToHead,
-                            firstTurnImpact, secondaryAverages, warmap,
+                            firstTurnImpact, secondaryAverages, warmap, warmapTimeline,
                             detachmentWinRates, trends, player, calendar };
 export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit,
                             guestsPreview, promoteGuests };
@@ -343,60 +389,67 @@ All requests `credentials: 'same-origin'`. Errors throw with `.status`, `.code` 
 
 ## HTTP API reference
 
-All routes require an authenticated session unless noted. Responses are JSON. Errors return the uniform shape `{ error: '<message>', code?: '<string>' }` with status from `err.status` (default 500). Login is rate-limited to 20 attempts / IP / 15 min.
+**Reads are public; writes need a session.** The `Auth` column below is the
+truth — `public` means no session at all, `auth` means `requireAuth`, `admin`
+means `requireAdmin`. Responses are JSON. Errors return the uniform shape
+`{ error: '<message>', code?: '<string>' }` with status from `err.status`
+(default 500); 413s are rewritten to a friendly message with `code: 'too_large'`.
+Login is rate-limited to 20 attempts / IP / 15 min.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
 | GET | `/health` | public | `{ ok: true }` |
 | POST | `/auth/login` | public | `{ username, password }` → user object; sets session |
-| POST | `/auth/logout` | session | destroys session |
+| POST | `/auth/logout` | public | destroys session; no guard, so it returns `{ ok: true }` even when nobody is logged in |
 | GET | `/auth/me` | auth | current user `{ id, username, displayName, role, armyName }` |
 | PATCH | `/auth/me` | auth | self-serve update; currently only `{ armyName }` |
 | POST | `/auth/change-password` | auth | `{ currentPassword, newPassword }` |
-| GET | `/reference/factions` | auth | `[{ id, name }]` |
-| GET | `/reference/factions/:id/detachments` | auth | `[{ id, name }]` — UNION of seeded + free-text from past games |
-| GET | `/reference/mission-packs` | auth | `[{ id, name }]` |
-| GET | `/reference/mission-packs/:id/details` | auth | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
-| GET | `/reference/users` | auth | active users `[{ id, username, display_name }]` |
-| GET | `/reference/player-names` | auth | distinct names from past games (for autocomplete) |
-| GET | `/games` | auth | filtered list (q params: `playerUserId`, `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `edition` (`10`\|`11`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search), `limit`, `offset`) |
-| GET | `/games/:id` | auth | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
+| GET | `/reference/factions` | public | `[{ id, name }]` |
+| GET | `/reference/factions/:id/detachments` | public | `[{ id, name }]` — UNION of seeded + free-text from past games |
+| GET | `/reference/mission-packs` | public | `[{ id, name }]` |
+| GET | `/reference/mission-packs/:id/details` | public | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
+| GET | `/reference/users` | public | active users `[{ id, username, display_name }]` |
+| GET | `/reference/player-names` | public | distinct names from past games (for autocomplete) |
+| GET | `/reference/players` | public | unified player picker — every entity that has appeared in a game, registered or guest: `[{ key, label }]` where `key` is the canonical `user:<id>` / `guest:<name>` accepted by `/games?playerKey=` |
+| GET | `/games` | public | filtered list (q params: `playerUserId`, `playerKey` (`user:<id>`\|`guest:<name>`), `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `edition` (`10`\|`11`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search over notes / tournament / location / player names / army-list paste), `limit` (default 100), `offset`). `opponentFaction` is only applied when `playerFaction` is also set |
+| GET | `/games/:id` | public | full game with `players[]`, each with `rounds[]`, `secondaries[]`, `challengers[]` |
 | POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
-| GET | `/games/:id/images` | public | `[{ id, file_name, thumb_name, caption, is_thumbnail, width, height, uploaded_by_name }]` |
-| POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only |
-| PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string }` |
+| GET | `/games/:id/images` | public | `[{ id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, uploaded_by_name }]` |
+| POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only. Responds **201**. Server-side caps: `MAX_IMAGE_BYTES` 8MB **decoded** (413), `MAX_PER_GAME` 40 photos (409), MIME must be jpeg/png/webp (415) |
+| PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string, isMap?: boolean }` — each flag is clear-then-set, because the partial unique index rejects a second winner while the old one is still flagged |
 | DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
 | POST | `/maps/:id/image` | auth | `{ dataUrl, thumbDataUrl? }` — picture of a terrain layout (a `deployment_maps` row), shown on every game played on it. Replacing unlinks the previous pair |
 | DELETE | `/maps/:id/image` | auth | clears the row and unlinks both files |
-| GET | `/stats/overview` | auth | totals + recent activity |
-| GET | `/stats/faction-winrates` | auth | per-faction W/L/D + win% + avg score |
-| GET | `/stats/player-winrates` | auth | per-player W/L/D + win% (groups by user_id OR guest_name) |
-| GET | `/stats/faction-mission-breakdown?factionId=N` | auth | how a faction performs across primary missions |
-| GET | `/stats/faction-deployment-breakdown?factionId=N` | auth | by deployment map |
-| GET | `/stats/faction-matchups` | auth | full A-vs-B matrix (every faction pair with games) |
-| GET | `/stats/head-to-head?userA=N&userB=M` | auth | every game between two users |
-| GET | `/stats/first-turn-impact` | auth | win% comparison going first vs second |
-| GET | `/stats/secondary-averages` | auth | per-card pick count + avg score |
-| GET | `/stats/detachment-winrates[?factionId=N]` | auth | per-`(faction, detachment_name)` W/L/D + win% |
-| GET | `/stats/trends` | auth | `{ monthlyGames, monthlyAvgScore, factionPopularity }` |
-| GET | `/stats/calendar[?days=365]` | auth | `[{ date, games }]` — fuels the heatmap |
-| GET | `/stats/player/:playerKey` | auth | profile + per-faction + streaks for `'user:<id>'` or `'guest:<name>'` |
-| GET | `/stats/warmap[?season=N]` | auth | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `win_rate`, `territory_score`, `first_seen_at`. Defaults to active season. |
-| GET | `/seasons` | auth | every season + games count |
+| GET | `/stats/overview` | public | totals + recent activity |
+| GET | `/stats/faction-winrates` | public | per-faction W/L/D + win% + avg score |
+| GET | `/stats/player-winrates` | public | per-player W/L/D + win% (groups by user_id OR guest_name) |
+| GET | `/stats/faction-mission-breakdown?factionId=N` | public | how a faction performs across primary missions |
+| GET | `/stats/faction-deployment-breakdown?factionId=N` | public | by deployment map |
+| GET | `/stats/faction-matchups` | public | full A-vs-B matrix (every faction pair with games) |
+| GET | `/stats/head-to-head?userA=N&userB=M` | public | every game between two users |
+| GET | `/stats/first-turn-impact` | public | win% comparison going first vs second |
+| GET | `/stats/secondary-averages` | public | per-card pick count + avg score |
+| GET | `/stats/detachment-winrates[?factionId=N]` | public | per-`(faction, detachment_name)` W/L/D + win% |
+| GET | `/stats/trends` | public | `{ monthlyGames, monthlyAvgScore, factionPopularity }` |
+| GET | `/stats/calendar[?days=365]` | public | `[{ date, games }]` — fuels the heatmap. `days` is capped at 730 |
+| GET | `/stats/player/:playerKey` | public | profile + per-faction + streaks for `'user:<id>'` or `'guest:<name>'` |
+| GET | `/stats/warmap[?season=N][&through_game_id=N]` | public | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `avg_score`, `adjusted_points`, `win_rate`, `territory_score`, `first_seen_at`, `anchor_x`, `anchor_y`. Defaults to the active season. `through_game_id` truncates the aggregation at that game in `(played_at, id)` order — that's what the time-travel slider scrubs. Also lazily back-fills any missing `banner_first_seen` row. |
+| GET | `/stats/warmap-timeline[?season=N]` | public | the season's games in chronological order with enough metadata to label a slider tick: `id`, `played_at`, `p1_name`/`p2_name`, `p1_faction`/`p2_faction`, `p1_result` |
+| GET | `/seasons` | public | every season + games count |
 | POST | `/seasons` | admin | `{ name, mapSeed? }` — closes current, opens new (broadcasts `season.changed`) |
 | GET | `/admin/users` | admin | all users including inactive |
 | POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
 | PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
 | PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` (broadcasts `game.saved`) |
 | DELETE | `/admin/games/:id` | admin | hard delete; cascades to rounds/secondaries/challengers (broadcasts `game.saved`) |
-| GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at |
+| GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at; `limit` is capped at 500 |
 | GET | `/admin/guests/preview` | admin | read-only: which guests a promotion run would `create` vs `link` |
 | POST | `/admin/promote-guests` | admin | promote all unlinked guests to inactive accounts (idempotent, war-map-safe) |
 | GET | `/ratings/leaderboard[?marginOfVictory=true&model=glicko\|whr]` | admin | ranked players: `displayFloor` (confidence-adjusted, the rank/headline value), `displayRating` (raw "est"), `rd`, `confidence`, W/L/D, `provisional`, `inMainPool`. **`model` defaults to `whr`** (whole-history). |
-| GET | `/ratings/suggest?present=1,2,3[&marginOfVictory=true&model=…]` | admin | up to 4 balanced pairing configs with predicted win-% + last-met; `bye` if odd |
+| GET | `/ratings/suggest?present=1,2,3[&marginOfVictory=true&model=…]` | admin | up to 4 balanced pairing configs with predicted win-% + last-met; `bye` if odd. `present` is a comma-separated user-id list and needs **at least two** ids (400 otherwise) |
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
-| GET | `/events` | auth | Server-Sent Events stream; emits `game.saved`, `season.changed` |
+| GET | `/events` | public | Server-Sent Events stream; emits `game.saved`, `season.changed`. Comment heartbeat every 25s. The subscriber records `req.session?.userId` when there is one, but a session is **not** required — anonymous viewers get live updates too |
 
 **Total: 51 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
 
@@ -430,7 +483,7 @@ Tables (snake_case throughout):
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
 | `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, bytes, created_at. Two partial unique indexes — `(game_id) WHERE is_thumbnail` (cover) and `(game_id) WHERE is_map` (terrain layout). The flags are independent, so one photo can be both |
 | `player_detachments` | a player's detachments; 11e allows more than one. **Source of truth** — `game_players.detachment_name` is the derived display string | id, game_player_id (CASCADE), detachment_id (nullable), detachment_name, sort_order |
-| `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at; PK (player_key, faction_id) |
+| `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at, anchor_x + anchor_y (REAL, nullable — the banner's own map anchor; NULL falls back to `FACTION_HOMES`); PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
 | `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
 
@@ -438,9 +491,18 @@ Tables (snake_case throughout):
 
 `v_game_player_stats` — denormalised one-row-per-`game_player` view with columns from `games` joined and the opposite seat's player joined as `opponent_*`. Use it for stats queries that need "this player's row + their opponent in one shot".
 
+**It predates 11e and seasons.** It exposes only the *game-level* `primary_mission_id` (not the 11e per-player one) and omits `season_id`, `play_medium` and `edition` — so it cannot express the `COUNTED_GAMES` digital filter. Anything season-aware, edition-aware or digital-gated has to query the base tables instead; extend the view (it's a `CREATE OR REPLACE`) rather than working around it.
+
 ### Seed-data totals (current)
 
-- **28 factions** (Adepta Sororitas through World Eaters)
+- **29 factions** (Adepta Sororitas through World Eaters). `FACTION_HOMES` and
+  `FACTION_COLOURS` in `warmap.js` — and the server mirror in
+  `api/lib/faction-anchors.js` — carry the **same 29 keys**, and all three must
+  stay in step. The map tables are append-only, so it's fine for them to run
+  ahead of the seed; a seeded faction with **no** map entry is the failure case
+  (it falls back to the centre of the canvas). `FACTION_GLYPH` is the exception:
+  it's allowed to be partial and only feeds the legend. It currently covers 28
+  of the 29 — every faction except Salamanders, which falls back to `•`.
 - All current 10e detachments per codex
 - 2 **10e** mission packs with full primaries / deployments / rules / secondaries / challengers (Pariah Nexus, Leviathan), plus stub names for Tempest of War / Crusade / Open Play / Other
 - 1 **11e** pack, `2026 - 2027 Chapter Approved`: 18 secondaries, 25 primary
@@ -453,24 +515,24 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 
 ## Permission model
 
-| Action | User | Admin | Enforced where |
-|---|---|---|---|
-| Log in | ✓ | ✓ | `POST /auth/login` |
-| View games / stats / war map | ✓ | ✓ | `requireAuth` middleware on all `/games`, `/stats`, `/reference`, `/seasons`, `/events` routes |
-| Create / edit games | ✓ | ✓ | `POST/PUT /games` (auth only) |
-| Edit own profile (army_name, password) | ✓ | ✓ | `PATCH /auth/me` + `POST /auth/change-password`; the "My Profile" link in the header session row routes to `/profile` |
-| Hide game from stats | – | ✓ | `requireAdmin` on `PATCH /admin/games/:id/visibility`; the **Hide** button in `game-detail.js` is conditionally rendered for admins only |
-| Delete a game | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation |
-| Manage users | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
-| Manage seasons (start new) | – | ✓ | `requireAdmin` on `POST /seasons`; lives in the Admin → Seasons panel |
-| Promote guests to accounts | – | ✓ | `requireAdmin` on `/admin/guests/preview` + `POST /admin/promote-guests`; Admin → Guest Accounts panel |
-| View rankings / matchmaker | – | ✓ | `requireAdmin` on all `/ratings/*`; the **Rankings** nav link + `/rankings` route render only for admins. **Private by spec** — players can't see their own rating |
-| View audit log | – | ✓ | `requireAdmin` on `GET /admin/audit`; rendered in the Admin → Audit Log panel |
-| Subscribe to live updates | ✓ | ✓ | `requireAuth` on `GET /events`; `app.js` calls `startLiveFeed()` once a session is established |
-| Change own password | ✓ | ✓ | `POST /auth/change-password` |
-| Upload a game photo | ✓ | ✓ | `requireAuth` on `POST /games/:id/images`; set Cover / Map via `PATCH` |
-| Delete a game photo | own only | ✓ | `DELETE /games/:id/images/:imageId` — uploader **or** admin; unlike games, a photo is just an attachment |
-| Upload / clear a terrain-layout picture | ✓ | ✓ | `requireAuth` on `POST`/`DELETE /maps/:id/image`. It belongs to the layout, so it changes what **every** game on that layout shows |
+| Action | Anon | User | Admin | Enforced where |
+|---|---|---|---|---|
+| Log in | ✓ | ✓ | ✓ | `POST /auth/login` (rate-limited) |
+| View games / stats / war map / player profiles / photos | ✓ | ✓ | ✓ | **Nothing** — `games.js`, `stats.js`, `warmap.js`, `reference.js`, `events.js`, `GET /seasons` and `GET /games/:id/images` have no auth gate. Reads are public by design; `app.js` renders every non-flagged route for `state.user === null` |
+| Create / edit games | – | ✓ | ✓ | `requireAuth` inline on `POST /games` + `PUT /games/:id`; client-side, the `/games/new` and `/games/:id/edit` routes carry `requireAuth: true` and the "New Game" nav link only renders with a session |
+| Edit own profile (army_name, password) | – | ✓ | ✓ | `PATCH /auth/me` + `POST /auth/change-password`; the "My Profile" link in the header session row routes to `/profile` |
+| Hide game from stats | – | – | ✓ | `requireAdmin` on `PATCH /admin/games/:id/visibility`; the **Hide** button in `game-detail.js` is conditionally rendered for admins only |
+| Delete a game | – | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation |
+| Manage users | – | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
+| Manage seasons (start new) | – | – | ✓ | `requireAdmin` on `POST /seasons`; lives in the Admin → Seasons panel |
+| Promote guests to accounts | – | – | ✓ | `requireAdmin` on `/admin/guests/preview` + `POST /admin/promote-guests`; Admin → Guest Accounts panel |
+| View rankings / matchmaker | – | – | ✓ | `requireAdmin` on all `/ratings/*`; the **Rankings** nav link + `/rankings` route render only for admins. **Private by spec** — players can't see their own rating |
+| View audit log | – | – | ✓ | `requireAdmin` on `GET /admin/audit`; rendered in the Admin → Audit Log panel |
+| Subscribe to live updates | ✓ | ✓ | ✓ | **Nothing** — `GET /events` imports no guard. The subscriber records `req.session?.userId` when there is one, but anonymous viewers get the stream too |
+| Change own password | – | ✓ | ✓ | `POST /auth/change-password` |
+| Upload a game photo | – | ✓ | ✓ | `requireAuth` on `POST /games/:id/images`; set Cover / Map via `PATCH` |
+| Delete a game photo | – | own only | ✓ | `DELETE /games/:id/images/:imageId` — uploader **or** admin; unlike games, a photo is just an attachment |
+| Upload / clear a terrain-layout picture | – | ✓ | ✓ | `requireAuth` on `POST`/`DELETE /maps/:id/image`. It belongs to the layout, so it changes what **every** game on that layout shows |
 
 Server enforcement is the source of truth; client gating is a UX convenience only.
 
@@ -574,14 +636,15 @@ When in doubt, the module's own README is the closer source of truth than this f
 
 ## Theatre of War internals (`app/js/views/warmap.js`)
 
-The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized territories via Voronoi + Lloyd's relaxation. Each territory is owned by a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate regions but share the Necron green colour. Each banner's label (army_name → display_name → guest name) sits on the *densest* cell of its region — not the centroid, which can land outside a concave or split region; no fortress markers are drawn. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
+The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 evenly-sized **named provinces** via Voronoi + Lloyd's relaxation, each of which is then sliced into **10 sub-cells**. Ownership is decided at sub-cell granularity (1200 of them), so a war front can cut through the middle of a province — which then reads as *contested* — instead of snapping to province edges. Every owned cell belongs to a **(player, faction) banner** — Joe's Necrons and Jane's Necrons are separate units with separate regions but share the Necron green colour. Each banner's label (army_name → display_name → guest name) sits on the *densest* sub-cell of its region — not the centroid, which can land outside a concave or split region — and is wrapped (and shrunk, if need be) to stay inside that region's own borders; no fortress markers are drawn. Rendered as a 40k war-room tactical display: dark navy backdrop, glowing cyan coastline, amber war-front borders, monospace HUD chrome. Same seed → identical output on every device, every browser, forever.
 
 ### Constants (immutable)
 
-- `MAP_SEED = 0xDEAD40` — drives both the continent silhouette and the territory site placement. **Never change.**
+- `MAP_SEED = 0xDEAD40` — drives the continent silhouette, the province sites, the sub-cell mesh and the procedural province names. **Never change.** (It is the *default*: `renderWarmap` uses the selected season's `seasons.map_seed` when there is one. Starting a new season is the supported way to get a new continent — editing this constant would reshape every past season too.)
+- `SUB_PER_PARENT = 10` — sub-cells per province, so 1200 in total. Also frozen: changing it re-partitions ownership for everyone.
 - `VIRTUAL_W = 1280`, `VIRTUAL_H = 794` — fixed compute resolution. Map is generated at this size and CSS-scaled for display. Critical for cross-device consistency: same canvas dimensions on every device → byte-identical territory geometry and faction allocation. **Never change.**
-- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. 28 entries; matches faction count in `seed.sql`. **Append-only.** Drives the seed site each new banner claims (closest unclaimed Voronoi site to the anchor). Seeds are invisible — they're the stability root, not a drawn fortress.
-- `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES`.
+- `FACTION_HOMES` — `{ 'Faction Name': [x, y] }` in 0..1 canvas-space. **29 entries**, the same key set as the 29 factions in `seed.sql`. **Append-only.** It is only the *fallback*: a banner uses `banner_first_seen.anchor_x/anchor_y` from the server when set, and falls back to this table (then to `[0.5, 0.5]`) when it isn't. Drives the seed sub-cell each new banner claims (closest unclaimed sub-site to the anchor). Seeds are invisible — they're the stability root, not a drawn fortress. `api/lib/faction-anchors.js` holds a server-side mirror of this table (plus 12 `SPARE_ANCHORS` for the 2nd+ player of a faction); **both copies must be edited together.**
+- `FACTION_COLOURS` — `{ 'Faction Name': '#hex' }` lore-matched palette. Same key set as `FACTION_HOMES` (29). `FACTION_GLYPH` is the optional legend emblem and does not need full coverage — it currently has 28 entries, missing only Salamanders, which the legend renders with the `•` fallback.
 - `N_TERRITORIES = 120` — total territories on the continent. Changing this changes everyone's map. The Poisson-disc `minDist` scales as `1/sqrt(N)` so spacing stays sane at any N (the formula evaluates to the original 0.07 of canvas at N=50).
 - `LLOYD_ITERATIONS = 8` — relaxation passes; more = more even cell sizes.
 - `CELL = 4` — Voronoi/raster sample step in pixels.
@@ -589,19 +652,38 @@ The map is a deterministic procedural continent ("Boimaggedon") tiled into ~120 
 ### Render pipeline (`drawTacticalMap`)
 
 1. **Continent silhouette.** `generateContinent` builds a closed polygon by sampling 96 angles around the canvas centre with multi-octave sine noise and a slight horizontal squash. Result: an organic, asymmetric coastline.
-2. **Territory sites.** `generateTerritories` Poisson-disc-samples `N_TERRITORIES` points inside the polygon with `minDist` scaled as `1/sqrt(N)` so spacing stays sane at any N.
+2. **Parent province sites.** `generateTerritories` Poisson-disc-samples `N_TERRITORIES` points inside the polygon with `minDist` scaled as `1/sqrt(N)` so spacing stays sane at any N. These 120 cells are the **named provinces** — `territoryName(parentIndex, seed)` derives `"<Prefix> <Suffix> <NN><L>"` from the seed, so the names are stable for a given map.
 3. **Voronoi via grid sampling.** For each grid cell at step `CELL`, find the nearest site (-1 for ocean cells outside the polygon). Land mask is precomputed once.
 4. **Lloyd's relaxation.** For 8 iterations: rasterize Voronoi → compute centroid of each cell → move site to its centroid → rasterize again. Result: cells become roughly equal area and similar shape.
-5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours.
-6. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap`. Sort by `first_seen_at`, tiebreak by `(player_key, faction_id)` via codepoint comparison. Four phases:
-   - **Seed claim** — each banner claims the closest unclaimed Voronoi site to its `FACTION_HOMES` anchor. Seeds are invisible roots; they don't get drawn as fortresses.
-   - **Initial fill** — multi-source BFS from all seeds simultaneously. Every land cell ends up owned by the banner whose seed reached it first across the adjacency graph (graph-distance Voronoi). No unclaimed land remains.
-   - **Pressure equalization** — over-target banners cede border cells to under-target neighbours, cascading outward until every banner matches `round(territory_score / total * N_TERRITORIES)` or the geography refuses. A local `flipKeepsContiguous` guard prevents flips that would split a region into islands.
+5. **Adjacency graph.** `buildAdjacency` walks the grid; cells differing in ownership across an edge are marked as neighbours. This is the **parent** adjacency.
+6. **Sub-cell subdivision.** `generateSubTerritories` slices every parent province into `SUB_PER_PARENT = 10` sub-cells via a mini-Voronoi seeded `seed ^ ((parentId + 1) * 2654435761)`, reservoir-sampled from the parent's own grid cells (collected in deterministic `gy,gx` scan order) and relaxed twice *within* the parent, so a sub-cell never crosses a province boundary. That gives **1200 sub-cells** and a second (`subAdj`) adjacency graph. **Ownership is decided at sub-cell granularity, not province granularity** — that's what lets a war front cut through the middle of a province instead of snapping to its edge. The named parent geometry is untouched, so provinces stay lore-stable while the fronts stay fluid.
+7. **Per-(player, faction) territory assignment.** `assignTerritories` receives an array of "units" — one row per `(player_key, faction_id)` returned by `/stats/warmap` — and operates entirely on sub-cells. Sort by `first_seen_at`, tiebreak by `unitKey` (`player_key::faction_id`) via codepoint comparison. Five phases:
+   - **Seed claim** — each banner claims the closest unclaimed **sub-site** to its anchor (`banner_first_seen.anchor_x/y`, else `FACTION_HOMES`, else `[0.5, 0.5]`), in `first_seen_at` order. The parent of that sub-cell becomes the banner's home province. Seeds are invisible roots; they don't get drawn as fortresses.
+   - **Targets** — `target[k] = max(1, round(territory_score / totalScore * NSub))`, i.e. proportional over the 1200 sub-cells.
+   - **Parent-priority round-robin expansion** — not a plain multi-source BFS. Each banner claims **one sub-cell per turn**, and prefers to finish the province it is currently filling before opening a new one; a claim must touch a sub-cell it already owns, so growth stays contiguous. When a banner's pending-province list is exhausted it discovers newly-adjacent provinces via `parentAdj` and retries next turn. The result is clusters of *fully owned* provinces (organic shapes inherited from the parent Voronoi) plus a partial conquest along the front, rather than disks.
+   - **Pocket adoption** — any sub-cell still unowned adopts a neighbour's banner, repeating until nothing is left. Rare, but a province isolated from every frontier needs it.
+   - **Pressure equalization** — repeatedly applies the single best boundary flip, where gain = `deficit[dest] - deficit[donor]`, requiring `gain >= 2` (which makes Σ deficit² strictly decrease, so cascades converge). Two guards: an **anti-tendril** rule (the flipped cell needs ≥2 neighbours already owned by the destination, so flips thicken a border rather than extruding a one-cell string) and `flipKeepsContiguous`, which refuses any flip that would split the donor into islands. Determinism: sub-cells in tid order, neighbours in adjacency-list order, ties to first-found.
    - **Same faction, two players** → two separate territory clusters in the same general region of the continent, distinguished by a bold amber war-front border between them.
-7. **Paint.** Land tiles painted in faction colour blended over the navy backdrop; ocean = backdrop. (No unclaimed neutral land — the multi-source BFS in step 6 covers everything.)
-8. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). Borders between same-faction territories = thin cyan; between different factions = bold amber (the "war front").
-9. **Labels.** Each banner's label is drawn on its **densest owned cell** — the one maximising Σ 1/(1+hop) over other same-owner cells reachable through same-owner cells only. A plain centroid would drift outside a concave or two-lobed region; the density measure keeps the label on solid ground. Primary line = army_name (or display_name fallback) in amber monospace; faction abbreviation in cyan below.
-10. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout.
+8. **Province tallies.** Sub-cell ownership is tallied per parent to get a **majority owner** per province (the "territories" count in the HUD and tooltip) and the full owner set (`provinceOwners`), which is what makes a province read as **contested** when more than one banner holds part of it.
+9. **Paint.** `paintTerritories` blends the faction colour into the pixel buffer directly (`getImageData`/`putImageData`) at α 0.72 over the navy backdrop; ocean is left as backdrop. It keeps a neutral-steel branch for unowned land as a safety net, but the adoption fill above means you should never see it — if steel shows up on the live map, assignment failed, not the painter.
+10. **Coastline + borders.** Continent edge in glowing cyan (shadowBlur). `drawBorders` takes **both** ownership arrays and draws four tiers: same province + same banner → nothing; different province + same banner → faint cyan province grid line; **same province + different banner → medium amber (a contested province, the front running through its interior)**; different province + different banner → bold amber war front.
+11. **Labels.** Each banner's label is drawn on its **densest owned sub-cell** — the one maximising Σ 1/(1+hop) over other same-owner sub-cells reachable through same-owner sub-cells only. A plain centroid would drift outside a concave or two-lobed region; the density measure keeps the label on solid ground. Primary line = army_name (or display_name fallback) in amber monospace; faction abbreviation in cyan below.
+
+   The name is then **fitted to the territory** rather than drawn as one line: `layoutLabel()` wraps it to the owned horizontal run at the anchor, trying line counts 1..`LABEL_MAX_LINES` (each at two widths — balanced `full/n` and the region's own width) and font sizes 12 → 9, plus a handful of placements (anchor x, midpoint of the owned run, ±one line vertically) and up to 6 anchor candidates (top-scoring, then spatially separated ones that can reach a second lobe). The first layout whose sample points all land on owned ground wins; failing that, the highest-scoring near-miss is drawn. Nothing is ever truncated and **words are never broken** — no hyphenation, by explicit preference: a name too long for its region spills over the border as a compact block wrapped at `LABEL_SPILL_WIDTH`, and a single unbreakable word just overflows on its own line. Don't "improve" this by adding mid-word breaks. Measured on a synthetic 22-banner board, label sample points on their own territory went 68% → 97%, widest line 264px → 168px.
+12. **HUD chrome.** Scan lines (3px stride), corner brackets, compass with N marker, bottom-right tactical readout (`> WORLD: BOIMAGGEDON`, `> THEATRES:`, `> BANNERS:`, `> FACTIONS:`, `> PLAYERS:`, `> STATUS: ● ENGAGED`).
+
+`drawTacticalMap` returns the `mapState` the interactive chrome reads back:
+`{ parentOwnership, subOwnership, owner, parentOfSub, provinceOwners, unitMeta, territoryCount, GW, GH, CELL, subSites }`.
+
+### The view shell around the canvas
+
+`renderWarmap()` wraps the canvas in four controls. None of them touch the geometry — they only change *which* banner data is fed to `drawTacticalMap`, or read back `mapState`.
+
+- **Season picker** — `seasons.list()` up front (failures swallowed, so a server without `/seasons` still renders the map). Shown **only when more than one season exists**. Selecting one rewrites the hash to `#/war` (active) or `#/war?season=<id>` and re-routes the whole view.
+- **Per-season map seed** — `renderSeed = seasonObj?.map_seed ? Number(seasonObj.map_seed) : MAP_SEED`. `MAP_SEED` is still the frozen default and the seed Season 1 was created with, but an archived season renders **its own continent** from its `seasons.map_seed`. Everything geometric threads this seed through: `generateContinent`, `generateTerritories`, the per-parent sub-Voronoi (`seed ^ ((p+1) * 2654435761)`) and `territoryName`. So "never change `MAP_SEED`" still holds — starting a *new season* is the supported way to get a new continent.
+- **Time-travel slider + ▶** — appended only when the timeline has more than one game. `stats.warmapTimeline(season)` supplies the ticks; `renderAt(idx)` re-fetches `stats.warmap(season, timeline[idx].id)` (i.e. `through_game_id`) and redraws. A `renderToken` counter discards a superseded fetch, so dragging fast can't paint an out-of-order frame. Play auto-advances one checkpoint per **600ms**, rewinding to 0 if already at the end. Same seed + same banner data → historical snapshots are deterministic too.
+- **Hover tooltip** — `mousemove` maps client coords through the canvas scale to a grid cell, reads `subOwnership` → `parentOfSub` → province, and shows `territoryName`, the banner (`army_name || player_name`), faction, `W · L · D · win%`, the banner's province count, and `· contested (N banners)` when `provinceOwners[pid].size > 1`. It builds an HTML string, so every interpolated value goes through `escapeHtml()` — keep it that way.
+- **Legend** — a `?` button bottom-left toggles a panel listing every faction present with its colour, `FACTION_GLYPH` (fallback `•`), abbreviation and full name. `populateLegend` sorts with codepoint comparison, **not** `localeCompare` (see pitfall #7).
 
 ### Territory score formula
 
@@ -623,7 +705,7 @@ Tuning notes: ~2:1 wins-vs-points weighting means wins dominate but high-scoring
 
 The earlier (broken) approach used `MIN(played_at)` from the live game data. That's NOT monotonic — backdating a game pulls the banner earlier in the order, and `assignTerritories` then re-runs from scratch giving previously-first banners a different seed site. Symptom seen in the wild: "me and the Tyranids basically just traded places, even our territories moved." Fixed.
 
-**Seed-claim determinism (client-side).** `assignTerritories` claims seeds in `first_seen_at` order. Each banner's seed site is the closest unclaimed Voronoi site to its `FACTION_HOMES` anchor at claim time. Because earlier banners always claim first and the candidate site set is unchanged between regens, every existing banner ends up with the exact same seed site as the previous render. New banners always sort later, so they pick from whatever is left — never displacing an existing seed.
+**Seed-claim determinism (client-side).** `assignTerritories` claims seeds in `first_seen_at` order. Each banner's seed is the closest unclaimed **sub-site** to its anchor at claim time — `banner_first_seen.anchor_x/anchor_y` when the server has one, else `FACTION_HOMES[faction]`, else `[0.5, 0.5]`. Because earlier banners always claim first and the candidate site set is unchanged between regens, every existing banner ends up with the exact same seed site as the previous render. New banners always sort later, so they pick from whatever is left — never displacing an existing seed.
 
 The pressure-equalization phase that runs after the initial fill is also deterministic (banners iterated in `sorted` order, cells in tid order, neighbours in adjacency-list order), so the same scores + same anchors produce a byte-identical map on every device, every session.
 
@@ -631,13 +713,16 @@ What CAN shift between regens: borders move when scores change or banners join/l
 
 ### When the map CAN reshape (edge cases worth knowing)
 
-- The continent itself moves if `MAP_SEED`, `VIRTUAL_W/H`, or `LLOYD_ITERATIONS` change — every region goes with it.
-- Adding a new entry to `FACTION_HOMES` between two existing entries (rather than appending) shifts every later faction's seed anchor.
-- Truncating `banner_first_seen` makes every banner re-claim from scratch in the seeded backfill order. Don't do this unless you mean it.
+- The continent itself moves if `MAP_SEED`, `VIRTUAL_W/H`, `N_TERRITORIES`, `SUB_PER_PARENT` or `LLOYD_ITERATIONS` change — every region goes with it.
+- A different season renders a different continent **on purpose**, from `seasons.map_seed`. That's the supported way to reshape the world; it leaves past seasons intact.
+- Adding a new entry to `FACTION_HOMES` between two existing entries (rather than appending) shifts every later faction's seed anchor. Remember `api/lib/faction-anchors.js` mirrors this table.
+- Truncating `banner_first_seen` makes every banner re-claim from scratch in the seeded backfill order, and also drops the per-banner `anchor_x/anchor_y`. Don't do this unless you mean it.
 
 ### Recipe: changing what shows on a banner's label
 
 `drawLabels()` resolves the primary label as `u.army_name || u.player_name` inline. To change the displayed text, edit that fallback chain — never derive from `u.faction` (the faction abbreviation is already drawn as a secondary line below the army name). To set/edit a user's army name: Admin tab → user row → "Army" button.
+
+The knobs for how a label is *fitted* are the constants above `drawLabels()`: `LABEL_SIZES` (font step-down), `LABEL_MAX_LINES`, `LABEL_SPILL_WIDTH` (wrap width for names that can't fit anywhere), `LABEL_ANCHOR_CANDIDATES` + `ANCHOR_MIN_SEPARATION`. Raising the line count buys fit at the cost of a taller stack of small text; it was tuned to 4 (5 gained ~0.6pp and looked noisy).
 
 ---
 
@@ -823,10 +908,25 @@ so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
   fetched when someone actually lingers. Rows can carry **two** thumbnails —
   the game's cover photo and the terrain layout it was played on. It is appended to `<body>`, **not** the row: `.panel` is
   `overflow: hidden`, so anything scaled up inside the table gets clipped at the
-  panel edge. It reuses the already-loaded 400px thumb file (no extra request),
-  flips to the other side near the viewport edge, and is gated behind
+  panel edge. It prefers to sit right of the row, then left, then centred,
+  clamped into the cushion either way, and is gated behind
   `(hover: hover) and (pointer: fine)` so a tap on touch doesn't strand one
   on screen. Hidden on scroll/resize, since it's anchored to a rect.
+- **Preview teardown is not just `mouseleave`.** The row can be destroyed under
+  the cursor — clicking it navigates into the game and tears the table down, and
+  a live SSE update rebuilds it — and no `mouseleave` fires when that happens,
+  which left the preview stranded over the next screen with no way to dismiss it
+  (it's `pointer-events: none`). `hidePreview()` is therefore also wired to
+  `pointerdown` (capture), `hashchange`, and the top of `refresh()`. Add new
+  teardown paths there rather than assuming the pointer will leave politely.
+- **Clicking a row thumbnail opens the photo viewer, not the game.** The tiles
+  are `<button class="list-thumb-wrap">` that `stopPropagation()` on the row's
+  navigate handler. The list row only carries the cover + layout thumbs, so
+  `openRowGallery()` fetches `GET /games/:id/images` on click and opens the
+  lightbox at the photo you clicked, with the rest cyclable. The terrain-layout
+  tile is a special case: when it's the picture attached to the `deployment_maps`
+  row (rather than a game photo tagged MAP) it isn't part of the game's set, so
+  it opens on its own with no cycling chrome.
 
 ---
 

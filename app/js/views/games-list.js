@@ -1,4 +1,5 @@
 import { games, reference, gameImages, mapImages } from '../api.js';
+import { openLightbox } from '../lightbox.js';
 import { el, clear, fmtDate, pill, selectOptions, fmtDuration } from '../components.js';
 
 const filterState = {
@@ -164,6 +165,9 @@ export async function renderGamesList(state) {
 
   async function refresh() {
     const tbl = root.querySelector('#games-table');
+    // A live update can rebuild the table under the cursor, which destroys the
+    // hovered thumbnail without a mouseleave.
+    hidePreview();
     clear(tbl);
     tbl.appendChild(el('div', { class: 'muted' }, 'Loading…'));
     const list = await games.list(filterState);
@@ -305,6 +309,13 @@ function attachHoverPreview(imgEl, src, fullSrc) {
 // A preview anchored to a rect that just moved would float in the wrong place.
 window.addEventListener('scroll', hidePreview, { passive: true, capture: true });
 window.addEventListener('resize', hidePreview, { passive: true });
+// mouseleave never fires when the row is destroyed underneath the cursor —
+// which is exactly what a click does, since it navigates into the game and
+// tears the table down. Without these the preview is stranded over the next
+// screen with no way to dismiss it (it's pointer-events:none). Kill it on any
+// pointer press and on navigation, not just on leaving the thumbnail.
+document.addEventListener('pointerdown', hidePreview, { capture: true });
+window.addEventListener('hashchange', hidePreview);
 
 // 10e has one mission for the game; 11e gives each player their own (decided by
 // the Force Disposition pairing), so there's nothing to show in a single slot —
@@ -338,38 +349,120 @@ function clockLine(p1, p2) {
     `\u23F1 ${fmtDuration(a) ?? dash} vs ${fmtDuration(b) ?? dash}`);
 }
 
+// Clicking a picture opens the picture, rather than following the row into the
+// game. The list row only carries the cover + layout thumbs, so the game's full
+// photo set is fetched on demand and the viewer opens on the one that was
+// clicked — from there the arrows/swipe cycle the rest.
+async function openRowGallery(g, prefer, anchor) {
+  // The shared terrain-layout picture belongs to the deployment map, not to
+  // this game, so there is nothing to flip through — show it on its own.
+  const openLayout = () => {
+    const file = g.map_image_name || g.map_thumb_name;
+    if (!file) return false;
+    openLightbox({
+      items: [{
+        full: mapImages.url(file),
+        thumb: mapImages.url(g.map_thumb_name || file),
+        caption: g.deployment_map || 'Terrain layout',
+      }],
+      startIndex: 0,
+      thumbFor: () => anchor,
+    });
+    return true;
+  };
+  if (prefer === 'layout') { openLayout(); return; }
+
+  let images = [];
+  try { images = await gameImages.list(g.id); } catch (_) { /* fall back below */ }
+
+  if (!images.length) {
+    // Offline, or the row is out of date. Show what the row already has rather
+    // than swallowing the click.
+    if (prefer === 'map' && openLayout()) return;
+    if (!g.thumb_name) return;
+    openLightbox({
+      items: [{
+        full: gameImages.url(g.id, g.cover_file_name || g.thumb_name),
+        thumb: gameImages.url(g.id, g.thumb_name),
+        caption: '',
+      }],
+      startIndex: 0,
+      thumbFor: () => anchor,
+    });
+    return;
+  }
+
+  const want = prefer === 'map'
+    ? images.findIndex(x => x.is_map)
+    : images.findIndex(x => x.is_thumbnail);
+  const startIndex = Math.max(0, want);
+  openLightbox({
+    items: images.map(x => ({
+      full: gameImages.url(g.id, x.file_name),
+      thumb: gameImages.url(g.id, x.thumb_name),
+      caption: x.caption || '',
+    })),
+    startIndex,
+    // Only the clicked tile exists in the row, so the zoom flies from it and
+    // any other photo just fades.
+    thumbFor: (i) => (i === startIndex ? anchor : null),
+  });
+}
+
+// A tile is a button so it's keyboard-reachable and reads as its own control;
+// the click must not bubble to the row, which navigates to the game.
+function thumbTile(g, { prefer, label, title, badge, ...thumbOpts }) {
+  const img = previewThumb(thumbOpts);
+  return el('button', {
+    class: 'list-thumb-wrap',
+    type: 'button',
+    title: title || label,
+    'aria-label': label,
+    onClick: (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hidePreview();
+      openRowGallery(g, prefer, img);
+    },
+  }, [img, badge].filter(Boolean));
+}
+
 function thumbCell(g) {
   const tiles = [];
   if (g.thumb_name) {
-    tiles.push(el('span', { class: 'list-thumb-wrap' }, [
-      previewThumb({
-        src: gameImages.url(g.id, g.thumb_name),
-        fullSrc: g.cover_file_name ? gameImages.url(g.id, g.cover_file_name) : null,
-        alt: 'Game photo',
-      }),
-      g.image_count > 1 ? el('span', { class: 'list-thumb-count' }, String(g.image_count)) : null,
-    ].filter(Boolean)));
+    tiles.push(thumbTile(g, {
+      src: gameImages.url(g.id, g.thumb_name),
+      fullSrc: g.cover_file_name ? gameImages.url(g.id, g.cover_file_name) : null,
+      alt: 'Game photo',
+      prefer: 'cover',
+      label: g.image_count > 1 ? `View ${g.image_count} photos` : 'View photo',
+      badge: g.image_count > 1 ? el('span', { class: 'list-thumb-count' }, String(g.image_count)) : null,
+    }));
   }
   // A photo tagged MAP on this game wins; otherwise fall back to the picture
   // attached to the layout itself, which is shared by every game played on it.
   const mapSrc = g.map_photo_thumb
     ? { src: gameImages.url(g.id, g.map_photo_thumb),
-        full: g.map_photo_file ? gameImages.url(g.id, g.map_photo_file) : null }
+        full: g.map_photo_file ? gameImages.url(g.id, g.map_photo_file) : null,
+        prefer: 'map' }
     : (g.map_thumb_name
         ? { src: mapImages.url(g.map_thumb_name),
-            full: g.map_image_name ? mapImages.url(g.map_image_name) : null }
+            full: g.map_image_name ? mapImages.url(g.map_image_name) : null,
+            prefer: 'layout' }
         : null);
 
   if (mapSrc) {
-    tiles.push(el('span', { class: 'list-thumb-wrap', title: g.deployment_map || 'Terrain layout' }, [
-      previewThumb({
-        src: mapSrc.src,
-        fullSrc: mapSrc.full,
-        alt: g.deployment_map || 'Terrain layout',
-        cls: 'is-map',
-      }),
-      el('span', { class: 'list-thumb-tag' }, 'MAP'),
-    ]));
+    const layoutName = g.deployment_map || 'Terrain layout';
+    tiles.push(thumbTile(g, {
+      src: mapSrc.src,
+      fullSrc: mapSrc.full,
+      alt: layoutName,
+      cls: 'is-map',
+      prefer: mapSrc.prefer,
+      label: `View ${layoutName}`,
+      title: layoutName,
+      badge: el('span', { class: 'list-thumb-tag' }, 'MAP'),
+    }));
   }
   if (!tiles.length) return el('span', { class: 'list-thumb placeholder' }, '');
   return el('span', { class: 'list-thumb-cell' }, tiles);

@@ -687,7 +687,22 @@ td.tabular { font-variant-numeric: tabular-nums; }
 /* ── Game photos ─────────────────────────────────────────────── */
 /* Thumbnails in the games list. Fixed box so rows keep a uniform height
    whatever aspect ratio the photo has. */
-.list-thumb-wrap { position: relative; display: inline-block; line-height: 0; }
+/* A <button> so the picture is keyboard-reachable and announces itself, but it
+   must look exactly like the bare thumbnail it replaced. */
+.list-thumb-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  border-radius: 4px;
+}
+.list-thumb-wrap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .list-thumb {
   width: 44px;
   height: 44px;
