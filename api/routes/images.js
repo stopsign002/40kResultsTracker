@@ -2,7 +2,7 @@
 // Photos attached to a game.
 //
 // The browser downscales and re-encodes before upload (see uploadImages() in
-// app/js/views/game-detail.js) and posts two JPEG data URLs: a ~1600px "full"
+// app/js/views/game-detail.js) and posts two JPEG data URLs: a ~2048px "full"
 // and a ~400px "thumb". Doing it client-side keeps a native image library
 // (sharp/imagemagick) out of the container and means a 12MP phone photo never
 // crosses the wire at full size.
@@ -22,9 +22,13 @@ const router = Router();
 
 export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/uploads';
 
-// A 1600px JPEG lands well under this; the ceiling is here so a hand-rolled
-// request can't stream an arbitrary blob onto the disk. base64 inflates by ~33%,
-// so this is roughly a 6MB image.
+// Checked against the *decoded* buffer, so this is 8MB of actual image. A
+// 2048px JPEG at q0.82 is typically 400-900KB — still an order of magnitude of
+// headroom, so raising the client's longest edge from 1600 to 2048 did not make
+// this tight. The ceiling is here so a hand-rolled request can't stream an
+// arbitrary blob onto the disk. The tighter of the two limits is the route's
+// 12mb JSON body cap below: base64 inflates by ~33%, so an 8MB image arrives as
+// ~10.7MB of payload and only just fits.
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PER_GAME = 40;
 const ALLOWED = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };

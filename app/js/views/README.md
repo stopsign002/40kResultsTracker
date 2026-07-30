@@ -1,12 +1,12 @@
 # `app/js/views/` — per-route view modules
 
-Every file exports one async function: `export async function renderXxx(state, ...args)`. It returns a single root DOM node. `app.js` swaps that node into `<main>` after the previous page is cleared.
+Every file exports one function: `export async function renderXxx(state, ...args)`. It returns a single root DOM node. `app.js` swaps that node into `<main>` after the previous page is cleared. (`login.js` is the one sync exception — `app.js` `await`s the handler's result either way, so sync is fine when a view fetches nothing.)
 
 ## Views at a glance
 
 | File | Route | Notes |
 |---|---|---|
-| `login.js` | (no session) | Public login form. Rendered directly by `app.js` `renderShell(null)`. |
+| `login.js` | `/login` | Public login form, an ordinary route like any other — it renders inside the normal shell (header + nav), not in place of it. Exports `renderLogin(state, onSuccess)`; `app.js` passes `onSuccess = () => navigate('/')`. A `requireAuth` / `requireAdmin` route redirects here when the session doesn't qualify, and the header shows a **Sign In** link when `state.user` is null. |
 | `games-list.js` | `/games` | Filter panel (player/faction/mission/edition/medium/date/visibility/free-text search) + paginated game table. Each row carries up to **two thumbnails** (cover photo + terrain layout) with a hover preview, the players' chess-clock times, and — for 11e — the mission rendered as `"A vs B"` since the primary is per-player. Subscribes to `live:game.saved`. Reads URL hash params via `applyHashParams()` so click-throughs from stats / matchups work. |
 | `game-detail.js` | `/games/:id` | Single game view with per-player breakdown. Secondaries are re-sorted **by round drawn** so the game reads back chronologically (entry is alphabetical). Hides the rounds grid entirely for a final-score-only game — an all-zero grid reads as "they scored nothing" rather than "nobody wrote it down". Photos panel (upload, incl. `.zip`; Cover / Map flags; lightbox) and a Terrain Layout panel. Admin-only Hide / Delete buttons (Delete uses `confirmModal`). |
 | `game-form.js` | `/games/new`, `/games/:id/edit` | **HEAVIEST file.** Branches on edition throughout — see CLAUDE.md "10th vs 11th edition". Per-player **Score detail** toggle (track each secondary / round totals / final score only), per-player Force Disposition driving `PRIMARY_MATRIX`, multi-detachment list, Matched Play vs Custom terrain layout, chess-clock entry. Draft persistence to `localStorage`, undo-last-save toast on edit. Uses `rerender()` for structural changes; mutates draft directly on score-input change to preserve focus. Client-only draft keys (`scoreMode`, `mapMode`) are stripped in `serializeDraft()`. |
@@ -65,7 +65,9 @@ export async function renderFoo(state, fooId) {
    { match: /^\/foo$/, handler: () => renderXxx(state) },
    ```
 
-5. If user-visible, add a `navLink('/foo', 'Foo')` to `navItems` (and gate by role if needed: `if (state.user.role === 'admin')`).
+   Add `requireAuth: true` or `requireAdmin: true` to the same entry if the route needs a session — `route()` redirects to `/login` when it doesn't qualify.
+
+5. If user-visible, push `{ href: '/foo', label: 'Foo' }` onto `linkDefs` in `renderShell()` (gate by role if needed: `if (state.user?.role === 'admin')`).
 
 ## When in doubt
 

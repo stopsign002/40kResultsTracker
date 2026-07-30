@@ -37,10 +37,14 @@ Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each
 │   ├── README.md           service overview + npm scripts (start, test, typecheck)
 │   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
 │   ├── package.json        ESM module ("type": "module"); deps: express, pg, bcrypt,
-│   │                       express-session, connect-pg-simple, express-rate-limit
+│   │                       express-session, connect-pg-simple, express-rate-limit.
+│   │                       devDeps: typescript, @types/node — typecheck only, and the
+│   │                       Dockerfile's --omit=dev keeps both out of the runtime image
 │   ├── tsconfig.json       editor / `npm run typecheck` only — noEmit, allowJs+checkJs.
-│   │                       `typescript` is NOT a dependency (there is no devDependencies
-│   │                       block), so typecheck needs a tsc that's already on your PATH
+│   │                       tsc is a devDependency, so `npm install` in api/ is all a
+│   │                       clean clone needs. It exits non-zero today on pre-existing
+│   │                       JSDoc drift (timeSeconds, faction-anchors tuple) — read it,
+│   │                       don't gate on it
 │   ├── types.js            shared JSDoc typedefs (PlayerPayload, GamePayload, BannerUnit)
 │   ├── server.js           ENTRY: initSchema → ensureBootstrapAdmin → app.listen
 │   ├── lib/                helpers — see api/lib/README.md

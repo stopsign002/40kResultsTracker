@@ -268,10 +268,16 @@ cd api && npm test        # node --test test/*.test.js
 cd api && npm run typecheck   # tsc -p tsconfig.json (noEmit; checkJs over the JSDoc types)
 ```
 
-`typescript` is deliberately **not** a dependency — the Dockerfile installs with
-`--omit=dev` and nothing at runtime needs it — so `npm run typecheck` wants a
-`tsc` you already have (a global install, or your editor's). `npm test` needs
-nothing but Node.
+`typescript` and `@types/node` are **devDependencies**, so `npm install` in `api/`
+is all a clean clone needs before `npm run typecheck` — nothing global, no
+editor-supplied `tsc`. They stay out of the runtime image because the Dockerfile
+installs with `--omit=dev`. `npm test` needs nothing but Node.
+
+Heads-up: `npm run typecheck` currently exits non-zero on pre-existing JSDoc
+drift (`timeSeconds` missing from the `PlayerPayload` / `RoundPayload` typedefs
+in `types.js`, a tuple widening in `lib/faction-anchors.js`, and the test
+fixtures in `test/game-scoring.test.js` that inherit the same typedefs). It's a
+signal to read, not a gate — nothing in CI blocks on it.
 
 Everything above that line (routes, SQL, views) is still verified by hand.
 
