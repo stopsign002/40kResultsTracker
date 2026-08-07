@@ -13,6 +13,7 @@
 import { drafts, draftImages, reference } from '../api.js';
 import { el, clear, toast, confirmModal, promptModal, fmtDuration, selectOptions } from '../components.js';
 import { shrink } from '../images.js';
+import { pushLayer } from '../nav-stack.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
 import {
   ROUNDS,
@@ -50,11 +51,19 @@ export async function renderLiveGame(state, draftId) {
 
 async function renderDraftList(state) {
   const root = el('div', { class: 'fade-in' });
-  let rows = [];
-  try {
-    rows = await drafts.list();
-  } catch (e) {
-    toast(e.message || 'Could not load your live games', 'error');
+  const listBody = el('div', {});
+
+  async function refresh() {
+    let rows = [];
+    try {
+      rows = await drafts.list();
+    } catch (e) {
+      toast(e.message || 'Could not load live games', 'error');
+    }
+    clear(listBody);
+    listBody.appendChild(rows.length
+      ? el('div', { class: 'lg-list' }, rows.map((r) => draftRow(r, state, refresh)))
+      : el('div', { class: 'lg-empty' }, 'No games in progress. Start one when you sit down to play.'));
   }
 
   const startBtn = el('button', { class: 'btn primary', type: 'button' }, 'Start new game');
@@ -69,16 +78,14 @@ async function renderDraftList(state) {
     }
   });
 
-  const list = rows.length
-    ? el('div', { class: 'lg-list' }, rows.map((r) => draftRow(r)))
-    : el('div', { class: 'lg-empty' }, 'No games in progress. Start one when you sit down to play.');
+  await refresh();
 
   root.appendChild(el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, [
       el('h2', {}, 'Live games'),
       startBtn,
     ]),
-    el('div', { class: 'panel-body' }, list),
+    el('div', { class: 'panel-body' }, listBody),
   ]));
 
   root.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
@@ -87,21 +94,56 @@ async function renderDraftList(state) {
   return root;
 }
 
-function draftRow(r) {
+function draftRow(r, state, refresh) {
   const names = (r.playerNames || []).filter(Boolean);
   const title = names.length === 2 ? `${names[0]} vs ${names[1]}` : (names[0] || 'New game');
+  // Whose game it is matters now that the list shows everyone's, not just yours.
+  const meta = [
+    r.isOwner ? 'Your game' : `${r.owner_name || 'Someone'}'s game`,
+    r.viewerSeat === 2 ? 'you were invited' : null,
+    stepLabel(r.current_step),
+    relativeAge(r.updated_at),
+  ].filter(Boolean).join(' · ');
+
+  const isAdmin = state?.user?.role === 'admin';
+  const canDelete = r.isOwner || isAdmin;
+  const del = canDelete ? el('button', {
+    class: 'btn small danger',
+    type: 'button',
+    'aria-label': `Delete ${title}`,
+    title: r.isOwner ? 'Delete this game' : 'Delete as admin',
+  }, 'Delete') : null;
+  if (del) {
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const ok = await confirmModal({
+        title: 'Delete this game?',
+        body: `Permanently removes "${title}" — ${r.isOwner ? 'your' : `${r.owner_name || 'their'}`} in-progress game and any photos taken. It was never filed to the games list.`,
+        danger: true,
+        confirmLabel: 'Delete game',
+      });
+      if (!ok) return;
+      del.disabled = true;
+      try {
+        await drafts.remove(r.id);
+        try { localStorage.removeItem(localKey(r.id)); } catch {}
+        toast('Game deleted');
+        refresh();
+      } catch (err) {
+        del.disabled = false;
+        toast(err.message || 'Could not delete that game', 'error');
+      }
+    });
+  }
+
   const item = el('div', { class: 'card lg-list-item', role: 'button', tabindex: '0' }, [
     el('div', { class: 'lg-list-main' }, [
       el('div', { class: 'lg-list-title' }, title),
-      el('div', { class: 'lg-list-meta' }, [
-        stepLabel(r.current_step),
-        ' · ',
-        relativeAge(r.updated_at),
-        r.isOwner === false ? ' · invited' : '',
-      ].join('')),
+      el('div', { class: 'lg-list-meta' }, meta),
     ]),
     el('span', { class: 'pill' }, stepShort(r.current_step)),
-  ]);
+    del,
+  ].filter(Boolean));
   const open = () => window.__nav('/play/' + r.id);
   item.addEventListener('click', open);
   item.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
@@ -143,24 +185,38 @@ async function renderWizard(state, draftId) {
       toast(e.message || 'Could not join that game', 'error');
     }
   }
-  if (d.viewerSeat == null) {
-    return notAllowedPanel("You're not a player in that game.");
-  }
-  if (d.submitted_game_id) {
-    window.__nav('/games/' + d.submitted_game_id);
-    return el('div', {});
+  // submitted_at, not submitted_game_id: the pointer is ON DELETE SET NULL, so
+  // a game that was submitted and later deleted leaves the draft with no game
+  // to point at. It's still finished, and must not reopen as an editable game.
+  if (d.submitted_at) {
+    if (d.submitted_game_id) {
+      window.__nav('/games/' + d.submitted_game_id);
+      return el('div', {});
+    }
+    return notAllowedPanel('This game was submitted, and the game it created has since been deleted.');
   }
 
   const isOwner = !!d.isOwner;
-  const mySeatIdx = d.viewerSeat - 1;
+  // No seat means a spectator: the whole view goes read-only and follows the
+  // owner's round. Anyone can watch a game in progress; only the two players
+  // can write to it, and the server enforces that independently.
+  const isSpectator = d.viewerSeat == null;
+  const isAdmin = state.user?.role === 'admin';
+  // Admins can move around someone else's game (to reach setup and delete it);
+  // a plain opponent or spectator stays pinned to whatever round the owner is on.
+  const canNavigate = isOwner || isAdmin;
+  const mySeatIdx = isSpectator ? null : d.viewerSeat - 1;
   const theirSeatIdx = isOwner ? 1 : 0;
-  const canEditSeat = (i) => isOwner || i === mySeatIdx;
+  const canEditSeat = (i) => !isSpectator && (isOwner || i === mySeatIdx);
 
   const payload = normalisePayload(d.payload);
   let step = STEPS.includes(d.current_step) ? d.current_step : 'setup';
   let rev = d.rev;
   let images = d.images || [];
-  let activeSeat = mySeatIdx;
+  let activeSeat = mySeatIdx ?? 0;
+  // Where the OWNER is. Tracked separately from `step`, because the opponent's
+  // screen deliberately does not follow it.
+  let ownerStep = step;
 
   // Reference data, loaded once like game-form does.
   const [factions, packs, playerNames, users] = await Promise.all([
@@ -195,6 +251,8 @@ async function renderWizard(state, draftId) {
   let saveTimer = null;
   let saving = false;
   let pending = false;
+  let inflight = null;
+  let closed = false;
   let retryMs = AUTOSAVE_MS;
   let lastTimerSave = 0;
 
@@ -217,6 +275,7 @@ async function renderWizard(state, draftId) {
   }
 
   function touch({ immediate = false } = {}) {
+    if (isSpectator || closed) return;
     mirrorLocal();
     pending = true;
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
@@ -232,9 +291,7 @@ async function renderWizard(state, draftId) {
     return { players: { [mySeatIdx]: payload.players[mySeatIdx] } };
   }
 
-  async function flush() {
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-    if (!pending || saving) return;
+  async function sendPatch() {
     saving = true;
     pending = false;
     setSaveState('is-saving', 'Saving…');
@@ -246,15 +303,35 @@ async function renderWizard(state, draftId) {
       retryMs = AUTOSAVE_MS;
       setSaveState('is-saved', 'Saved');
       if (!pending) clearLocal();
+      return true;
     } catch (e) {
       pending = true;
       if (e.code === 'network') setSaveState('is-offline', 'Offline — kept on this device');
       else setSaveState('is-error', e.message || 'Save failed');
       retryMs = Math.min(30000, Math.max(2000, retryMs * 2));
+      return false;
     } finally {
       saving = false;
       if (pending && !saveTimer) saveTimer = setTimeout(flush, retryMs);
     }
+  }
+
+  // Resolves only once the server actually has everything typed so far, which
+  // is what Submit and pagehide need it to mean. The old version bailed out
+  // while a PATCH was in flight, so tapping Submit right after typing raced its
+  // own autosave and submitted the *previous* payload — that's how a game with
+  // both names filled in came back "player 2 still needs a name".
+  // Bounded at two sends so a failing request can't spin.
+  async function flush() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (closed) return true;
+    for (let attempts = 0; attempts < 2; attempts++) {
+      if (saving) { await inflight?.catch(() => {}); continue; }
+      if (!pending) return true;
+      inflight = sendPatch();
+      if (!(await inflight)) return false;
+    }
+    return !pending;
   }
 
   // A phone locking mid-game is the normal case, not the edge case.
@@ -263,7 +340,7 @@ async function renderWizard(state, draftId) {
   document.addEventListener('visibilitychange', onHide);
   window.addEventListener('pagehide', onPageHide);
 
-  const stray = readLocal(draftId);
+  const stray = isSpectator ? null : readLocal(draftId);
   if (stray && stray.payload) {
     const restore = await confirmModal({
       title: 'Unsaved changes on this device',
@@ -293,10 +370,19 @@ async function renderWizard(state, draftId) {
 
   async function adoptRemote() {
     let fresh;
-    try { fresh = await drafts.get(draftId, token); } catch { return; }
-    if (fresh.submitted_game_id) {
+    try {
+      fresh = await drafts.get(draftId, token);
+    } catch (e) {
+      if (e.status === 404) {
+        closed = true;
+        toast('That game was deleted');
+        window.__nav('/play');
+      }
+      return;
+    }
+    if (fresh.submitted_at) {
       toast('That game was submitted');
-      window.__nav('/games/' + fresh.submitted_game_id);
+      window.__nav(fresh.submitted_game_id ? '/games/' + fresh.submitted_game_id : '/play');
       return;
     }
     const remote = normalisePayload(fresh.payload);
@@ -308,9 +394,15 @@ async function renderWizard(state, draftId) {
     }
     rev = fresh.rev;
     images = fresh.images || images;
-    if (!isOwner && STEPS.includes(fresh.current_step) && fresh.current_step !== step) {
-      step = fresh.current_step;
-      activeSeat = mySeatIdx;
+    if (STEPS.includes(fresh.current_step)) ownerStep = fresh.current_step;
+    // A spectator follows along — they have nothing to type, and watching means
+    // watching. The OPPONENT is not dragged: when the owner hits Next you may
+    // still be entering the round you just played, and having the screen yanked
+    // out from under you mid-number is worse than being a round behind. They
+    // get a tappable nudge in the header instead.
+    if (isSpectator && ownerStep !== step) {
+      step = ownerStep;
+      activeSeat = mySeatIdx ?? 0;
     }
     rerender();
   }
@@ -379,51 +471,92 @@ async function renderWizard(state, draftId) {
 
   /* ── Photos ───────────────────────────────────────────────── */
 
-  const fileInput = el('input', {
-    type: 'file', accept: 'image/*', capture: 'environment',
-    class: 'hidden',
+  // Two inputs, not one. `capture` forces the camera and hides the photo
+  // library outright, so a single input can offer one or the other but never
+  // both. Camera for the board shot you're taking right now; library (and
+  // multi-select) for the ones already on your phone.
+  const cameraInput = el('input', {
+    type: 'file', accept: 'image/*', capture: 'environment', class: 'hidden',
+  });
+  const libraryInput = el('input', {
+    type: 'file', accept: 'image/*', multiple: true, class: 'hidden',
   });
   let photoRound = null;
-  fileInput.addEventListener('change', async () => {
-    const file = (fileInput.files || [])[0];
-    fileInput.value = '';
-    if (!file) return;
-    const n = photoRound;
-    toast('Uploading photo…');
-    try {
-      const [full, thumb] = await Promise.all([
-        shrink(file, FULL_MAX_PX, JPEG_QUALITY),
-        shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
-      ]);
-      const row = await draftImages.upload(draftId, {
-        dataUrl: full.dataUrl,
-        thumbDataUrl: thumb.dataUrl,
-        width: full.width,
-        height: full.height,
-        roundNumber: n,
-        caption: n ? `Round ${n}` : null,
-      });
-      images.push(row);
-      rerender();
-      toast('Photo saved');
-    } catch (e) {
-      toast(e.message || 'Photo upload failed', 'error');
-    }
-  });
-  root.appendChild(fileInput);
+  let photoEndOfRound = false;
 
-  function pickPhoto(n) {
+  async function uploadFiles(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    const n = photoRound;
+    const endOfRound = photoEndOfRound;
+    const caption = n ? (endOfRound ? `End of round ${n}` : `Round ${n}`) : null;
+    let saved = 0;
+    for (const [i, file] of list.entries()) {
+      toast(list.length > 1 ? `Uploading ${i + 1} of ${list.length}…` : 'Uploading photo…');
+      try {
+        const [full, thumb] = await Promise.all([
+          shrink(file, FULL_MAX_PX, JPEG_QUALITY),
+          shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
+        ]);
+        images.push(await draftImages.upload(draftId, {
+          dataUrl: full.dataUrl,
+          thumbDataUrl: thumb.dataUrl,
+          width: full.width,
+          height: full.height,
+          roundNumber: n,
+          caption,
+        }));
+        saved += 1;
+      } catch (e) {
+        // Keep going: one bad file shouldn't cost you the rest of the batch.
+        toast(e.message || 'Photo upload failed', 'error');
+      }
+    }
+    if (saved) {
+      rerender();
+      toast(saved > 1 ? `${saved} photos saved` : 'Photo saved');
+    }
+  }
+
+  for (const input of [cameraInput, libraryInput]) {
+    input.addEventListener('change', async () => {
+      const files = input.files;
+      const copy = Array.from(files || []);
+      input.value = '';
+      await uploadFiles(copy);
+    });
+    root.appendChild(input);
+  }
+
+  function pickPhoto(n, { endOfRound = false, source = 'camera' } = {}) {
     photoRound = n;
-    fileInput.click();
+    photoEndOfRound = endOfRound;
+    (source === 'library' ? libraryInput : cameraInput).click();
   }
 
   /* ── Step navigation ──────────────────────────────────────── */
 
-  function goStep(next) {
-    if (!STEPS.includes(next)) return;
+  // Each move pushes a history entry, so back returns to the screen you came
+  // from — round 3 → round 2, or out of setup back to the round you were on —
+  // instead of leaving the game entirely. `fromHistory` is the back-button
+  // path and must not push an entry of its own.
+  function goStep(next, { fromHistory = false } = {}) {
+    if (!STEPS.includes(next) || next === step) return;
+    const cameFrom = step;
     step = next;
-    activeSeat = mySeatIdx;
+    activeSeat = mySeatIdx ?? 0;
     if (isOwner) touch({ immediate: true });
+    // `reason === 'route'` means we're leaving the view entirely, and nav-stack
+    // unwinds EVERY step layer on the way out. Rewinding then would walk the
+    // owner backwards through every screen they visited, PATCHing a rewound
+    // `current_step` to the server each time — and after Submit, PATCHing an
+    // already-submitted draft (409). Only a real back press should move a step.
+    if (!fromHistory) {
+      pushLayer((reason) => {
+        if (reason === 'route') return;
+        goStep(cameFrom, { fromHistory: true });
+      });
+    }
     rerender();
     window.scrollTo(0, 0);
   }
@@ -445,7 +578,7 @@ async function renderWizard(state, draftId) {
         confirmLabel: 'Take photo',
         cancelLabel: 'Skip',
       });
-      if (take) { pickPhoto(fromRound); return; }
+      if (take) { pickPhoto(fromRound, { endOfRound: true }); return; }
     }
     goStep(next);
   }
@@ -493,12 +626,28 @@ async function renderWizard(state, draftId) {
 
   /* ── Shared chrome ────────────────────────────────────────── */
 
+  // A round counts as played if anything was actually recorded in it. Better
+  // than "n < currentRound": that marks rounds you skipped past as done, and
+  // blanks every pip the moment you step back to setup.
+  function roundHasData(n) {
+    return payload.players.some((p) => {
+      const r = (p.rounds || []).find((x) => x.roundNumber === n);
+      if (r && ((r.primaryScore || 0) > 0 || r.cpRemaining != null || (r.timeSeconds || 0) > 0)) return true;
+      return (p.secondaries || []).some((sec) => sec.drawnRound === n || sec.roundNumber === n);
+    });
+  }
+  function lastPlayedRound() {
+    let last = 0;
+    for (const n of ROUNDS) if (roundHasData(n)) last = n;
+    return last;
+  }
+
   function buildTopbar(title, currentRound) {
     const scores = payload.players.map((p, i) =>
       el('span', { class: 'lg-sc', 'data-lg-head': String(i) }, String(calcTotal(p, '11'))));
     const pips = ROUNDS.map((n) => {
       const isCurrent = currentRound === n;
-      const done = currentRound ? n < currentRound : step === 'summary';
+      const done = !isCurrent && roundHasData(n);
       const pip = el('button', {
         class: `lg-pip ${isCurrent ? 'is-current' : ''} ${done ? 'is-done' : ''}`.trim(),
         type: 'button',
@@ -508,22 +657,51 @@ async function renderWizard(state, draftId) {
       });
       // Free navigation, not just prev/next: fixing a number typed into the
       // wrong round is the single most likely correction mid-game.
-      if (isOwner) pip.addEventListener('click', () => goStep('round' + n));
+      if (canNavigate) pip.addEventListener('click', () => goStep('round' + n));
       else pip.disabled = true;
       return pip;
     });
+
+    const onSetup = step === 'setup';
+    const setupBtn = el('button', {
+      class: `lg-pip-setup ${onSetup ? 'is-current' : ''}`.trim(),
+      type: 'button',
+      title: 'Game setup',
+      'aria-label': 'Game setup',
+      'aria-current': onSetup ? 'step' : null,
+    }, '\u2699');
+    if (canNavigate) setupBtn.addEventListener('click', () => goStep('setup'));
+    else setupBtn.disabled = true;
 
     return el('div', { class: 'lg-topbar' }, [
       el('div', { class: 'lg-topline' }, [
         el('h1', { class: 'lg-step-title' }, title),
         el('div', { class: 'lg-scoreline' }, [scores[0], el('span', { class: 'lg-sc-sep' }, '–'), scores[1]]),
       ]),
-      el('div', { class: 'lg-progress' }, pips),
+      el('div', { class: 'lg-progress' }, [setupBtn, ...pips]),
       el('div', { class: 'lg-statusline' }, [
-        saveChip,
-        isOwner ? null : el('span', { class: 'dim', style: { fontSize: '11px' } }, 'Your seat only'),
+        isSpectator
+          ? el('span', { class: 'hint', style: { marginTop: '0' } }, 'Updates live as they play')
+          : saveChip,
+        isSpectator
+          ? el('span', { class: 'pill' }, 'Watching')
+          : isOwner ? null : buildFollowChip(),
       ].filter(Boolean)),
     ]);
+  }
+
+  // Shown to the invited opponent when the owner has moved on without them.
+  // Tapping catches up; ignoring it is fine and keeps you where you were.
+  function buildFollowChip() {
+    if (isOwner || isSpectator || ownerStep === step) {
+      return el('span', { class: 'dim', style: { fontSize: '11px' } }, 'Your seat only');
+    }
+    const label = ownerStep === 'summary' ? 'Summary'
+      : ownerStep === 'setup' ? 'Setup'
+      : `Round ${roundOf(ownerStep)}`;
+    const chip = el('button', { class: 'lg-follow', type: 'button' }, `They're on ${label} →`);
+    chip.addEventListener('click', () => goStep(ownerStep));
+    return chip;
   }
 
   function buildSeatTabs() {
@@ -547,14 +725,25 @@ async function renderWizard(state, draftId) {
     return el('div', { class: 'lg-footer' }, children);
   }
 
-  function navFooter(prev, next, label, fromRound) {
+  function navFooter(prev, next, label, fromRound, nextLabel) {
+    if (isSpectator) return watchFooter(label);
     const back = el('button', { class: 'btn lg-nav-btn is-icon', type: 'button', 'aria-label': 'Back' }, '←');
     back.disabled = !prev || !isOwner;
     back.addEventListener('click', () => goStep(prev));
-    const fwd = el('button', { class: 'btn primary lg-nav-btn', type: 'button' }, next === 'summary' ? 'Finish →' : 'Next →');
+    const fwd = el('button', { class: 'btn primary lg-nav-btn', type: 'button' },
+      nextLabel || (next === 'summary' ? 'Finish →' : 'Next →'));
     fwd.disabled = !isOwner;
     fwd.addEventListener('click', () => advance(next, fromRound));
     return buildFooter([back, el('span', { class: 'lg-footer-label' }, label), fwd]);
+  }
+
+  // A spectator has nothing to press: the round they see is the round the
+  // owner is on, pushed over SSE.
+  function watchFooter(label) {
+    return buildFooter([
+      el('a', { class: 'btn lg-nav-btn', href: '#/play' }, '← Live games'),
+      el('span', { class: 'lg-footer-label' }, label),
+    ]);
   }
 
   /* ── Setup screen ─────────────────────────────────────────── */
@@ -623,9 +812,17 @@ async function renderWizard(state, draftId) {
       payload.players.map((p, i) => buildSetupSeat(p, i))));
 
     if (isOwner) body.appendChild(buildInvitePanel());
+    if (isOwner || isAdmin) body.appendChild(buildDangerPanel());
 
     wrap.appendChild(body);
-    wrap.appendChild(navFooter(null, 'round1', 'Setup', null));
+    const resume = lastPlayedRound();
+    wrap.appendChild(navFooter(
+      null,
+      resume ? 'round' + resume : 'round1',
+      'Setup',
+      null,
+      resume ? `Round ${resume} →` : 'Next →',
+    ));
     return wrap;
   }
 
@@ -786,8 +983,9 @@ async function renderWizard(state, draftId) {
   // than base64.
   function buildArmyList(p, editable) {
     const ta = el('textarea', {
+      class: 'lg-armylist',
       placeholder: 'Paste your army list, or a YAAB share code / link',
-      rows: '3',
+      rows: '18',
     });
     ta.value = p.armyListCode || '';
     ta.disabled = !editable;
@@ -887,6 +1085,50 @@ async function renderWizard(state, draftId) {
     return el('div', { class: 'panel' }, [
       el('div', { class: 'panel-header' }, el('h2', {}, 'Opponent')),
       body,
+    ]);
+  }
+
+  // Abandoning an in-progress game, not deleting a result: nothing has reached
+  // the games list yet, so there is no /games row to tidy up afterwards.
+  function buildDangerPanel() {
+    const del = el('button', { class: 'btn small danger', type: 'button' }, 'Delete this game');
+    del.addEventListener('click', async () => {
+      const played = lastPlayedRound();
+      const photos = images.length;
+      const bits = [
+        played ? `${played} round${played === 1 ? '' : 's'} of scoring` : null,
+        photos ? `${photos} photo${photos === 1 ? '' : 's'}` : null,
+      ].filter(Boolean);
+      const ok = await confirmModal({
+        title: 'Delete this game?',
+        body: bits.length
+          ? `Permanently removes this live game, including ${bits.join(' and ')}. It was never filed to the games list, so there is nothing to recover it from.`
+          : 'Permanently removes this live game. It was never filed to the games list.',
+        danger: true,
+        confirmLabel: 'Delete game',
+      });
+      if (!ok) return;
+      del.disabled = true;
+      try {
+        await drafts.remove(draftId);
+        closed = true;
+        pending = false;
+        if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+        clearLocal();
+        toast('Game deleted');
+        window.__nav('/play');
+      } catch (e) {
+        del.disabled = false;
+        toast(e.message || 'Could not delete that game', 'error');
+      }
+    });
+    return el('div', { class: 'panel' }, [
+      el('div', { class: 'panel-header' }, el('h2', {}, 'Danger zone')),
+      el('div', { class: 'panel-body' }, [
+        el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '10px' } },
+          'Abandon this game without recording it.'),
+        del,
+      ]),
     ]);
   }
 
@@ -1108,6 +1350,22 @@ async function renderWizard(state, draftId) {
     ].filter(Boolean));
   }
 
+  // cardId may be null — a card the seeded deck doesn't carry still records
+  // fine by name, which is what player_secondaries stores anyway.
+  function drawCard(p, n, card, { announce = false } = {}) {
+    p.secondaries.push({
+      cardId: card.id ?? null,
+      cardName: card.name,
+      drawnRound: n,
+      roundNumber: null,
+      score: 0,
+      wasDiscarded: false,
+    });
+    touch();
+    rerender();
+    if (announce) toast(`Drew ${card.name}`);
+  }
+
   function cardBtn(label, cls, onClick) {
     const b = el('button', { class: `lg-card-btn ${cls}`, type: 'button' }, label);
     b.addEventListener('click', onClick);
@@ -1131,31 +1389,35 @@ async function renderWizard(state, draftId) {
       });
 
     const overlay = el('div', { class: 'modal-overlay' });
-    const close = () => {
+    let pickerLayer = null;
+    let torn = false;
+    const teardown = () => {
+      if (torn) return;
+      torn = true;
       closePicker = null;
       overlay.classList.remove('show');
       document.removeEventListener('keydown', esc);
       setTimeout(() => overlay.remove(), 150);
     };
+    const close = () => { teardown(); pickerLayer?.done(); };
     closePicker = close;
     const esc = (e) => { if (e.key === 'Escape') close(); };
 
     const items = deck.map((c) => {
       const b = el('button', { class: 'lg-picker-item', type: 'button' }, c.name);
-      b.addEventListener('click', () => {
-        p.secondaries.push({
-          cardId: c.id ?? null,
-          cardName: c.name,
-          drawnRound: n,
-          roundNumber: null,
-          score: 0,
-          wasDiscarded: false,
-        });
-        close();
-        touch();
-        rerender();
-      });
+      b.addEventListener('click', () => { drawCard(p, n, c); close(); });
       return b;
+    });
+
+    // Top of the list, where your thumb already is when the picker opens.
+    // Tactical secondaries are drawn blind, so picking one off an alphabetical
+    // list is the unusual case and this is the normal one.
+    const rando = el('button', { class: 'lg-picker-item is-random', type: 'button' },
+      '\u{1F3B2} Draw at random');
+    rando.addEventListener('click', () => {
+      if (!deck.length) return;
+      drawCard(p, n, deck[Math.floor(Math.random() * deck.length)], { announce: true });
+      close();
     });
 
     const cancel = el('button', { class: 'btn', type: 'button' }, 'Cancel');
@@ -1164,7 +1426,7 @@ async function renderWizard(state, draftId) {
     overlay.appendChild(el('div', { class: 'modal-dialog', role: 'dialog' }, [
       el('div', { class: 'modal-header' }, el('h2', {}, `Draw · round ${n}`)),
       el('div', { class: 'modal-body' }, items.length
-        ? el('div', { class: 'lg-picker' }, items)
+        ? el('div', { class: 'lg-picker' }, [rando, ...items])
         : el('div', { class: 'lg-empty' }, 'Every card in the pack has been drawn.')),
       el('div', { class: 'modal-footer' },
         el('div', { class: 'btn-group', style: { justifyContent: 'flex-end', width: '100%' } }, cancel)),
@@ -1172,6 +1434,7 @@ async function renderWizard(state, draftId) {
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
     document.addEventListener('keydown', esc);
     document.body.appendChild(overlay);
+    pickerLayer = pushLayer(teardown);
     requestAnimationFrame(() => overlay.classList.add('show'));
     // Same 100ms deferral buildModal() uses, so focus doesn't land behind the
     // overlay while it is still transitioning in.
@@ -1195,11 +1458,23 @@ async function renderWizard(state, draftId) {
     const mine = images.filter((im) => im.round_number === n);
     const tiles = mine.map((im) => el('div', { class: 'lg-photo' }, [
       el('img', { src: draftImages.url(draftId, im.thumb_name || im.file_name), alt: im.caption || `Round ${n}`, loading: 'lazy' }),
-    ]));
-    const add = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, '📷 Add photo');
-    add.addEventListener('click', () => pickPhoto(n));
-    return el('div', { class: 'panel', style: { marginTop: '14px' } }, [
-      el('div', { class: 'panel-header' }, [el('h2', {}, `Round ${n} photos`), add]),
+      im.caption ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption) : null,
+    ].filter(Boolean)));
+    const take = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
+      el('span', { 'aria-hidden': 'true' }, '\u{1F4F7}'), ' Take photo',
+    ]);
+    take.addEventListener('click', () => pickPhoto(n, { source: 'camera' }));
+    const upload = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
+      el('span', { 'aria-hidden': 'true' }, '\u{1F5BC}'), ' Upload',
+    ]);
+    upload.addEventListener('click', () => pickPhoto(n, { source: 'library' }));
+
+    if (!tiles.length && isSpectator) return el('div', {});
+    return el('div', { class: 'panel' }, [
+      el('div', { class: 'panel-header' }, [
+        el('h2', {}, `Round ${n} photos`),
+        isSpectator ? null : el('div', { class: 'btn-group' }, [take, upload]),
+      ].filter(Boolean)),
       tiles.length ? el('div', { class: 'panel-body' }, el('div', { class: 'lg-photos' }, tiles)) : null,
     ].filter(Boolean));
   }
@@ -1231,7 +1506,8 @@ async function renderWizard(state, draftId) {
         el('div', { class: 'panel-body' }, el('div', { class: 'lg-photos' },
           photos.map((im) => el('div', { class: 'lg-photo' }, [
             el('img', { src: draftImages.url(draftId, im.thumb_name || im.file_name), alt: im.caption || 'Game photo', loading: 'lazy' }),
-          ])))),
+            im.caption ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption) : null,
+          ].filter(Boolean))))),
       ]));
     }
 
@@ -1333,14 +1609,17 @@ async function renderWizard(state, draftId) {
   }
 
   function buildSubmitFooter() {
+    if (isSpectator) return watchFooter('Summary');
     const back = el('button', { class: 'btn lg-nav-btn is-icon', type: 'button', 'aria-label': 'Back' }, '←');
     back.disabled = !isOwner;
     back.addEventListener('click', () => goStep('round5'));
 
     const keep = el('button', { class: 'btn lg-nav-btn', type: 'button' }, 'Save draft');
     keep.addEventListener('click', async () => {
-      await flush();
-      toast('Draft saved — pick it up from Live Game');
+      const saved = await flush();
+      toast(saved ? 'Draft saved — pick it up from Live Game'
+                  : 'Kept on this device — it will sync when you are back online',
+            saved ? 'info' : 'error');
       window.__nav('/play');
     });
 
@@ -1349,7 +1628,11 @@ async function renderWizard(state, draftId) {
     submit.addEventListener('click', async () => {
       submit.disabled = true;
       try {
-        await flush();
+        if (!(await flush())) {
+          submit.disabled = false;
+          toast("Couldn't save your latest changes — check your connection and try again", 'error');
+          return;
+        }
         const res = await drafts.submit(draftId);
         clearLocal();
         toast('Game submitted');

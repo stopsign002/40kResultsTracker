@@ -21,6 +21,9 @@ import { computeFinalScores, resolvePlayerTimes } from '../lib/game-scoring.js';
 import { createGame, resolvePlayerIdentities, notifyGameLogged } from '../lib/game-write.js';
 import { mergeDraftPatch, opponentSeatPatch, validateDraftSubmit } from '../lib/draft.js';
 import { UPLOAD_DIR, decodeDataUrl, unlinkQuiet } from './images.js';
+import { archiveDraft } from '../lib/archive.js';
+import { notify } from '../lib/mail.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -85,10 +88,61 @@ async function listImages(draftId) {
   return rows;
 }
 
-// ── My open drafts ────────────────────────────────────────────
-router.get('/', requireAuth, async (req, res, next) => {
+// Announced once per game, when it actually starts being played rather than
+// when the draft row appears — tapping "Start new game" creates a row
+// immediately, and an email per abandoned tap is noise. By the time the owner
+// leaves setup the names, factions and points are filled in, so the message is
+// worth reading and the game is genuinely live to follow.
+async function notifyGameStarted(id) {
   try {
-    const userId = req.session.userId;
+    const claimed = await pool.query(
+      `UPDATE game_drafts SET started_notified_at = NOW()
+        WHERE id = $1 AND started_notified_at IS NULL
+        RETURNING payload, owner_user_id`, [id]
+    );
+    if (!claimed.rows[0]) return; // already announced
+    const { payload, owner_user_id: ownerId } = claimed.rows[0];
+    const owner = (await pool.query(
+      'SELECT display_name FROM users WHERE id = $1', [ownerId]
+    )).rows[0]?.display_name || 'Someone';
+
+    const players = Array.isArray(payload?.players) ? payload.players : [];
+    const ids = players.map((p) => p?.factionId).filter(Boolean);
+    const factions = ids.length
+      ? (await pool.query('SELECT id, name FROM factions WHERE id = ANY($1::int[])', [ids])).rows
+      : [];
+    const side = (p) => [
+      p?.guestName || 'TBC',
+      factions.find((f) => f.id === p?.factionId)?.name,
+      (p?.detachments || []).filter(Boolean).join(', ') || null,
+    ].filter(Boolean).join(' \u2014 ');
+
+    const names = players.map((p) => p?.guestName).filter(Boolean);
+    const title = names.length === 2 ? `${names[0]} vs ${names[1]}` : 'A new game';
+
+    notify(`40k: ${title} just started`, [
+      `${owner} started a live game.`,
+      '',
+      side(players[0]),
+      side(players[1]),
+      '',
+      payload?.pointsLimit ? `${payload.pointsLimit} pts` : null,
+      '',
+      'Follow along, updates live as they play:',
+      `https://40k.thewheeliebois.com/#/play/${id}`,
+    ].filter((l) => l !== null).join('\n'));
+  } catch (e) {
+    console.error('[notifyGameStarted]', e.message);
+  }
+}
+
+// ── Open drafts ───────────────────────────────────────────────
+// Every in-progress game, not just yours: reads are public across this app and
+// a game nobody else can find is a game nobody can watch. Yours sort first;
+// `viewerSeat` tells the client which ones it may actually write to.
+router.get('/', async (req, res, next) => {
+  try {
+    const userId = req.session?.userId ?? null;
     const { rows } = await pool.query(
       `SELECT d.id, d.owner_user_id, d.opponent_user_id, d.current_step, d.rev,
               d.created_at, d.updated_at, d.payload,
@@ -96,9 +150,9 @@ router.get('/', requireAuth, async (req, res, next) => {
          FROM game_drafts d
          LEFT JOIN users ow ON ow.id = d.owner_user_id
          LEFT JOIN users op ON op.id = d.opponent_user_id
-        WHERE d.submitted_game_id IS NULL
-          AND (d.owner_user_id = $1 OR d.opponent_user_id = $1)
-        ORDER BY d.updated_at DESC, d.id DESC`,
+        WHERE d.submitted_at IS NULL
+        ORDER BY COALESCE(d.owner_user_id = $1 OR d.opponent_user_id = $1, FALSE) DESC,
+                 d.updated_at DESC, d.id DESC`,
       [userId]
     );
     res.json(rows.map((r) => ({
@@ -108,6 +162,7 @@ router.get('/', requireAuth, async (req, res, next) => {
       created_at: r.created_at,
       updated_at: r.updated_at,
       submitted_game_id: null,
+      submitted_at: null,
       owner_user_id: r.owner_user_id,
       opponent_user_id: r.opponent_user_id,
       owner_name: r.owner_name,
@@ -145,16 +200,15 @@ router.post('/', requireAuth, async (req, res, next) => {
 // friend can open the link and see the game before claiming their seat.
 router.get('/:id', async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
 
+    // Readable by anyone, like games/stats/the war map. Writing is what's
+    // gated — see PATCH. `viewerSeat: null` is a spectator: the client renders
+    // the whole thing read-only and follows the owner's round.
     const userId = req.session?.userId ?? null;
     const seat = viewerSeatOf(row, userId);
-    const hasToken = typeof req.query.token === 'string' && req.query.token === row.share_token;
-    if (!seat && !hasToken) {
-      return res.status(userId ? 403 : 401).json({ error: 'not your game' });
-    }
     const isOwner = seat === 1;
 
     res.json({
@@ -168,6 +222,7 @@ router.get('/:id', async (req, res, next) => {
       rev: row.rev,
       payload: row.payload,
       submitted_game_id: row.submitted_game_id,
+      submitted_at: row.submitted_at,
       created_at: row.created_at,
       updated_at: row.updated_at,
       viewerSeat: seat,
@@ -180,7 +235,7 @@ router.get('/:id', async (req, res, next) => {
 // ── Autosave ──────────────────────────────────────────────────
 router.patch('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad draft id' });
     const { baseRev, clientId, patch, currentStep } = req.body || {};
     const userId = req.session.userId;
@@ -192,7 +247,7 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
 
       const seat = viewerSeatOf(row, userId);
       if (!seat) throw Object.assign(new Error('not your game'), { status: 403 });
-      if (row.submitted_game_id != null) {
+      if (row.submitted_at != null) {
         throw Object.assign(new Error('this game has already been submitted'), { status: 409 });
       }
 
@@ -220,7 +275,14 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
         RETURNING rev`,
         [id, nextPayload, nextStep]
       )).rows[0];
-      return { rev: updated.rev, priorRev: row.rev };
+      return {
+        rev: updated.rev,
+        priorRev: row.rev,
+        // setup -> a round is the moment the game is actually underway.
+        startedPlaying: row.current_step === 'setup'
+          && typeof nextStep === 'string' && nextStep.startsWith('round')
+          && row.started_notified_at == null,
+      };
     });
 
     // GET /events is public and unfiltered — this payload carries no draft
@@ -230,13 +292,15 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
       rev: result.rev,
       stale: baseRev != null && baseRev !== result.priorRev,
     });
+    // After the response: a mail hiccup must never delay an autosave.
+    if (result.startedPlaying) notifyGameStarted(id);
   } catch (e) { next(e); }
 });
 
 // ── Claim the opponent seat ───────────────────────────────────
 router.post('/:id/join', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const userId = req.session.userId;
     const token = req.body?.token;
 
@@ -271,8 +335,8 @@ router.post('/:id/join', requireAuth, async (req, res, next) => {
 // fallback for someone who is signed in on a device the owner can't pick from.
 router.post('/:id/invite', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    const userId = parseInt(req.body?.userId, 10);
+    const id = idParam(req.params.id);
+    const userId = idParam(req.body?.userId);
 
     const out = await withTx(async (client) => {
       const row = (await client.query(
@@ -309,7 +373,7 @@ router.post('/:id/invite', requireAuth, async (req, res, next) => {
 
 router.delete('/:id/invite', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
     if (row.owner_user_id !== req.session.userId) {
@@ -327,11 +391,11 @@ router.delete('/:id/invite', requireAuth, async (req, res, next) => {
 // ── Finish: turn the draft into a real game ───────────────────
 router.post('/:id/submit', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
 
     // The already-submitted check and the INSERT have to be one atomic step.
     // Read it outside the transaction and two taps that land together both see
-    // submitted_game_id IS NULL and both create a game — the button disabling
+    // submitted_at IS NULL and both create a game — the button disabling
     // itself is a UI convenience, not a guarantee. FOR UPDATE makes the second
     // caller wait and then lose on the 409, same as PATCH/join/invite.
     const { gameId, rev } = await withTx(async (client) => {
@@ -341,7 +405,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
       if (row.owner_user_id !== req.session.userId) {
         throw Object.assign(new Error('only the game owner can finish this game'), { status: 403 });
       }
-      if (row.submitted_game_id != null) {
+      if (row.submitted_at != null) {
         throw Object.assign(new Error('this game has already been submitted'), { status: 409 });
       }
 
@@ -358,7 +422,7 @@ router.post('/:id/submit', requireAuth, async (req, res, next) => {
 
       const newId = await createGame(client, body, row.owner_user_id);
       await client.query(
-        'UPDATE game_drafts SET submitted_game_id = $2, updated_at = NOW() WHERE id = $1',
+        'UPDATE game_drafts SET submitted_game_id = $2, submitted_at = NOW(), updated_at = NOW() WHERE id = $1',
         [id, newId]);
       return { gameId: newId, rev: row.rev };
     });
@@ -415,16 +479,21 @@ async function relinkDraftImages(draftId, gameId) {
 }
 
 // ── Abandon ───────────────────────────────────────────────────
+// Recoverable: the draft is archived into deleted_items and can be restored
+// from the admin panel. The UPLOAD_DIR/drafts/<id>/ folder deliberately stays
+// put — removing it here would restore the game without its mid-game photos.
+// Only a permanent delete (DELETE /admin/deleted/:id) unlinks the bytes.
 router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
-    if (row.owner_user_id !== req.session.userId) {
+    // Admins can clear out anyone's abandoned game; otherwise owner only.
+    const isAdmin = req.session.role === 'admin';
+    if (row.owner_user_id !== req.session.userId && !isAdmin) {
       return res.status(403).json({ error: 'only the game owner can delete this game' });
     }
-    await pool.query('DELETE FROM game_drafts WHERE id = $1', [id]);
-    await fs.rm(draftDir(id), { recursive: true, force: true }).catch(() => {});
+    await withTx((client) => archiveDraft(client, id, req));
     audit(req, 'draft.delete', { type: 'game_draft', id });
     broadcast('draft.updated', { id, rev: row.rev, by: null });
     res.json({ ok: true });
@@ -432,14 +501,12 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
 });
 
 // ── Mid-game photos ───────────────────────────────────────────
-router.get('/:id/images', requireAuth, async (req, res, next) => {
+// Readable by anyone, like the draft itself. Uploading and deleting are not.
+router.get('/:id/images', async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
-    if (!viewerSeatOf(row, req.session.userId)) {
-      return res.status(403).json({ error: 'not your game' });
-    }
     res.json(await listImages(id));
   } catch (e) { next(e); }
 });
@@ -448,13 +515,13 @@ router.get('/:id/images', requireAuth, async (req, res, next) => {
 // in IMAGE_UPLOAD_PATH or the global parser 413s before we get here.
 router.post('/:id/images', requireAuth, express.json({ limit: '12mb' }), async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = idParam(req.params.id);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
     if (!viewerSeatOf(row, req.session.userId)) {
       return res.status(403).json({ error: 'not your game' });
     }
-    if (row.submitted_game_id != null) {
+    if (row.submitted_at != null) {
       return res.status(409).json({ error: 'this game has already been submitted' });
     }
     const count = await pool.query(
@@ -509,8 +576,8 @@ router.post('/:id/images', requireAuth, express.json({ limit: '12mb' }), async (
 
 router.delete('/:id/images/:imageId', requireAuth, async (req, res, next) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    const imageId = parseInt(req.params.imageId, 10);
+    const id = idParam(req.params.id);
+    const imageId = idParam(req.params.imageId);
     const row = await loadDraft(id);
     if (!row) return res.status(404).json({ error: 'draft not found' });
     const img = (await pool.query(

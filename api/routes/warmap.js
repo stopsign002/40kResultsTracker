@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { COUNTED_GAMES } from '../lib/game-filter.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.get('/warmap', async (req, res) => {
   // Optional ?season=<id>. When omitted, defaults to the active season so
   // archived past seasons stay reachable from the UI but the live map is
   // always the current one.
-  let seasonId = req.query.season ? parseInt(String(req.query.season), 10) : null;
+  let seasonId = req.query.season ? idParam(req.query.season) : null;
   if (!seasonId) {
     const r = await pool.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
     seasonId = r.rows[0]?.id ?? null;
@@ -31,7 +32,7 @@ router.get('/warmap', async (req, res) => {
   // earliest played game falls after the cutoff simply have zero rows in
   // the `active` CTE and are excluded from the result.
   const throughGameId = req.query.through_game_id
-    ? parseInt(String(req.query.through_game_id), 10)
+    ? idParam(req.query.through_game_id)
     : null;
   const throughFilter = throughGameId
     ? `AND (g.played_at, g.id) <= (SELECT played_at, id FROM games WHERE id = ${throughGameId})`
@@ -117,7 +118,7 @@ router.get('/warmap', async (req, res) => {
 // slider. Returns enough metadata to label each slider tick (date,
 // players, factions, who won) without a second round-trip.
 router.get('/warmap-timeline', async (req, res) => {
-  let seasonId = req.query.season ? parseInt(String(req.query.season), 10) : null;
+  let seasonId = req.query.season ? idParam(req.query.season) : null;
   if (!seasonId) {
     const r = await pool.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);
     seasonId = r.rows[0]?.id ?? null;

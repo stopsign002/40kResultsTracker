@@ -163,6 +163,28 @@ export async function renderAdmin(state) {
     guestsBody,
   ]);
 
+  // Deleted Items — the undo for an admin delete. Empty is the normal state.
+  const deletedBody = el('div', { class: 'panel-body' }, 'Loading…');
+  async function refreshDeleted() {
+    clear(deletedBody);
+    deletedBody.appendChild(el('div', { class: 'muted' }, 'Loading…'));
+    try {
+      const rows = await admin.deleted();
+      clear(deletedBody);
+      deletedBody.appendChild(buildDeletedList(rows, refreshDeleted));
+    } catch (e) {
+      clear(deletedBody);
+      deletedBody.appendChild(el('div', { class: 'error-text' }, e.message));
+    }
+  }
+  const deletedPanel = el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [
+      el('h2', {}, 'Deleted Items'),
+      el('button', { class: 'btn small', onClick: refreshDeleted }, 'Refresh'),
+    ]),
+    deletedBody,
+  ]);
+
   // Audit log viewer
   const auditBody = el('div', { class: 'panel-body' }, 'Loading…');
   async function refreshAudit() {
@@ -227,12 +249,14 @@ export async function renderAdmin(state) {
   root.appendChild(usersPanel);
   root.appendChild(guestsPanel);
   root.appendChild(seasonsPanel);
+  root.appendChild(deletedPanel);
   root.appendChild(auditPanel);
   root.appendChild(pwPanel);
 
   await refresh();
   await refreshGuests();
   await refreshSeasons();
+  await refreshDeleted();
   await refreshAudit();
   return root;
 }
@@ -278,6 +302,96 @@ function buildAuditTable(rows) {
   return el('table', {}, [head, body]);
 }
 
+function buildDeletedList(rows, refresh) {
+  if (!rows.length) {
+    return el('div', { class: 'muted' }, 'Nothing here. Games and live games removed by an admin land in this list first.');
+  }
+  return el('div', { class: 'deleted-list' }, rows.map(r => buildDeletedRow(r, refresh)));
+}
+
+function buildDeletedRow(r, refresh) {
+  const isDraft = r.kind === 'draft';
+  const what = isDraft ? 'live game' : 'game';
+
+  const restoreBtn = el('button', {
+    class: 'btn small',
+    disabled: !r.canRestore,
+    title: r.canRestore
+      ? `Put this ${what} back where it was`
+      : 'Cannot be restored — something else already occupies its old id',
+    onClick: async () => {
+      const ok = await confirmModal({
+        title: `Restore this ${what}?`,
+        body: `"${r.label}" goes back into ${isDraft ? 'the live games list' : 'the games list, the stats and the war map'}.`,
+        confirmLabel: 'Restore',
+      });
+      if (!ok) return;
+      try {
+        const res = await admin.restoreDeleted(r.id);
+        await refresh();
+        const repairs = describeRepairs(res.repaired);
+        if (res.kind === 'game' && res.restoredId) {
+          const go = await confirmModal({
+            title: repairs ? 'Restored, with changes' : 'Game restored',
+            body: repairs
+              ? `"${r.label}" is back in the games list, but things it referred to had been deleted in the meantime: ${repairs}`
+              : `"${r.label}" is back in the games list and counting towards stats again.`,
+            confirmLabel: 'Open the game',
+            cancelLabel: 'Stay on Admin',
+          });
+          if (go) window.__nav('/games/' + res.restoredId);
+        } else {
+          toast(repairs
+            ? `Live game restored, with changes: ${repairs}`
+            : 'Live game restored — it is back in the live games list',
+          repairs ? 'error' : 'info');
+        }
+      } catch (e) {
+        toast(e.message, 'error');
+        if (e.status === 409 || e.status === 404) refresh();
+      }
+    },
+  }, 'Restore');
+
+  const purgeBtn = el('button', {
+    class: 'btn small danger',
+    onClick: async () => {
+      const ok = await confirmModal({
+        title: 'Delete forever?',
+        danger: true,
+        body: `"${r.label}" is erased for good, and every photo attached to it is unlinked from disk. `
+          + 'There is no second bin — this cannot be undone.',
+        confirmLabel: 'Delete forever',
+      });
+      if (!ok) return;
+      try {
+        await admin.purgeDeleted(r.id);
+        toast('Deleted permanently');
+        refresh();
+      } catch (e) {
+        toast(e.message, 'error');
+        if (e.status === 404) refresh();
+      }
+    },
+  }, 'Delete forever');
+
+  return el('div', { class: 'deleted-row' }, [
+    el('div', { class: 'deleted-main' }, [
+      el('div', { class: 'deleted-label' }, r.label),
+      el('div', { class: 'deleted-meta' }, [
+        pill(what, isDraft ? 'first' : ''),
+        el('span', {}, `deleted by ${r.deleted_by_name || 'unknown'}`),
+        el('span', {
+          class: 'dim',
+          title: r.deleted_at ? new Date(r.deleted_at).toLocaleString() : false,
+        }, relativeAge(r.deleted_at)),
+      ]),
+      r.canRestore ? null : el('div', { class: 'hint' }, 'Its old id is taken, so it can no longer be put back.'),
+    ]),
+    el('div', { class: 'btn-group' }, [restoreBtn, purgeBtn]),
+  ]);
+}
+
 function formatAuditTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -289,9 +403,29 @@ function formatAuditTime(iso) {
 }
 
 // Relative reads better than a raw stamp when the question is "is this account
-// still in use?". The exact time is on the cell's title attribute.
-function formatLastLogin(iso) {
-  if (!iso) return 'Never';
+// still in use?" or "how long has this been in the bin?". The exact time is on
+// the element's title attribute.
+// A restore can come back subtly different: things it pointed at may have been
+// deleted while it sat in the bin, so the archive clears those links rather than
+// failing the whole restore. Saying nothing would be worse than either — the
+// admin would have a game quietly missing its faction.
+function describeRepairs(repaired) {
+  if (!repaired) return null;
+  const bits = [];
+  const cards = repaired.droppedCardIds || 0;
+  const refs = (repaired.droppedRefs || 0) - cards;
+  if (cards) bits.push(`${cards} secondary card${cards === 1 ? '' : 's'} no longer in the pack (the name is kept)`);
+  if (refs > 0) bits.push(`${refs} deleted reference${refs === 1 ? '' : 's'} cleared`);
+  if (repaired.orphanedPlayers) {
+    const n = repaired.orphanedPlayers;
+    bits.push(`${n} player seat${n === 1 ? '' : 's'} whose account was deleted ${n === 1 ? 'is' : 'are'} now a named guest`);
+  }
+  if (repaired.reassignedOwner) bits.push('the original creator\u2019s account is gone, so it is credited to you');
+  return bits.length ? bits.join('; ') + '.' : null;
+}
+
+function relativeAge(iso, emptyLabel = '—') {
+  if (!iso) return emptyLabel;
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return '—';
   const mins = Math.round((Date.now() - then) / 60000);
@@ -389,7 +523,7 @@ function buildUsersTable(users, refresh) {
         class: u.last_login_at ? 'muted' : 'dim',
         style: { fontSize: '11px', whiteSpace: 'nowrap' },
         title: u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Has never signed in',
-      }, formatLastLogin(u.last_login_at)),
+      }, relativeAge(u.last_login_at, 'Never')),
       el('td', { class: 'muted', style: { fontSize: '11px' } }, String(u.created_at).slice(0, 10)),
       el('td', {}, el('div', { class: 'btn-group' }, [toggleActive, promote, editArmy, resetPw])),
     ]);

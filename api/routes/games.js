@@ -8,6 +8,7 @@ import {
   createGame, resolvePlayerIdentities, resolveGameLookups, insertPlayerChildren,
   joinDetachments, recordBannerFirstSeen, notifyGameLogged, FORCE_DISPOSITIONS,
 } from '../lib/game-write.js';
+import { idParam, intParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -84,8 +85,10 @@ router.get('/', async (req, res) => {
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-  params.push(parseInt(limit, 10));
-  params.push(parseInt(offset, 10));
+  // Bounded, not just parsed: LIMIT 'NaN' is a Postgres 22P02, and an
+  // unbounded limit is a free full-table dump on a public endpoint.
+  params.push(intParam(limit, { min: 1, max: 500, fallback: 100 }));
+  params.push(intParam(offset, { min: 0, max: 1000000, fallback: 0 }));
 
   const sql = `
     SELECT
@@ -137,7 +140,8 @@ router.get('/', async (req, res) => {
 
 // ── Get single game with full detail ──────────────────────────
 router.get('/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
+  if (!id) return res.status(400).json({ error: 'bad game id' });
   const game = await pool.query(
     `SELECT g.*, mp.name AS mission_pack_name, pm.name AS primary_mission_name,
             dm.name AS deployment_map_name, mr.name AS mission_rule_name,
@@ -212,13 +216,13 @@ router.post('/', requireAuth, async (req, res) => {
     notifyGameLogged(id); // fire-and-forget; runs after the response is sent
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: 'failed to create game', detail: e.message });
+    res.status(500).json({ error: 'failed to create game' });
   }
 });
 
 // ── Update game (any logged-in user) ──────────────────────────
 router.put('/:id', requireAuth, async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
   try {
     validateGameInput(req.body);
   } catch (e) {
@@ -299,7 +303,7 @@ router.put('/:id', requireAuth, async (req, res) => {
   } catch (e) {
     if (e.status === 404) return res.status(404).json({ error: 'not found' });
     console.error(e);
-    res.status(500).json({ error: 'failed to update game', detail: e.message });
+    res.status(500).json({ error: 'failed to update game' });
   }
 });
 

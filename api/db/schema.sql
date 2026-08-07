@@ -383,8 +383,6 @@ CREATE INDEX IF NOT EXISTS idx_game_images_game ON game_images(game_id);
 -- a concurrent "set as thumbnail" can't leave two winners.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_thumb
   ON game_images(game_id) WHERE is_thumbnail;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_map
-  ON game_images(game_id) WHERE is_map;
 
 -- Migration: per-game map-layout photo flag. MUST sit below the CREATE TABLE
 -- above — a guarded ALTER placed earlier in the file still fails on a FRESH
@@ -398,6 +396,10 @@ DO $$ BEGIN
     ALTER TABLE game_images ADD COLUMN is_map BOOLEAN NOT NULL DEFAULT FALSE;
   END IF;
 END $$;
+-- Below the ALTER, not above it: the index references is_map, so on a database
+-- upgrading from before that column existed it can only be created afterwards.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_images_one_map
+  ON game_images(game_id) WHERE is_map;
 
 -- Audit trail of admin / write actions. Append-only; no UPDATE on rows.
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -481,10 +483,50 @@ CREATE TABLE IF NOT EXISTS game_drafts (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Migration: whether a draft is finished must NOT depend on the game row still
+-- existing. submitted_game_id is ON DELETE SET NULL, so deleting the resulting
+-- game silently un-submitted the draft and it reappeared in the live list.
+-- submitted_at records the fact; submitted_game_id is now only a pointer for
+-- navigation and may legitimately be NULL for a submitted-then-deleted game.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_drafts' AND column_name='submitted_at'
+  ) THEN
+    ALTER TABLE game_drafts ADD COLUMN submitted_at TIMESTAMPTZ;
+  END IF;
+END $$;
+-- Migration: one "a game just started" email per draft, never a repeat. NULL
+-- means not yet announced.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_drafts' AND column_name='started_notified_at'
+  ) THEN
+    ALTER TABLE game_drafts ADD COLUMN started_notified_at TIMESTAMPTZ;
+  END IF;
+END $$;
+-- The predicate moved from submitted_game_id to submitted_at when the lifecycle
+-- flag was separated from the FK pointer. CREATE INDEX IF NOT EXISTS sees the
+-- name and does nothing, so an existing database keeps the stale predicate and
+-- the "my open games" query stops matching its own index. Drop only when wrong,
+-- so this isn't a rebuild on every boot.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_indexes
+              WHERE indexname = 'idx_game_drafts_owner'
+                AND indexdef LIKE '%submitted_game_id%') THEN
+    DROP INDEX idx_game_drafts_owner;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_indexes
+              WHERE indexname = 'idx_game_drafts_opponent'
+                AND indexdef LIKE '%submitted_game_id%') THEN
+    DROP INDEX idx_game_drafts_opponent;
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS idx_game_drafts_owner
-  ON game_drafts(owner_user_id) WHERE submitted_game_id IS NULL;
+  ON game_drafts(owner_user_id) WHERE submitted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_game_drafts_opponent
-  ON game_drafts(opponent_user_id) WHERE submitted_game_id IS NULL;
+  ON game_drafts(opponent_user_id) WHERE submitted_at IS NULL;
 
 -- Photos taken mid-game. Bytes live under UPLOAD_DIR/drafts/<draft_id>/ and are
 -- moved into UPLOAD_DIR/<game_id>/ (with a matching game_images row) on submit.
@@ -502,3 +544,21 @@ CREATE TABLE IF NOT EXISTS game_draft_images (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_game_draft_images_draft ON game_draft_images(draft_id);
+
+-- ── Recycle bin ───────────────────────────────────────────────
+-- Deleting a game or a live game archives its whole row-set here as JSONB and
+-- hard-deletes the originals; restoring re-inserts them with their ORIGINAL
+-- primary keys. Deliberately not a `deleted_at` flag on `games` — see
+-- lib/archive.js for why. Photo files are only unlinked on a permanent delete.
+CREATE TABLE IF NOT EXISTS deleted_items (
+  id                 SERIAL PRIMARY KEY,
+  kind               TEXT NOT NULL CHECK (kind IN ('game','draft')),
+  original_id        INTEGER NOT NULL,
+  label              TEXT NOT NULL,
+  payload            JSONB NOT NULL,
+  deleted_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  deleted_by_name    TEXT,
+  deleted_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (kind, original_id)
+);
+CREATE INDEX IF NOT EXISTS idx_deleted_items_at ON deleted_items(deleted_at DESC);

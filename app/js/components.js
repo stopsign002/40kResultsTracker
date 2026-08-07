@@ -1,3 +1,5 @@
+import { pushLayer } from './nav-stack.js';
+
 // Tiny DOM helpers shared by views
 
 export function el(tag, attrs = {}, children = []) {
@@ -90,12 +92,23 @@ function buildModal({ title, body, footer, onClose }) {
   function escListener(e) { if (e.key === 'Escape') onClose(); }
   document.body.appendChild(overlay);
   requestAnimationFrame(() => overlay.classList.add('show'));
+
+  // Idempotent: the back button and the dialog's own buttons both land here.
+  let torn = false;
+  function teardown() {
+    if (torn) return;
+    torn = true;
+    document.removeEventListener('keydown', escListener);
+    overlay.classList.remove('show');
+    setTimeout(() => overlay.remove(), 150);
+  }
+  // Back dismisses the dialog rather than leaving the page. It resolves the
+  // same way clicking the backdrop does, which for confirmModal is `false` and
+  // for promptModal is `null` — i.e. back means "cancel", as it should.
+  const layer = pushLayer(() => { teardown(); onClose(); });
+
   return {
-    close: () => {
-      document.removeEventListener('keydown', escListener);
-      overlay.classList.remove('show');
-      setTimeout(() => overlay.remove(), 150);
-    },
+    close: () => { teardown(); layer.done(); },
   };
 }
 

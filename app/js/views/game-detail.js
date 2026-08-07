@@ -204,6 +204,12 @@ async function buildPhotosPanel(state, g) {
           thumbFor: (idx) => thumbEls[idx] || null,
         });
       });
+      // Over the image, bottom-right — inside the opener so it anchors to the
+      // photo rather than to the tile (which is taller than the photo).
+      if (img.caption) {
+        opener.appendChild(
+          el('span', { class: 'photo-badge is-round', title: img.caption }, img.caption));
+      }
       const tile = el('figure', { class: 'photo-tile' }, [
         opener,
         img.is_thumbnail ? el('span', { class: 'photo-badge' }, 'COVER') : null,

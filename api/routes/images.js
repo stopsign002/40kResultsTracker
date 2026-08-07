@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 import { pool } from '../lib/db.js';
 import { requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -58,8 +59,10 @@ export async function unlinkQuiet(p) {
 
 // ── List a game's images (public, matching the rest of the read surface) ──
 router.get('/:gameId/images', async (req, res) => {
-  const gameId = parseInt(req.params.gameId, 10);
-  if (!Number.isInteger(gameId)) return res.status(400).json({ error: 'bad game id' });
+  // idParam, not Number.isInteger: 1e20 IS an integer and sails through to
+  // Postgres as "out of range for type integer".
+  const gameId = idParam(req.params.gameId);
+  if (!gameId) return res.status(400).json({ error: 'bad game id' });
   const { rows } = await pool.query(
     `SELECT gi.id, gi.game_id, gi.file_name, gi.thumb_name, gi.caption,
             gi.is_thumbnail, gi.is_map, gi.width, gi.height, gi.bytes, gi.created_at,
@@ -137,7 +140,7 @@ router.post('/:gameId/images', requireAuth, express.json({ limit: '12mb' }), asy
 router.patch('/:gameId/images/:imageId', requireAuth, async (req, res, next) => {
   try {
     const gameId = parseInt(req.params.gameId, 10);
-    const imageId = parseInt(req.params.imageId, 10);
+    const imageId = idParam(req.params.imageId);
     const img = await pool.query('SELECT * FROM game_images WHERE id = $1 AND game_id = $2', [imageId, gameId]);
     if (!img.rows[0]) return res.status(404).json({ error: 'image not found' });
 
@@ -172,7 +175,7 @@ router.patch('/:gameId/images/:imageId', requireAuth, async (req, res, next) => 
 router.delete('/:gameId/images/:imageId', requireAuth, async (req, res, next) => {
   try {
     const gameId = parseInt(req.params.gameId, 10);
-    const imageId = parseInt(req.params.imageId, 10);
+    const imageId = idParam(req.params.imageId);
     const img = (await pool.query(
       'SELECT * FROM game_images WHERE id = $1 AND game_id = $2', [imageId, gameId])).rows[0];
     if (!img) return res.status(404).json({ error: 'image not found' });

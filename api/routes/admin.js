@@ -4,7 +4,8 @@ import { hashPassword, requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
 import { previewGuests, promoteAllGuests } from '../lib/adopt-guest.js';
-import { removeGameImageFiles } from './images.js';
+import { archiveGame, restoreItem, purgeItem, removeArchivedFiles } from '../lib/archive.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -40,7 +41,7 @@ router.post('/users', async (req, res) => {
 });
 
 router.patch('/users/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
   const { displayName, role, isActive, password, armyName } = req.body || {};
   const sets = [];
   const vals = [];
@@ -62,13 +63,23 @@ router.patch('/users/:id', async (req, res) => {
     vals
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
-  await audit(req, 'user.update', { type: 'user', id, payload: req.body });
+  // NEVER audit the raw body here: it carries `password` on a reset, and
+  // audit_log.payload is JSONB that the admin panel renders verbatim — so the
+  // plaintext ended up on screen, in every nightly pg_dumpall, and in the
+  // unencrypted offsite backup. Record that it changed, not what it changed to.
+  // (POST /admin/users already picks its fields explicitly; this was the gap.)
+  const { password: _password, ...audited } = req.body || {};
+  await audit(req, 'user.update', {
+    type: 'user',
+    id,
+    payload: { ...audited, ...(password ? { passwordChanged: true } : {}) },
+  });
   res.json(rows[0]);
 });
 
 // Toggle hide-from-stats on a game (admin-only per spec)
 router.patch('/games/:id/visibility', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
   const { hidden } = req.body || {};
   const { rows } = await pool.query(
     `UPDATE games SET hidden_from_stats = $1, updated_at = NOW() WHERE id = $2
@@ -81,18 +92,75 @@ router.patch('/games/:id/visibility', async (req, res) => {
   res.json(rows[0]);
 });
 
-// Hard delete a game and all its children. Admin-only, no soft-delete fallback.
-// game_players → game_rounds / player_secondaries / player_challengers cascade
-// from `ON DELETE CASCADE` already in the schema.
+// Delete a game into the recycle bin. The row-set is serialised into
+// deleted_items and the originals are hard-deleted (children cascade), so
+// nothing that reads `games` needs to learn about deleted rows. The photo files
+// are deliberately LEFT on disk — unlinking them here would make a restore come
+// back with no pictures. DELETE /admin/deleted/:id is what removes them.
 router.delete('/games/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const { rowCount } = await pool.query('DELETE FROM games WHERE id = $1', [id]);
-  if (!rowCount) return res.status(404).json({ error: 'not found' });
-  // game_images rows cascade, but the files on the uploads volume do not.
-  await removeGameImageFiles(id);
-  await audit(req, 'game.delete', { type: 'game', id });
+  const id = idParam(req.params.id);
+  const archived = await withTx((client) => archiveGame(client, id, req));
+  if (!archived) return res.status(404).json({ error: 'not found' });
+  await audit(req, 'game.delete', { type: 'game', id, payload: { deletedItemId: archived.itemId } });
   broadcast('game.saved', { id, action: 'delete' });
   res.json({ ok: true, id });
+});
+
+// ── Recycle bin ───────────────────────────────────────────────
+// `canRestore` is false when the archived id is occupied in the live table
+// again, which would make the re-insert collide on the primary key.
+router.get('/deleted', async (_req, res) => {
+  const { rows } = await pool.query(
+    `SELECT d.id, d.kind, d.original_id, d.label, d.deleted_by_name, d.deleted_at,
+            CASE d.kind
+              WHEN 'game'  THEN NOT EXISTS (SELECT 1 FROM games g       WHERE g.id  = d.original_id)
+              WHEN 'draft' THEN NOT EXISTS (SELECT 1 FROM game_drafts gd WHERE gd.id = d.original_id)
+              ELSE FALSE
+            END AS "canRestore"
+       FROM deleted_items d
+      ORDER BY d.deleted_at DESC, d.id DESC`
+  );
+  res.json(rows);
+});
+
+// `repaired` reports what the FK scrub had to change to make the restore
+// possible — a card, faction or account that vanished while the item sat in the
+// bin. Restoring a subtly different game silently would be worse than failing.
+router.post('/deleted/:id/restore', async (req, res) => {
+  const id = idParam(req.params.id);
+  const restored = await withTx((client) => restoreItem(client, id, req));
+  if (!restored) return res.status(404).json({ error: 'not found' });
+  await audit(req, 'deleted.restore', {
+    type: restored.kind === 'game' ? 'game' : 'game_draft',
+    id: restored.restoredId,
+    payload: { deletedItemId: id, repaired: restored.repaired },
+  });
+  if (restored.kind === 'game') {
+    broadcast('game.saved', { id: restored.restoredId, action: 'restore' });
+  } else {
+    // The draft comes back with the rev it was archived at; receivers drop any
+    // event that isn't newer than what they hold, so send the real value.
+    const { rows } = await pool.query('SELECT rev FROM game_drafts WHERE id = $1', [restored.restoredId]);
+    broadcast('draft.updated', { id: restored.restoredId, rev: rows[0]?.rev ?? null, by: null });
+  }
+  res.json({
+    ok: true, kind: restored.kind, restoredId: restored.restoredId, repaired: restored.repaired,
+  });
+});
+
+// Permanent — this is the only path that unlinks the photo bytes, and it does
+// so only once the row is actually gone (see purgeItem).
+router.delete('/deleted/:id', async (req, res) => {
+  const id = idParam(req.params.id);
+  const purged = await withTx((client) => purgeItem(client, id));
+  if (!purged) return res.status(404).json({ error: 'not found' });
+  await removeArchivedFiles(purged);
+  await audit(req, 'deleted.purge', {
+    type: purged.kind === 'game' ? 'game' : 'game_draft',
+    id: purged.originalId,
+    payload: { deletedItemId: id },
+  });
+  res.json({ ok: true });
 });
 
 // Preview which guests a promotion run would create vs link (read-only).

@@ -15,6 +15,9 @@ import eventsRoutes from './routes/events.js';
 import seasonsRoutes from './routes/seasons.js';
 import ratingsRoutes from './routes/ratings.js';
 import draftRoutes from './routes/drafts.js';
+import { catchAsync, installRejectionGuard } from './lib/async-routes.js';
+
+installRejectionGuard();
 
 const PgSession = connectPgSimple(session);
 const app = express();
@@ -59,18 +62,18 @@ const loginLimiter = rateLimit({
 });
 app.use('/auth/login', loginLimiter);
 
-app.use('/auth', authRoutes);
-app.use('/admin', adminRoutes);
-app.use('/maps', mapRouter);
-app.use('/games', imageRoutes);
-app.use('/games', gameRoutes);
-app.use('/stats', statsRoutes);
-app.use('/reference', referenceRoutes);
-app.use('/stats', warmapRoutes);
-app.use('/events', eventsRoutes);
-app.use('/seasons', seasonsRoutes);
-app.use('/ratings', ratingsRoutes);
-app.use('/drafts', draftRoutes);
+app.use('/auth', catchAsync(authRoutes));
+app.use('/admin', catchAsync(adminRoutes));
+app.use('/maps', catchAsync(mapRouter));
+app.use('/games', catchAsync(imageRoutes));
+app.use('/games', catchAsync(gameRoutes));
+app.use('/stats', catchAsync(statsRoutes));
+app.use('/reference', catchAsync(referenceRoutes));
+app.use('/stats', catchAsync(warmapRoutes));
+app.use('/events', catchAsync(eventsRoutes));
+app.use('/seasons', catchAsync(seasonsRoutes));
+app.use('/ratings', catchAsync(ratingsRoutes));
+app.use('/drafts', catchAsync(draftRoutes));
 
 // Standard error response shape: { error: <message>, code?: <string> }.
 // Status code carries the category; message is human-readable.

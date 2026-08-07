@@ -362,6 +362,20 @@ td.tabular { font-variant-numeric: tabular-nums; }
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 18px;
 }
+/* A grid item's default `min-width: auto` is its MIN-CONTENT width, so a single
+   wide table inside a card widens the whole track and the page picks up a
+   horizontal scrollbar. Anything genuinely wider than its card scrolls inside
+   its own .stats-scroll instead. */
+.stats-grid > * { min-width: 0; }
+.stats-span { grid-column: 1 / -1; }
+.stats-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.stats-hint { color: var(--text-muted); font-size: var(--scale-small); margin-bottom: 8px; }
+.stats-hint.spaced { margin-bottom: 12px; }
+.stats-cols-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .stat-card {
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -398,6 +412,128 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .bar-row .bar-wrap { flex: 1; background: var(--panel-alt); border-radius: 4px; overflow: hidden; height: 12px; position: relative; }
 .bar-row .bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); border-radius: 4px; transition: width .8s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .bar-row .num { width: 60px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── Stats charts ─────────────────────────────────────────── */
+/* Every Chart.js instance on /stats runs `maintainAspectRatio: false` inside
+   one of these, so a chart's proportions are decided here instead of falling
+   out of the canvas element's 300x150 default. Without it a bar chart with 18
+   categories is ~14px per bar on a phone: unreadable and untappable. Charts
+   whose height depends on how many rows they have get it inline from JS. */
+.stats-chart { position: relative; height: 260px; }
+.stats-chart.is-tall { height: 320px; }
+.stats-chart.is-stacked { margin-top: 20px; }
+
+.stats-player-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.stats-player-links .btn { font-size: 11px; text-transform: none; letter-spacing: 0; }
+
+/* ── Stats: faction matchups ──────────────────────────────── */
+/* The N×N grid is the desktop presentation; the phone breakpoint swaps in
+   .stats-matchup-mobile, one faction's row of the matrix as a tappable list.
+   29 columns of 28px cells whose only affordance is a title tooltip is not a
+   thing a touch device can read or hit. */
+.stats-matchup-mobile { display: none; }
+.stats-matchup-list { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.stats-matchup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.stats-matchup-row:active { border-color: var(--accent); }
+.stats-matchup-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .stats-matchup-row:hover { background: var(--card-hover); border-color: var(--border-light); }
+}
+.stats-matchup-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.stats-matchup-meter {
+  flex: 0 0 64px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-alt);
+  overflow: hidden;
+}
+.stats-matchup-meter > i { display: block; height: 100%; }
+.stats-matchup-num { flex: 0 0 76px; text-align: right; font-size: 12px; color: var(--text-muted); }
+
+/* ── Stats: activity calendar ─────────────────────────────── */
+.stats-cal-panel { --cal-cell: 11px; --cal-gap: 2px; }
+.stats-cal { display: flex; align-items: flex-start; }
+/* Day-of-week gutter sits OUTSIDE the scroller so it stays put while the year
+   scrolls; the top margin clears the month row. */
+.stats-cal-dow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cal-gap);
+  margin: 18px 6px 0 0;
+  flex-shrink: 0;
+}
+.stats-cal-dow > div {
+  height: var(--cal-cell);
+  line-height: var(--cal-cell);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.stats-cal-scroll { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-bottom: 6px; }
+.stats-cal-months { display: flex; gap: var(--cal-gap); height: 14px; }
+.stats-cal-month {
+  width: var(--cal-cell);
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 14px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.stats-cal-weeks { display: flex; gap: var(--cal-gap); }
+.stats-cal-week { display: flex; flex-direction: column; gap: var(--cal-gap); }
+.stats-cal-day {
+  display: block;
+  width: var(--cal-cell);
+  height: var(--cal-cell);
+  padding: 0;
+  margin: 0;
+  appearance: none;
+  border: 1px solid rgba(0,0,0,0.4);
+  border-radius: 2px;
+}
+button.stats-cal-day { cursor: pointer; }
+button.stats-cal-day:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stats-cal-day.is-selected { border-color: var(--accent); }
+.stats-cal-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.stats-cal-swatch {
+  width: var(--cal-cell);
+  height: var(--cal-cell);
+  border: 1px solid rgba(0,0,0,0.4);
+  border-radius: 2px;
+}
+/* An 11px cell can't be a tap target and its title tooltip never shows on
+   touch, so selecting a day reports it here and this is what navigates. */
+.stats-cal-readout {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+  min-height: 44px;
+  font-size: 13px;
+}
+.stats-cal-readout .btn { min-height: 44px; }
 
 /* ── Toasts ───────────────────────────────────────────────── */
 #toast {
@@ -512,9 +648,36 @@ td.tabular { font-variant-numeric: tabular-nums; }
   .player-panel input[type="number"] { min-height: 36px; font-size: 16px; }
   .player-panel select { min-height: 36px; font-size: 14px; }
 
-  /* Stat cards: don't span multiple columns on mobile */
-  .stat-card[style*="grid-column"] { grid-column: auto !important; }
+  /* ── Stats dashboard ───────────────────────────────────────
+     One column, and nothing is allowed to widen the page — see
+     `.stats-grid > * { min-width: 0 }`. `.stats-span` needs no reset here: a
+     single-column grid makes `1 / -1` the only column anyway. */
   .stats-grid { grid-template-columns: 1fr; }
+  .stats-cols-2 { grid-template-columns: 1fr; }
+
+  .kpi-row { gap: 10px; }
+  .kpi { min-width: 104px; padding: 12px 10px; }
+  .kpi .value { font-size: 26px; }
+
+  /* 160px of fixed label plus 60px of number left the bar itself under 60px
+     wide on a 360px screen. Label takes its own line instead. */
+  .bar-row { flex-wrap: wrap; margin-bottom: 10px; }
+  .bar-row .label { width: 100%; }
+  .bar-row .num { width: auto; min-width: 56px; }
+
+  .stats-chart { height: 240px; }
+  .stats-chart.is-tall { height: 340px; }
+
+  .stats-view th, .stats-view td { padding: 8px 8px; }
+  /* The base control is 14px, which makes iOS Safari zoom the viewport on
+     focus and leaves the page scrolled sideways afterwards. */
+  .stats-view select, .stats-view input { font-size: 16px; min-height: 44px; }
+  .stats-player-links .btn { min-height: 44px; }
+
+  .stats-matchup-grid { display: none; }
+  .stats-matchup-mobile { display: block; }
+
+  .stats-cal-panel { --cal-cell: 14px; }
 
   header.topbar {
     flex-wrap: wrap;
@@ -780,12 +943,16 @@ td.tabular { font-variant-numeric: tabular-nums; }
 /* The thumbnail is a <button> so it's keyboard-reachable and announces itself;
    strip the native chrome so it looks like a plain image tile. */
 .photo-open {
+  position: relative;
   display: block;
   width: 100%;
   padding: 0;
   border: 0;
   background: none;
   cursor: zoom-in;
+  /* Kills the inline-image descender gap. Note it INHERITS, so anything with
+     text inside this button has to restate its own line-height — see
+     .photo-badge. */
   line-height: 0;
   border-radius: 4px;
 }
@@ -794,6 +961,7 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .photo-open:hover .photo-thumb { transform: scale(1.015); }
 .photo-badge {
   position: absolute;
+  line-height: 1.5;
   top: 6px;
   left: 6px;
   background: var(--accent);
@@ -968,11 +1136,63 @@ body.lb-lock { overflow: hidden; }
 .map-open { width: auto; cursor: zoom-in; }
 
 /* Second role badge on a photo tile; offset so COVER and MAP can coexist. */
+/* When the photo was taken. Bottom-right, out of the way of the two role flags
+   (COVER top-left, MAP top-right), and deliberately neutral rather than a third
+   colour — it's a caption, not a role. */
+.photo-badge.is-round {
+  top: auto;
+  left: auto;
+  bottom: 6px;
+  right: 6px;
+  max-width: calc(100% - 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border-light);
+}
+
 .photo-badge.is-map {
   left: auto;
   right: 6px;
   background: var(--info);
   color: #14141a;
+}
+
+/* ── Admin › Deleted Items ─────────────────────────────────── */
+/* A stacked list rather than a table: the label is free text and each row
+   carries two actions, which at 360px is a table that scrolls sideways. */
+.deleted-list { display: flex; flex-direction: column; gap: 10px; }
+.deleted-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.deleted-main { flex: 1 1 200px; min-width: 0; }
+.deleted-label { font-size: 13px; overflow-wrap: anywhere; }
+.deleted-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (max-width: 700px) {
+  /* .btn.small is ~25px — fine under a mouse, not under a thumb, and these two
+     buttons are destructive enough to deserve a real target. */
+  .deleted-row .btn-group { width: 100%; }
+  .deleted-row .btn.small { flex: 1; justify-content: center; min-height: 44px; }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -1061,6 +1281,26 @@ body.lb-lock { overflow: hidden; }
 .lg-pip.is-done::before { background: var(--text-dim); }
 .lg-pip.is-current::before { background: var(--accent); }
 .lg-pip:disabled { cursor: default; }
+
+.lg-pip-setup {
+  flex: 0 0 44px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 20px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color .15s ease;
+}
+.lg-pip-setup.is-current { color: var(--accent); }
+.lg-pip-setup:disabled { cursor: default; opacity: 0.5; }
+.lg-pip-setup:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-pip-setup:hover:not(:disabled) { color: var(--text); }
+}
 .lg-pip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) {
   .lg-pip:hover:not(:disabled)::before { background: var(--text-muted); }
@@ -1128,7 +1368,7 @@ body.lb-lock { overflow: hidden; }
 /* The footer is sticky, not fixed, so it stays in flow and nothing scrolls
    underneath it — this only needs breathing room, not clearance. */
 .lg-body { flex: 1; padding: 18px; }
-.lg-seats { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.lg-seats { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 20px; }
 .lg-seat {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -1188,6 +1428,28 @@ body.lb-lock { overflow: hidden; }
   letter-spacing: 0.08em;
   color: var(--text-muted);
 }
+/* "They're on Round 3 →" — the opponent's catch-up nudge. An affordance, not
+   an alert: the whole point is that it does NOT move them. */
+.lg-follow {
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--panel-alt);
+  color: var(--accent);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 4px 10px;
+  min-height: 28px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.lg-follow:active { transform: translateY(1px); }
+.lg-follow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-follow:hover { background: var(--card-hover); border-color: var(--accent); }
+}
+
 .hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 .lg-grow { flex: 1; min-width: 0; }
 .lg-statusline { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
@@ -1195,7 +1457,7 @@ body.lb-lock { overflow: hidden; }
 .lg-det-row { display: flex; gap: 6px; margin-bottom: 6px; }
 
 /* One place for the touch behaviour, rather than three of seven controls. */
-.lg-pip, .lg-seat-tab, .lg-step-btn, .lg-card-btn, .lg-picker-item, .lg-list-item {
+.lg-pip, .lg-pip-setup, .lg-seat-tab, .lg-step-btn, .lg-card-btn, .lg-picker-item, .lg-list-item {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
@@ -1338,6 +1600,19 @@ body.lb-lock { overflow: hidden; }
   cursor: pointer;
 }
 .lg-picker-item:active { background: var(--accent); color: var(--accent-on); }
+/* Reads as the primary action, not as another card in the deck. */
+.lg-picker-item.is-random {
+  background: var(--panel-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-family: var(--font-display);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .lg-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) {
   .lg-picker-item:hover { background: var(--card-hover); border-color: var(--border-light); }
@@ -1441,6 +1716,10 @@ body.lb-lock { overflow: hidden; }
   min-height: 44px;
 }
 .lg textarea { min-height: 80px; }
+/* A real 2000pt list is 30+ lines. The generic 80px box meant scrolling a
+   letterbox to check what you brought, which is the one thing this field
+   exists for. Still resizable, and it scrolls past this. */
+.lg-armylist { min-height: 420px; }
 
 /* Same 700px breakpoint as the rest of the file — a second one 60px away just
    creates a band where this block has collapsed and the shared .form-row rules
@@ -1462,6 +1741,8 @@ body.lb-lock { overflow: hidden; }
   .lg-step-title { font-size: 16px; }
   .lg-sc { font-size: 20px; }
   .lg-seat-total { font-size: 28px; }
+  /* Proportional on a phone rather than swallowing the whole screen. */
+  .lg-armylist { min-height: 55dvh; }
   /* The footer is the full width of a phone; capping it strands the buttons. */
   .lg-nav-btn { max-width: none; }
 

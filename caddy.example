@@ -4,19 +4,27 @@
 40k.thewheeliebois.com {
     # SSE endpoint: needs flush_interval so chunks aren't buffered;
     # `encode` (gzip/zstd) is intentionally NOT in this handler.
+    # NOTE: both reverse_proxy blocks below strip the shared SSO cookie. It is
+    # scoped Domain=.thewheeliebois.com (em/kids/todo/meds), so the browser
+    # attaches it to every sibling subdomain — including this one, which is
+    # outside the SSO group. Miss either block and the token still leaks into
+    # this app's request headers. Any NEW *.thewheeliebois.com vhost needs the
+    # same line unless it is joining the SSO group — see ~/sites/CLAUDE.md
+    # § Adding a new site.
     handle /api/events {
         rewrite * /events
         reverse_proxy 40k-api:3000 {
             flush_interval -1
+            header_up Cookie "(^|;\s*)wb_session=[^;]*" ""
         }
     }
     handle_path /api/* {
-        reverse_proxy 40k-api:3000
+        reverse_proxy 40k-api:3000 {
+            header_up Cookie "(^|;\s*)wb_session=[^;]*" ""
+        }
     }
     # Game photos, written by the API into the site's uploads/ volume and
     # served straight off disk — the Node process is not in the read path.
-    # Deliberately outside app/ so uploads stay out of git and out of the
-    # SPA's try_files fallback.
     handle_path /uploads/* {
         root * /srv/40kResultsTracker/uploads
         encode gzip zstd
@@ -26,6 +34,15 @@
     handle {
         root * /srv/40kResultsTracker/app
         encode gzip zstd
+        # Without this the app files carry only an ETag, so browsers apply
+        # HEURISTIC freshness (a fraction of the file's age) and serve a stale
+        # copy WITHOUT revalidating — a deploy could go unseen for hours. This
+        # app is buildless and has no ?v= stamp on its script tags, so the
+        # revalidate-always header is the only thing keeping clients current.
+        # Cost is one 304 per file. Every other vhost on this box already does
+        # this; 40k was the only one missing it.
+        @nocache path / *.html *.js *.css *.webmanifest
+        header @nocache Cache-Control "no-cache"
         file_server
         try_files {path} /index.html
     }

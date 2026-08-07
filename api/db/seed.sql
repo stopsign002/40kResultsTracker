@@ -767,3 +767,24 @@ FROM (
 ) a
 WHERE a.actor_user_id = u.id
   AND u.last_login_at IS NULL;
+
+-- ── Backfill game_drafts.submitted_at ──────────────────────────
+-- Two sources, because the obvious one is lossy: a draft whose game was later
+-- hard-deleted has had submitted_game_id nulled by the FK, and the only
+-- surviving evidence that it was ever submitted is the audit row. Idempotent:
+-- both only fill NULLs, so they match zero rows on the second run.
+UPDATE game_drafts d
+SET submitted_at = a.first_submit
+FROM (
+  SELECT (payload->>'draftId')::int AS draft_id, MIN(created_at) AS first_submit
+    FROM audit_log
+   WHERE action = 'draft.submit' AND payload ? 'draftId'
+   GROUP BY 1
+) a
+WHERE a.draft_id = d.id
+  AND d.submitted_at IS NULL;
+
+UPDATE game_drafts
+SET submitted_at = updated_at
+WHERE submitted_game_id IS NOT NULL
+  AND submitted_at IS NULL;

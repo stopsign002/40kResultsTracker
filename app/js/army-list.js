@@ -68,7 +68,13 @@ export async function decodeArmyList(text) {
   } catch {
     return null;
   }
-  if (data && data.v === 2) return renderCompact(data);
+  // `v >= 2` rather than `v === 2`, deliberately. Every extension yaab has
+  // shipped so far (multi-detachment, Led-By attachments, wargear picks) was
+  // additive — new positional slots on the end, old codes byte-identical — so a
+  // future v3 will most likely still decode down the same path, and a partial
+  // read beats none. If it doesn't, renderCompact returns null and the caller
+  // stores the code verbatim, which is the whole safety net.
+  if (data && typeof data.v === 'number' && data.v >= 2) return renderCompact(data);
   if (data && data.name && Array.isArray(data.entries)) return renderLegacy(data);
   return null;
 }
@@ -95,6 +101,11 @@ async function inflateRaw(bytes) {
 /* ── Rendering ────────────────────────────────────────────────── */
 
 function renderCompact(data) {
+  // If a future format reshapes `e` into something we can't walk, produce
+  // nothing rather than a header with no units under it — the caller then keeps
+  // the raw code, which stays decodable once this function is taught the new
+  // shape. Never half-render: a wrong list is worse than an opaque one.
+  if (!Array.isArray(data.e) || !data.e.every((t) => Array.isArray(t) && t.length)) return null;
   const lines = [];
   if (data.n) lines.push(`=== ${data.n} ===`);
   if (data.f) lines.push(`Faction: ${data.f}`);

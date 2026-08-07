@@ -19,8 +19,23 @@ if (typeof Chart !== 'undefined') {
   Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// Every chart runs maintainAspectRatio:false inside a .stats-chart box, so the
+// proportions come from CSS instead of the canvas element's 300x150 default.
+// A category chart therefore gets a row's worth of height per category rather
+// than however many pixels the aspect ratio happened to leave it.
+const CHART_ROW_PX = 28;
+function rowChartHeight(rowCount, chrome) {
+  return Math.max(200, rowCount * CHART_ROW_PX + chrome) + 'px';
+}
+
+function tableScroll(table) {
+  return el('div', { class: 'stats-scroll' }, table);
+}
+
 export async function renderStats(_state) {
-  const root = el('div', { class: 'fade-in' });
+  const root = el('div', { class: 'fade-in stats-view' });
 
   const [overview, factionWR, playerWR, factions, firstTurn, secondaryAvg, matchups, trends, calendar] = await Promise.all([
     stats.overview(),
@@ -44,59 +59,57 @@ export async function renderStats(_state) {
 
   // ── Faction win rates ──────────────────────────────────
   // Click-to-filter: clicking a bar jumps to the games list for that faction.
-  const factionChartCanvas = el('canvas', { id: 'faction-wr-chart', height: '260' });
+  const factionRows = Math.min(factionWR.length, 18);
+  const factionChartCanvas = el('canvas', { id: 'faction-wr-chart' });
   const factionPanel = el('div', { class: 'stat-card' }, [
     el('h3', {}, 'Faction Win Rates'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' } },
-      'Click a bar to see those games. Excludes hidden games.'),
-    factionChartCanvas,
+    el('div', { class: 'stats-hint' }, 'Tap a bar to see those games. Excludes hidden games.'),
+    el('div', { class: 'stats-chart', style: { height: rowChartHeight(factionRows, 48) } }, factionChartCanvas),
   ]);
 
   // ── Player win rates ───────────────────────────────────
   // Names link out to /players/:key profile pages.
-  const playerCanvas = el('canvas', { id: 'player-wr-chart', height: '260' });
+  const playerRows = Math.min(playerWR.length, 18);
+  const playerCanvas = el('canvas', { id: 'player-wr-chart' });
   const playerPanel = el('div', { class: 'stat-card' }, [
     el('h3', {}, 'Player Win Rates'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' } },
-      'Click a name below for full profile + streaks.'),
-    playerCanvas,
+    el('div', { class: 'stats-hint' }, 'Tap a name below for full profile + streaks.'),
+    el('div', { class: 'stats-chart', style: { height: rowChartHeight(playerRows, 64) } }, playerCanvas),
     buildPlayerLinks(playerWR),
   ]);
 
   // ── First turn impact ──────────────────────────────────
-  const firstTurnCanvas = el('canvas', { id: 'first-turn-chart', height: '220' });
+  const firstTurnCanvas = el('canvas', { id: 'first-turn-chart' });
   const firstTurnPanel = el('div', { class: 'stat-card' }, [
     el('h3', {}, 'Going First vs Second'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' } },
-      'Win % and avg score depending on turn order'),
-    firstTurnCanvas,
+    el('div', { class: 'stats-hint' }, 'Win % and avg score depending on turn order'),
+    el('div', { class: 'stats-chart' }, firstTurnCanvas),
   ]);
 
   // ── Faction matchup heatmap ─────────────────────────────
-  const matchupPanel = el('div', { class: 'stat-card', style: { gridColumn: '1 / -1' } }, [
+  const matchupPanel = el('div', { class: 'stat-card stats-span' }, [
     el('h3', {}, 'Faction Matchup Matrix'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '12px' } },
-      'Row vs column. Green = row faction wins more often, red = loses, grey = small sample. Hover a cell for details.'),
+    el('div', { class: 'stats-hint spaced' },
+      'Row vs column. Green = row faction wins more often, red = loses, grey = small sample. Tap a cell for those games.'),
     buildMatchupHeatmap(matchups, factions),
   ]);
 
   // ── Calendar heatmap ────────────────────────────────────
-  const calendarPanel = el('div', { class: 'stat-card', style: { gridColumn: '1 / -1' } }, [
+  const calendarPanel = el('div', { class: 'stat-card stats-span' }, [
     el('h3', {}, 'Activity Calendar'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '12px' } },
-      'Days played in the last year. Click a day to filter the games list to that date.'),
+    el('div', { class: 'stats-hint spaced' },
+      'Days played in the last year. Pick a day to see what was played on it.'),
     buildCalendarHeatmap(calendar),
   ]);
 
   // ── Trends over time ────────────────────────────────────
-  const trendsCanvas = el('canvas', { id: 'trends-chart', height: '220' });
-  const factionTrendCanvas = el('canvas', { id: 'faction-trend-chart', height: '220' });
-  const trendsPanel = el('div', { class: 'stat-card', style: { gridColumn: '1 / -1' } }, [
+  const trendsCanvas = el('canvas', { id: 'trends-chart' });
+  const factionTrendCanvas = el('canvas', { id: 'faction-trend-chart' });
+  const trendsPanel = el('div', { class: 'stat-card stats-span' }, [
     el('h3', {}, 'Trends Over Time'),
-    el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '8px' } },
-      'Monthly games played and average final score. Faction popularity below.'),
-    trendsCanvas,
-    el('div', { style: { marginTop: '20px' } }, factionTrendCanvas),
+    el('div', { class: 'stats-hint' }, 'Monthly games played and average final score. Faction popularity below.'),
+    el('div', { class: 'stats-chart' }, trendsCanvas),
+    el('div', { class: 'stats-chart is-tall is-stacked' }, factionTrendCanvas),
   ]);
 
   // ── Faction explorer (drilldown) ───────────────────────
@@ -120,7 +133,7 @@ export async function renderStats(_state) {
       stats.detachmentWinRates(factionSel.value),
     ]);
     clear(drilldownBody);
-    drilldownBody.appendChild(el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '18px' } }, [
+    drilldownBody.appendChild(el('div', { class: 'stats-cols-2' }, [
       breakdownTable('By Primary Mission', mb, 'primary_mission'),
       breakdownTable('By Deployment Map', db, 'deployment_map'),
     ]));
@@ -142,7 +155,7 @@ export async function renderStats(_state) {
   // ── Secondary averages ─────────────────────────────────
   const secondaryPanel = el('div', { class: 'stat-card' }, [
     el('h3', {}, 'Secondary Averages'),
-    el('table', {}, [
+    tableScroll(el('table', {}, [
       el('thead', {}, el('tr', {}, [
         el('th', {}, 'Card'),
         el('th', { style: { textAlign: 'right' } }, 'Picks'),
@@ -155,7 +168,7 @@ export async function renderStats(_state) {
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(s.avg_score)),
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(s.max_score ?? '–')),
       ]))),
-    ]),
+    ])),
   ]);
 
   const grid = el('div', { class: 'stats-grid' }, [
@@ -191,11 +204,10 @@ function firstTurnRate(rows) {
 
 function buildPlayerLinks(rows) {
   if (!rows.length) return el('div', {});
-  return el('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '10px' } },
+  return el('div', { class: 'stats-player-links' },
     rows.slice(0, 18).map(r => el('a', {
       class: 'btn small',
       href: '#/players/' + encodeURIComponent(r.player_key),
-      style: { fontSize: '11px', textTransform: 'none', letterSpacing: '0' },
     }, `${r.player_name} (${r.win_rate}%)`)));
 }
 
@@ -225,7 +237,7 @@ function detachmentTable(rows) {
   }
   return el('div', {}, [
     el('h3', {}, 'By Detachment'),
-    el('table', {}, [
+    tableScroll(el('table', {}, [
       el('thead', {}, el('tr', {}, [
         el('th', {}, 'Detachment'),
         el('th', { style: { textAlign: 'right' } }, 'Games'),
@@ -240,12 +252,15 @@ function detachmentTable(rows) {
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, `${r.win_rate}%`),
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(r.avg_score)),
       ]))),
-    ]),
+    ])),
   ]);
 }
 
 // ── Faction matchup heatmap (#1) ─────────────────────────────
-// Cells coloured by win % from row's perspective; alpha by sample size.
+// Two presentations of the same numbers. The N×N grid is the desktop view;
+// below 700px CSS swaps in the per-faction list, because 29 columns of 28px
+// cells cannot be read — or hit — on a phone, and the grid's only affordance
+// for "what is this cell" is a title tooltip, which touch never shows.
 function buildMatchupHeatmap(matchups, factions) {
   if (!matchups.length) return el('div', { class: 'muted' }, 'No matchup data yet.');
 
@@ -259,10 +274,17 @@ function buildMatchupHeatmap(matchups, factions) {
   for (const m of matchups) { activeIds.add(m.faction_a); activeIds.add(m.faction_b); }
   const active = factions.filter(f => activeIds.has(f.id));
 
+  return el('div', {}, [
+    buildMatchupGrid(active, idx),
+    buildMatchupList(active, idx, matchups),
+  ]);
+}
+
+function buildMatchupGrid(active, idx) {
   const cellSize = 28;
   const labelW = 110;
 
-  const wrapper = el('div', { style: { overflowX: 'auto', maxWidth: '100%' } });
+  const wrapper = el('div', { class: 'stats-matchup-grid stats-scroll' });
   const grid = el('table', {
     style: {
       borderCollapse: 'separate',
@@ -346,6 +368,50 @@ function buildMatchupHeatmap(matchups, factions) {
   return wrapper;
 }
 
+function buildMatchupList(active, idx, matchups) {
+  const totals = new Map();
+  for (const m of matchups) totals.set(m.faction_a, (totals.get(m.faction_a) || 0) + m.games);
+
+  const sel = el('select', {}, active.map(f => el('option', { value: f.id }, f.name)));
+  const busiest = active.slice().sort((a, b) => (totals.get(b.id) || 0) - (totals.get(a.id) || 0))[0];
+  if (busiest) sel.value = String(busiest.id);
+
+  const list = el('div', { class: 'stats-matchup-list' });
+
+  function refresh() {
+    const rowId = parseInt(sel.value, 10);
+    clear(list);
+    const rows = active
+      .map(col => ({ col, m: idx.get(`${rowId}::${col.id}`) }))
+      .filter(r => r.m && r.m.games)
+      .sort((a, b) => b.m.games - a.m.games || (b.m.wins / b.m.games) - (a.m.wins / a.m.games));
+    if (!rows.length) {
+      list.appendChild(el('div', { class: 'muted' }, 'No recorded matchups for this faction yet.'));
+      return;
+    }
+    for (const { col, m } of rows) {
+      const winPct = (m.wins / m.games) * 100;
+      list.appendChild(el('button', {
+        class: 'stats-matchup-row',
+        type: 'button',
+        onClick: () => window.__nav(`/games?playerFaction=${rowId}&opponentFaction=${col.id}`),
+      }, [
+        el('span', { class: 'stats-matchup-name' }, `vs ${col.name}`),
+        el('span', { class: 'stats-matchup-meter' },
+          el('i', { style: { width: Math.round(winPct) + '%', background: matchupColor(winPct, 1) } })),
+        el('span', { class: 'stats-matchup-num tabular' }, `${Math.round(winPct)}% · ${m.games}g`),
+      ]));
+    }
+  }
+  sel.addEventListener('change', refresh);
+  refresh();
+
+  return el('div', { class: 'stats-matchup-mobile' }, [
+    el('div', { class: 'form-group' }, [el('label', {}, 'Faction'), sel]),
+    list,
+  ]);
+}
+
 function matchupColor(winPct, alpha) {
   // Red (lose) → grey (50/50) → green (win), interpolated
   let r, g, b;
@@ -408,7 +474,7 @@ function buildHeadToHeadPanel(playerWR) {
         kpi('Draws', draws),
         kpi(nameB, winsB),
       ]));
-      body.appendChild(el('table', {}, [
+      body.appendChild(tableScroll(el('table', {}, [
         el('thead', {}, el('tr', {}, [
           el('th', {}, 'Date'),
           el('th', {}, 'Mission'),
@@ -428,7 +494,7 @@ function buildHeadToHeadPanel(playerWR) {
           el('td', {}, g.faction_b || '—'),
           el('td', {}, g.result_a === 'win' ? nameA : g.result_b === 'win' ? nameB : 'Draw'),
         ]))),
-      ]));
+      ])));
     } catch (e) {
       clear(body);
       body.appendChild(el('div', { class: 'error-text' }, `Failed: ${e.message}`));
@@ -437,7 +503,7 @@ function buildHeadToHeadPanel(playerWR) {
   selA.addEventListener('change', load);
   selB.addEventListener('change', load);
 
-  return el('div', { class: 'stat-card', style: { gridColumn: '1 / -1' } }, [
+  return el('div', { class: 'stat-card stats-span' }, [
     el('h3', {}, 'Head-to-Head'),
     el('div', { class: 'form-row cols-2', style: { marginBottom: '12px' } }, [
       el('div', { class: 'form-group' }, [el('label', {}, 'Player A'), selA]),
@@ -464,6 +530,7 @@ function drawFactionChart(canvas, rows) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       indexAxis: 'y',
       animation: { duration: 900, easing: 'easeOutQuart' },
       onClick: (_e, items) => {
@@ -476,8 +543,12 @@ function drawFactionChart(canvas, rows) {
         e.native.target.style.cursor = items.length ? 'pointer' : 'default';
       },
       scales: {
-        x: { min: 0, max: 100, grid: { color: chartTheme.border }, ticks: { color: chartTheme.muted, callback: (v) => v + '%' } },
-        y: { grid: { color: chartTheme.border }, ticks: { color: chartTheme.text } },
+        x: {
+          min: 0, max: 100,
+          grid: { color: chartTheme.border },
+          ticks: { color: chartTheme.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 5, callback: (v) => v + '%' },
+        },
+        y: { grid: { color: chartTheme.border }, ticks: { color: chartTheme.text, autoSkip: false, crossAlign: 'far' } },
       },
       plugins: {
         legend: { display: false },
@@ -496,6 +567,9 @@ function drawFactionChart(canvas, rows) {
   });
 }
 
+// Horizontal on every width: 18 player names on a category x-axis are illegible
+// at phone width and merely cramped on a desktop card. The stacked W/L/D
+// composition reads the same either way.
 function drawPlayerChart(canvas, rows) {
   if (!rows.length) return;
   const top = rows.slice(0, 18);
@@ -511,6 +585,8 @@ function drawPlayerChart(canvas, rows) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: 'y',
       animation: { duration: 900, easing: 'easeOutQuart' },
       onClick: (_e, items) => {
         if (!items.length) return;
@@ -521,11 +597,15 @@ function drawPlayerChart(canvas, rows) {
         e.native.target.style.cursor = items.length ? 'pointer' : 'default';
       },
       scales: {
-        x: { stacked: true, grid: { color: chartTheme.border }, ticks: { color: chartTheme.text } },
-        y: { stacked: true, grid: { color: chartTheme.border }, ticks: { color: chartTheme.muted } },
+        x: {
+          stacked: true, beginAtZero: true,
+          grid: { color: chartTheme.border },
+          ticks: { color: chartTheme.muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 6, precision: 0 },
+        },
+        y: { stacked: true, grid: { color: chartTheme.border }, ticks: { color: chartTheme.text, autoSkip: false, crossAlign: 'far' } },
       },
       plugins: {
-        legend: { labels: { color: chartTheme.text } },
+        legend: { position: 'bottom', labels: { color: chartTheme.text, boxWidth: 12, boxHeight: 12, padding: 10 } },
         tooltip: { backgroundColor: chartTheme.panel, borderColor: chartTheme.accent, borderWidth: 1 },
       },
     },
@@ -546,14 +626,15 @@ function drawFirstTurnChart(canvas, rows) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       animation: { duration: 900, easing: 'easeOutQuart' },
       scales: {
-        x: { ticks: { color: chartTheme.text } },
-        y: { type: 'linear', position: 'left', min: 0, max: 100, ticks: { color: chartTheme.muted, callback: v => v + '%' } },
-        y2: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { color: chartTheme.muted } },
+        x: { ticks: { color: chartTheme.text, maxRotation: 0 } },
+        y: { type: 'linear', position: 'left', min: 0, max: 100, ticks: { color: chartTheme.muted, maxTicksLimit: 5, callback: v => v + '%' } },
+        y2: { type: 'linear', position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false }, ticks: { color: chartTheme.muted, maxTicksLimit: 5 } },
       },
       plugins: {
-        legend: { labels: { color: chartTheme.text } },
+        legend: { position: 'bottom', labels: { color: chartTheme.text, boxWidth: 12, boxHeight: 12, padding: 10 } },
         tooltip: { backgroundColor: chartTheme.panel, borderColor: chartTheme.accent, borderWidth: 1 },
       },
     },
@@ -591,14 +672,15 @@ function drawTrendsChart(canvas, trends) {
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       animation: { duration: 700 },
       scales: {
-        x: { ticks: { color: chartTheme.text } },
-        y: { type: 'linear', position: 'left', beginAtZero: true, ticks: { color: chartTheme.muted } },
-        y2: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { color: chartTheme.muted } },
+        x: { ticks: { color: chartTheme.text, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 } },
+        y: { type: 'linear', position: 'left', beginAtZero: true, ticks: { color: chartTheme.muted, maxTicksLimit: 6, precision: 0 } },
+        y2: { type: 'linear', position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, ticks: { color: chartTheme.muted, maxTicksLimit: 6 } },
       },
       plugins: {
-        legend: { labels: { color: chartTheme.text } },
+        legend: { position: 'bottom', labels: { color: chartTheme.text, boxWidth: 12, boxHeight: 12, padding: 10 } },
         tooltip: { backgroundColor: chartTheme.panel, borderColor: chartTheme.accent, borderWidth: 1 },
       },
     },
@@ -626,13 +708,14 @@ function drawFactionTrendChart(canvas, trends) {
     data: { labels: months, datasets },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       animation: { duration: 700 },
       scales: {
-        x: { stacked: true, ticks: { color: chartTheme.text } },
-        y: { stacked: true, beginAtZero: true, ticks: { color: chartTheme.muted } },
+        x: { stacked: true, ticks: { color: chartTheme.text, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 } },
+        y: { stacked: true, beginAtZero: true, ticks: { color: chartTheme.muted, maxTicksLimit: 6, precision: 0 } },
       },
       plugins: {
-        legend: { labels: { color: chartTheme.text, font: { size: 10 } } },
+        legend: { position: 'bottom', labels: { color: chartTheme.text, font: { size: 11 }, boxWidth: 10, boxHeight: 10, padding: 8 } },
         tooltip: { backgroundColor: chartTheme.panel, borderColor: chartTheme.accent, borderWidth: 1 },
         title: { display: true, text: 'Faction Popularity by Month (top 8)', color: chartTheme.text, font: { size: 13 } },
       },
@@ -650,6 +733,15 @@ function colorFor(pct) {
 // ── Calendar heatmap (#9) ─────────────────────────────────
 // GitHub-style: 7 rows (days of week, Sun → Sat), N columns (one per week
 // in the requested range). Each cell shaded by game count for that day.
+//
+// A day cell is far too small to be a safe tap target and its title tooltip is
+// invisible on touch, so tapping one no longer navigates — it selects, and the
+// readout underneath carries the full-size button that does. The strip also
+// starts scrolled to the present, which is the end a reader cares about.
+function monthOf(dateStr) {
+  return parseInt(dateStr.slice(5, 7), 10) - 1;
+}
+
 function buildCalendarHeatmap(data) {
   const days = data.days || 365;
   const rangeEnd = new Date(data.range_end || new Date().toISOString().slice(0, 10));
@@ -685,47 +777,72 @@ function buildCalendarHeatmap(data) {
     return `rgb(${r},${g},${b})`;
   }
 
-  const cellSize = 11, gap = 2;
-  const wrapper = el('div', { style: { overflowX: 'auto', paddingBottom: '6px' } });
-  const dowLabels = el('div', { style: { display: 'inline-flex', flexDirection: 'column', gap: gap + 'px', marginRight: '6px', verticalAlign: 'top' } },
-    ['', 'Mon', '', 'Wed', '', 'Fri', ''].map(d => el('div', {
-      style: { height: cellSize + 'px', fontSize: '9px', color: 'var(--text-muted)', lineHeight: cellSize + 'px' },
-    }, d)));
-  const weeksContainer = el('div', { style: { display: 'inline-flex', gap: gap + 'px' } },
-    weeks.map(week => el('div', { style: { display: 'flex', flexDirection: 'column', gap: gap + 'px' } },
-      week.map(day => el('div', {
-        title: `${day.date}: ${day.games} game${day.games === 1 ? '' : 's'}`,
-        style: {
-          width: cellSize + 'px', height: cellSize + 'px',
-          background: shade(day.games),
-          border: '1px solid rgba(0,0,0,0.4)',
-          borderRadius: '2px',
-          cursor: day.games ? 'pointer' : 'default',
-        },
-        onClick: () => {
-          if (day.games) {
-            window.__nav(`/games?dateFrom=${day.date}&dateTo=${day.date}`);
-          }
-        },
-      })))));
+  const readout = el('div', { class: 'stats-cal-readout' });
+  let selectedCell = null;
+  function select(day, cell) {
+    if (selectedCell) selectedCell.classList.remove('is-selected');
+    selectedCell = cell || null;
+    if (selectedCell) selectedCell.classList.add('is-selected');
+    clear(readout);
+    if (!day) {
+      readout.appendChild(el('span', { class: 'muted' }, 'Pick a lit day to see the games played on it.'));
+      return;
+    }
+    readout.appendChild(el('span', { class: 'tabular' }, day.date));
+    readout.appendChild(el('span', { class: 'muted' }, `${day.games} game${day.games === 1 ? '' : 's'}`));
+    readout.appendChild(el('button', {
+      class: 'btn small',
+      type: 'button',
+      onClick: () => window.__nav(`/games?dateFrom=${day.date}&dateTo=${day.date}`),
+    }, 'View games'));
+  }
+  select(null, null);
 
-  const row = el('div', { style: { display: 'flex', alignItems: 'flex-start' } }, [dowLabels, weeksContainer]);
+  const dowLabels = el('div', { class: 'stats-cal-dow' },
+    ['', 'Mon', '', 'Wed', '', 'Fri', ''].map(d => el('div', {}, d)));
 
-  // Legend
-  const legend = el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px', marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)' } }, [
+  let lastLabelCol = -99;
+  const monthRow = el('div', { class: 'stats-cal-months' }, weeks.map((week, i) => {
+    const m = monthOf(week[0].date);
+    const prev = i > 0 ? monthOf(weeks[i - 1][0].date) : -1;
+    const show = m !== prev && i - lastLabelCol >= 3;
+    if (show) lastLabelCol = i;
+    return el('div', { class: 'stats-cal-month' }, show ? MONTH_NAMES[m] : '');
+  }));
+
+  const weeksContainer = el('div', { class: 'stats-cal-weeks' },
+    weeks.map(week => el('div', { class: 'stats-cal-week' },
+      week.map(day => {
+        const label = `${day.date}: ${day.games} game${day.games === 1 ? '' : 's'}`;
+        if (!day.games) {
+          return el('div', { class: 'stats-cal-day', title: label, style: { background: shade(0) } });
+        }
+        const cell = el('button', {
+          class: 'stats-cal-day',
+          type: 'button',
+          title: label,
+          'aria-label': label,
+          style: { background: shade(day.games) },
+          onClick: () => select(day, cell),
+        });
+        return cell;
+      }))));
+
+  const scroller = el('div', { class: 'stats-cal-scroll stats-scroll' }, [monthRow, weeksContainer]);
+  setTimeout(() => { scroller.scrollLeft = scroller.scrollWidth; }, 60);
+
+  const legend = el('div', { class: 'stats-cal-legend' }, [
     el('span', {}, 'Less'),
     ...[0, 0.25, 0.5, 0.75, 1].map(t => el('div', {
-      style: {
-        width: cellSize + 'px', height: cellSize + 'px',
-        background: shade(Math.round(t * maxCount)),
-        border: '1px solid rgba(0,0,0,0.4)',
-        borderRadius: '2px',
-      },
+      class: 'stats-cal-swatch',
+      style: { background: shade(Math.round(t * maxCount)) },
     })),
     el('span', {}, 'More'),
   ]);
 
-  wrapper.appendChild(row);
-  wrapper.appendChild(legend);
-  return wrapper;
+  return el('div', { class: 'stats-cal-panel' }, [
+    el('div', { class: 'stats-cal' }, [dowLabels, scroller]),
+    legend,
+    readout,
+  ]);
 }

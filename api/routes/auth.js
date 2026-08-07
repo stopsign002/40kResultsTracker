@@ -7,7 +7,11 @@ const router = Router();
 
 router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) return res.status(400).json({ error: 'missing credentials' });
+  // Type, not just truthiness: bcrypt.compare rejects on a non-string, and an
+  // unhandled rejection used to take the whole process down.
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+    return res.status(400).json({ error: 'missing credentials' });
+  }
   const { rows } = await pool.query(
     'SELECT id, username, display_name, password_hash, role, is_active FROM users WHERE LOWER(username) = LOWER($1)',
     [username]

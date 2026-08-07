@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { COUNTED_GAMES } from '../lib/game-filter.js';
+import { idParam, intParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -90,7 +91,7 @@ router.get('/player-winrates', async (req, res) => {
 
 // ── Faction performance per primary mission ──────────────────
 router.get('/faction-mission-breakdown', async (req, res) => {
-  const factionId = parseInt(req.query.factionId, 10);
+  const factionId = idParam(req.query.factionId);
   if (!factionId) return res.status(400).json({ error: 'factionId required' });
   const sql = `
     SELECT pm.id AS primary_mission_id, pm.name AS primary_mission,
@@ -114,7 +115,7 @@ router.get('/faction-mission-breakdown', async (req, res) => {
 
 // ── Faction performance per deployment map ───────────────────
 router.get('/faction-deployment-breakdown', async (req, res) => {
-  const factionId = parseInt(req.query.factionId, 10);
+  const factionId = idParam(req.query.factionId);
   if (!factionId) return res.status(400).json({ error: 'factionId required' });
   const sql = `
     SELECT dm.id AS deployment_map_id, dm.name AS deployment_map,
@@ -156,7 +157,9 @@ router.get('/faction-matchups', async (_req, res) => {
 
 // ── Head-to-head between two players ─────────────────────────
 router.get('/head-to-head', async (req, res) => {
-  const a = req.query.userA, b = req.query.userB;
+  // These bind straight to an integer column; raw strings were a pg 22P02.
+  const a = idParam(req.query.userA), b = idParam(req.query.userB);
+  if (!a || !b) return res.status(400).json({ error: 'userA and userB are required' });
   if (!a || !b) return res.status(400).json({ error: 'userA and userB required' });
   const sql = `
     SELECT g.id, g.played_at,
@@ -223,7 +226,7 @@ router.get('/secondary-averages', async (_req, res) => {
 // 11e counts once under each, so the games column can exceed the game count for
 // that faction — that's the nature of a multi-valued dimension, not a bug.
 router.get('/detachment-winrates', async (req, res) => {
-  const factionId = req.query.factionId ? parseInt(req.query.factionId, 10) : null;
+  const factionId = req.query.factionId ? idParam(req.query.factionId) : null;
   const where = [COUNTED_GAMES];
   const params = [];
   let i = 1;
@@ -307,7 +310,8 @@ router.get('/trends', async (_req, res) => {
 // Returns one row per date that has at least one game, with the count.
 // Default range: last 365 days. Client renders a GitHub-style year grid.
 router.get('/calendar', async (req, res) => {
-  const days = Math.min(parseInt(req.query.days, 10) || 365, 730);
+  // Lower bound too: `days=-1e30` rendered INTERVAL '-1e+30 days' -> pg 22007.
+  const days = intParam(req.query.days, { min: 1, max: 730, fallback: 365 });
   const { rows } = await pool.query(`
     SELECT g.played_at::text AS date, COUNT(*)::int AS games
     FROM games g

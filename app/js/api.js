@@ -149,6 +149,9 @@ export const admin = {
   audit:        (limit) => api.get('/admin/audit' + (limit ? '?limit=' + limit : '')),
   guestsPreview:() => api.get('/admin/guests/preview'),
   promoteGuests:() => api.post('/admin/promote-guests', {}),
+  deleted:      () => api.get('/admin/deleted'),
+  restoreDeleted:(id) => api.post(`/admin/deleted/${id}/restore`),
+  purgeDeleted: (id) => api.del(`/admin/deleted/${id}`),
 };
 
 // Admin-only player ranking + balanced matchmaking. model = 'glicko' | 'whr'.

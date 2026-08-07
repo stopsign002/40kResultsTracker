@@ -12,6 +12,7 @@
 // the difference. Reads as "the picture grew out of the tile" without the
 // fiddliness of a true crop morph.
 import { el } from './components.js';
+import { pushLayer } from './nav-stack.js';
 
 const OPEN_MS = 280;
 const CLOSE_MS = 220;
@@ -33,6 +34,9 @@ export function openLightbox({ items, startIndex = 0, thumbFor }) {
 
   let index = Math.max(0, Math.min(startIndex, items.length - 1));
   let closing = false;
+  // Back closes the viewer instead of leaving the game page — the single most
+  // jarring thing about a full-screen overlay on a phone.
+  let navLayer = null;
 
   const overlay = el('div', {
     class: 'lb-overlay',
@@ -130,28 +134,45 @@ export function openLightbox({ items, startIndex = 0, thumbFor }) {
     });
   }
 
-  function close() {
+  // `closing` latches on the first line, so ANY throw after it used to strand
+  // the overlay permanently: the node stayed in <body> (it isn't inside #app,
+  // so a route re-render doesn't touch it) and every later close() returned
+  // early. That is the "back changed the page but the gallery is still there"
+  // bug. Teardown is now guaranteed regardless of what the zoom maths does.
+  //
+  // `immediate` is for a route change: the thumbnail we'd animate back into has
+  // just been destroyed, so there is nothing to fly towards — go straight out.
+  function close({ immediate = false } = {}) {
     if (closing) return;
     closing = true;
-    document.removeEventListener('keydown', onKey);
-    const end = flipTransform(thumbFor?.(index));
 
     const finish = () => {
       overlay.remove();
       document.body.classList.remove('lb-lock');
-      previouslyFocused?.focus?.();
+      if (!immediate) previouslyFocused?.focus?.();
     };
 
-    if (!end || reduceMotion()) {
+    try {
+      navLayer?.done();
+      document.removeEventListener('keydown', onKey);
+
+      if (immediate) { finish(); return; }
+
+      const end = flipTransform(thumbFor?.(index));
+      if (!end || reduceMotion()) {
+        overlay.classList.remove('is-open');
+        setTimeout(finish, reduceMotion() ? 0 : CLOSE_MS);
+        return;
+      }
+      img.style.transition = `transform ${CLOSE_MS}ms ${EASE}, opacity ${CLOSE_MS}ms ease-in`;
+      img.style.transform = end;
+      img.style.opacity = '0.2';
       overlay.classList.remove('is-open');
-      setTimeout(finish, reduceMotion() ? 0 : CLOSE_MS);
-      return;
+      setTimeout(finish, CLOSE_MS);
+    } catch (err) {
+      console.error('lightbox close failed, removing anyway:', err);
+      finish();
     }
-    img.style.transition = `transform ${CLOSE_MS}ms ${EASE}, opacity ${CLOSE_MS}ms ease-in`;
-    img.style.transform = end;
-    img.style.opacity = '0.2';
-    overlay.classList.remove('is-open');
-    setTimeout(finish, CLOSE_MS);
   }
 
   function onKey(e) {
@@ -191,6 +212,7 @@ export function openLightbox({ items, startIndex = 0, thumbFor }) {
   document.addEventListener('keydown', onKey);
   document.body.classList.add('lb-lock');
   document.body.appendChild(overlay);
+  navLayer = pushLayer((reason) => close({ immediate: reason === 'route' }));
 
   paint();
   // The zoom needs the image's final rect, which only exists once it has

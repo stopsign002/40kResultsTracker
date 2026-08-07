@@ -109,20 +109,38 @@ export function capLabel(raw, cap) {
 
 // Mirrors computeFinalScores() in api/lib/game-scoring.js. Kept in sync by hand;
 // it only drives the live readout, the server value is authoritative.
+// A line-for-line mirror of computeFinalScores in api/lib/game-scoring.js. It
+// is deliberately written the long way rather than reusing sumSecondaryPoints,
+// because the two must agree on the *gate* as well as the arithmetic.
+//
+// It previously gated card-detail on secondaries alone, where the server gates
+// on `cards.length > 0 || chals.length > 0`. A 10e player with a scored Secret
+// Mission and no secondary cards — reachable straight from the 10e form, which
+// renders challenger slots alongside the secondary ones — read 30 on screen and
+// saved as 40. Exactly the drift this file's header warns about.
 export function calcTotal(p, edition) {
+  const is11 = edition === '11';
+  const cards = p.secondaries || [];
+  const chals = is11 ? [] : (p.challengers || []);
+  const hasCardDetail = cards.length > 0 || chals.length > 0;
+  const hasRoundDetail = (p.rounds || []).some(
+    (r) => (r.primaryScore || 0) > 0 || (r.secondaryScore || 0) > 0);
+
+  if (!hasCardDetail && !hasRoundDetail) {
+    const cap = is11 ? E11_PRIMARY_CAP + E11_SECONDARY_CAP : 100;
+    const raw = Math.round(Number(p.finalScore));
+    return Number.isFinite(raw) ? Math.min(cap, Math.max(0, raw)) : 0;
+  }
+
   const primary = sumPrimary(p);
-  const sec = sumSecondaryPoints(p);
-  // Same ladder as computeFinalScores: with nothing broken down, the submitted
-  // total is the record.
-  if (!(p.secondaries || []).length && primary === 0 && sec === 0) {
-    const cap = edition === '11' ? 90 : 100;
-    return Math.min(cap, Math.max(0, parseInt(p.finalScore, 10) || 0));
-  }
-  if (edition === '11') {
-    return Math.min(E11_PRIMARY_CAP, primary) + Math.min(E11_SECONDARY_CAP, sec);
-  }
-  const chal = (p.secondaries || []).length
-    ? (p.challengers || []).reduce((s, c) => s + (c.score || 0), 0)
+  const secTotal = hasCardDetail
+    ? cards.reduce((sum, s) => sum + (s.score || 0), 0)
+    : (p.rounds || []).reduce((sum, r) => sum + (r.secondaryScore || 0), 0);
+  const chalTotal = hasCardDetail
+    ? chals.reduce((sum, c) => sum + (c.score || 0), 0)
     : 0;
-  return Math.min(100, primary + sec + chal);
+
+  return is11
+    ? Math.min(E11_PRIMARY_CAP, primary) + Math.min(E11_SECONDARY_CAP, secTotal)
+    : Math.min(100, primary + secTotal + chalTotal);
 }

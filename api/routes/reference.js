@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../lib/db.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 
@@ -9,7 +10,8 @@ router.get('/factions', async (_req, res) => {
 });
 
 router.get('/factions/:id/detachments', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
+  if (!id) return res.status(400).json({ error: 'bad id' });
   // Union the seeded detachments with any free-text names ever entered for this
   // faction in a game. Once Joe types "Custom Crusade" once, everyone else sees
   // it as an autocomplete suggestion. Reads player_detachments, NOT the joined
@@ -38,7 +40,8 @@ router.get('/mission-packs', async (_req, res) => {
 });
 
 router.get('/mission-packs/:id/details', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = idParam(req.params.id);
+  if (!id) return res.status(400).json({ error: 'bad mission pack id' });
   const [primaries, deployments, rules, secondaries, challengers] = await Promise.all([
     pool.query('SELECT id, name FROM primary_missions WHERE mission_pack_id = $1 ORDER BY name', [id]),
     pool.query('SELECT id, name, image_name, image_thumb_name FROM deployment_maps WHERE mission_pack_id = $1 ORDER BY name', [id]),

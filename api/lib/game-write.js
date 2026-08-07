@@ -119,6 +119,31 @@ async function resolveLookupId(client, table, packId, name) {
   return again.rows[0]?.id ?? null;
 }
 
+/**
+ * Look up a card by name WITHOUT creating it.
+ *
+ * Secondaries deliberately do not auto-insert. The 11e deck is a fixed 18 cards
+ * published by GW, so a name that doesn't match one is almost always a typo —
+ * and auto-inserting put that typo into the shared mission pack, where every
+ * user then saw it in the draw picker with no way to remove it. It also made
+ * pack rows deletable-but-referenced, which turned a routine cleanup into a
+ * foreign-key violation on someone's finished game.
+ *
+ * Nothing is lost by returning null: `player_secondaries.card_name` is
+ * denormalised and is what every view actually displays. The unmatched name is
+ * recorded against that game and stays out of everyone else's deck.
+ */
+async function findCardId(client, table, packId, name) {
+  if (!name || !packId) return null;
+  const trimmed = String(name).trim();
+  if (!trimmed) return null;
+  const found = await client.query(
+    `SELECT id FROM ${table} WHERE mission_pack_id = $1 AND LOWER(name) = LOWER($2) LIMIT 1`,
+    [packId, trimmed]
+  );
+  return found.rows[0]?.id ?? null;
+}
+
 async function resolveCardId(client, table, packId, cardType, name) {
   if (!name || !packId) return null;
   const trimmed = String(name).trim();
@@ -164,8 +189,10 @@ export async function resolveGameLookups(client, b) {
       p.primaryMissionId = await resolveLookupId(client, 'primary_missions', b.missionPackId, p.primaryMissionName);
     }
     for (const s of p.secondaries || []) {
+      // Match-only — see findCardId. An unrecognised secondary is recorded by
+      // name on the game and does NOT join the pack's deck.
       if (!s.cardId && s.cardName) {
-        s.cardId = await resolveCardId(client, 'secondary_cards', b.missionPackId, 'tactical', s.cardName);
+        s.cardId = await findCardId(client, 'secondary_cards', b.missionPackId, s.cardName);
       }
     }
     for (const c of p.challengers || []) {
@@ -260,9 +287,43 @@ export async function insertPlayerChildren(client, gamePlayerId, p) {
  * @param {number|null} actorUserId     goes into games.created_by_user_id
  * @returns {Promise<number>} the new game id
  */
+// A card id stored on a draft can dangle: the pack row it pointed at may have
+// been deleted between the card being drawn and the game being submitted.
+// player_secondaries.card_id is a FK, so that took the whole submit down with
+// an opaque 500 — a game that had been played to the end became unfileable
+// because of a row nobody had touched.
+//
+// The name is the record anyway (card_name is denormalised and is what every
+// view displays), so an id that no longer resolves degrades to name-only.
+// Deliberately run AFTER resolveGameLookups: doing it before would let the
+// name get re-resolved and silently re-create the very pack row that was
+// deleted.
+async function dropDanglingCardIds(client, players) {
+  const targets = [
+    ['secondaries', 'secondary_cards'],
+    ['challengers', 'challenger_cards'],
+  ];
+  for (const [field, table] of targets) {
+    const ids = [...new Set(
+      (players || []).flatMap((p) => (p[field] || []).map((c) => c.cardId)).filter(Boolean)
+    )];
+    if (!ids.length) continue;
+    const { rows } = await client.query(
+      `SELECT id FROM ${table} WHERE id = ANY($1::int[])`, [ids]
+    );
+    const live = new Set(rows.map((r) => r.id));
+    for (const p of players || []) {
+      for (const c of p[field] || []) {
+        if (c.cardId && !live.has(c.cardId)) c.cardId = null;
+      }
+    }
+  }
+}
+
 export async function createGame(client, body, actorUserId) {
   const b = body;
   await resolveGameLookups(client, b);
+  await dropDanglingCardIds(client, b.players);
   // Attach to the currently-active season. NULL is allowed but should
   // only happen for installs that ran with the schema before seasons.
   const activeSeason = await client.query(`SELECT id FROM seasons WHERE is_active = TRUE LIMIT 1`);

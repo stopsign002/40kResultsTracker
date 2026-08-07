@@ -4,6 +4,7 @@ import { pool } from '../lib/db.js';
 import { requireAdmin } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { broadcast } from '../lib/events.js';
+import { idParam } from '../lib/params.js';
 
 const router = Router();
 

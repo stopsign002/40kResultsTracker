@@ -49,7 +49,10 @@ function mergeSeats(baseSeats, seatPatch) {
   const out = Array.isArray(baseSeats) ? baseSeats.slice() : [];
   for (const key of Object.keys(seatPatch)) {
     const index = Number(key);
-    if (!Number.isInteger(index) || index < 0) continue;
+    // A game has exactly two seats. Without the upper bound, a 40-byte patch
+  // with the key "1e7" grew the players array to ten million entries — 618MB
+  // of heap and 30MB of JSONB written to the row, from one authenticated PATCH.
+  if (!Number.isInteger(index) || index < 0 || index > 1) continue;
     while (out.length <= index) out.push({});
     out[index] = mergePatch(out[index], seatPatch[key]);
   }
