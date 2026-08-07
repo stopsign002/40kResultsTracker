@@ -20,6 +20,10 @@ router.post('/login', async (req, res) => {
   req.session.username = u.username;
   req.session.displayName = u.display_name;
   req.session.role = u.role;
+  // Stamped only on a real password auth, not on session resume — a returning
+  // user with a live 30-day cookie never reaches this route.
+  pool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [u.id])
+    .catch((e) => console.error('last_login_at update failed:', e.message));
   await audit(req, 'auth.login', { type: 'user', id: u.id });
   res.json({ id: u.id, username: u.username, displayName: u.display_name, role: u.role });
 });

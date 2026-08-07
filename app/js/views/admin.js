@@ -288,6 +288,24 @@ function formatAuditTime(iso) {
   return d.toISOString().slice(0, 16).replace('T', ' ');
 }
 
+// Relative reads better than a raw stamp when the question is "is this account
+// still in use?". The exact time is on the cell's title attribute.
+function formatLastLogin(iso) {
+  if (!iso) return 'Never';
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return '—';
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.round(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return String(iso).slice(0, 10);
+}
+
 function field(label, control) {
   return el('div', { class: 'form-group' }, [el('label', {}, label), control]);
 }
@@ -299,6 +317,7 @@ function buildUsersTable(users, refresh) {
     el('th', {}, 'Army Name'),
     el('th', {}, 'Role'),
     el('th', {}, 'Active'),
+    el('th', {}, 'Last Login'),
     el('th', {}, 'Created'),
     el('th', {}, ''),
   ]));
@@ -366,6 +385,11 @@ function buildUsersTable(users, refresh) {
       el('td', { class: u.army_name ? '' : 'muted' }, u.army_name || '—'),
       el('td', {}, pill(u.role, u.role === 'admin' ? 'first' : '')),
       el('td', {}, pill(u.is_active ? 'active' : 'inactive', u.is_active ? 'win' : 'loss')),
+      el('td', {
+        class: u.last_login_at ? 'muted' : 'dim',
+        style: { fontSize: '11px', whiteSpace: 'nowrap' },
+        title: u.last_login_at ? new Date(u.last_login_at).toLocaleString() : 'Has never signed in',
+      }, formatLastLogin(u.last_login_at)),
       el('td', { class: 'muted', style: { fontSize: '11px' } }, String(u.created_at).slice(0, 10)),
       el('td', {}, el('div', { class: 'btn-group' }, [toggleActive, promote, editArmy, resetPw])),
     ]);

@@ -600,7 +600,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/stats/warmap-timeline[?season=N]` | public | the season's games in chronological order with enough metadata to label a slider tick: `id`, `played_at`, `p1_name`/`p2_name`, `p1_faction`/`p2_faction`, `p1_result` |
 | GET | `/seasons` | public | every season + games count |
 | POST | `/seasons` | admin | `{ name, mapSeed? }` — closes current, opens new (broadcasts `season.changed`) |
-| GET | `/admin/users` | admin | all users including inactive |
+| GET | `/admin/users` | admin | all users including inactive; includes `last_login_at` |
 | POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
 | PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
 | PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` (broadcasts `game.saved`) |
@@ -628,7 +628,7 @@ Tables (snake_case throughout):
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active, army_name (optional, shown on the war map), prompt_round_photo (BOOLEAN NOT NULL DEFAULT TRUE — the live tracker's between-rounds "snap a photo?" nudge; opt-out from My Profile) |
+| `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active, army_name (optional, shown on the war map), prompt_round_photo (BOOLEAN NOT NULL DEFAULT TRUE — the live tracker's between-rounds "snap a photo?" nudge; opt-out from My Profile), last_login_at (TIMESTAMPTZ, NULL = never — stamped by `POST /auth/login` only, so a returning user on a live 30-day cookie does **not** refresh it; backfilled from `audit_log` `auth.login` rows by seed.sql) |
 | `session` | express-session storage | sid, sess (json), expire — auto-managed by `connect-pg-simple` |
 | `factions` | parent codex factions | id, name (unique), parent_id (nullable, currently unused) |
 | `detachments` | seeded per-faction detachments — autocomplete only; UNIONed with free-text `game_players.detachment_name` from past games. Consumed by `/stats/detachment-winrates`. | id, faction_id, name; UNIQUE (faction_id, name) |

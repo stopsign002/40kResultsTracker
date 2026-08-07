@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS users (
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
   army_name     TEXT,
   prompt_round_photo BOOLEAN NOT NULL DEFAULT TRUE,
+  last_login_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 -- Migration: add army_name if upgrading from earlier schema
@@ -27,6 +28,16 @@ DO $$ BEGIN
     WHERE table_name='users' AND column_name='prompt_round_photo'
   ) THEN
     ALTER TABLE users ADD COLUMN prompt_round_photo BOOLEAN NOT NULL DEFAULT TRUE;
+  END IF;
+END $$;
+-- Migration: when this account last authenticated with a password. Stamped by
+-- POST /auth/login; NULL means never. Backfilled from the audit log in seed.sql.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='users' AND column_name='last_login_at'
+  ) THEN
+    ALTER TABLE users ADD COLUMN last_login_at TIMESTAMPTZ;
   END IF;
 END $$;
 

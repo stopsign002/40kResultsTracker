@@ -12,7 +12,7 @@ router.use(requireAdmin);
 
 router.get('/users', async (_req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, username, display_name, role, is_active, army_name, created_at
+    `SELECT id, username, display_name, role, is_active, army_name, created_at, last_login_at
      FROM users ORDER BY created_at`
   );
   res.json(rows);

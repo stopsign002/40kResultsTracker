@@ -752,3 +752,18 @@ WHERE gp.faction_id IS NOT NULL
 GROUP BY player_key, gp.faction_id
 ON CONFLICT (player_key, faction_id) DO NOTHING;
 
+-- ── Backfill last_login_at from the audit log ──────────────────
+-- audit_log has recorded 'auth.login' with an actor since day one, so the
+-- column ships with real history instead of starting empty. Idempotent by
+-- construction: it only fills NULLs, so a genuine login always outranks the
+-- backfill and the second run matches zero rows.
+UPDATE users u
+SET last_login_at = a.last_login
+FROM (
+  SELECT actor_user_id, MAX(created_at) AS last_login
+    FROM audit_log
+   WHERE action = 'auth.login' AND actor_user_id IS NOT NULL
+   GROUP BY actor_user_id
+) a
+WHERE a.actor_user_id = u.id
+  AND u.last_login_at IS NULL;
