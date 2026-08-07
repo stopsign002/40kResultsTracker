@@ -59,7 +59,7 @@ export async function renderRatings(state) {
         ]),
         el('div', { class: 'form-group' }, [
           el('label', {}, 'Margin of victory'),
-          el('label', { class: 'inline-toggle', style: { display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer', paddingTop: '6px' } }, [
+          el('label', { class: 'inline-toggle' }, [
             movToggle,
             el('span', { class: 'muted', style: { fontSize: '13px' } }, 'blowouts move ratings more'),
           ]),

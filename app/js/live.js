@@ -20,6 +20,11 @@ export function startLiveFeed() {
     try { data = JSON.parse(e.data); } catch {}
     document.dispatchEvent(new CustomEvent('live:game.saved', { detail: data }));
   });
+  es.addEventListener('draft.updated', (e) => {
+    let data = {};
+    try { data = JSON.parse(e.data); } catch {}
+    document.dispatchEvent(new CustomEvent('live:draft.updated', { detail: data }));
+  });
 }
 
 export function isLiveConnected() { return connected; }

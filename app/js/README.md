@@ -1,17 +1,19 @@
 # `app/js/` — frontend modules
 
-Six shared modules + a `views/` directory of per-route render functions. ES modules, no build step. Each script is loaded directly from a `<script type="module">` tag in `index.html`.
+Eight shared modules + a `views/` directory of per-route render functions. ES modules, no build step. Each script is loaded directly from a `<script type="module">` tag in `index.html`.
 
 ## Module roles
 
 | File | Exports | Purpose |
 |---|---|---|
 | `app.js` | (script entry; no exports) | Hash router + shell renderer + nav. Wraps each view in a try/catch error boundary; on failure shows a friendly panel with the stack trace and a Reload button. Calls `startLiveFeed()` on every `route()` pass, signed in or not — it's a no-op once the `EventSource` exists, and the feed is public like the rest of the read surface. |
-| `api.js` | `api`, `auth`, `reference`, `games`, `gameImages`, `mapImages`, `stats`, `admin`, `seasons`, `ratings` | Typed wrapper around `fetch`. All requests `credentials: 'same-origin'`. Throws Errors with `.status`, `.code` (server error code), and `.data` (full response body). Network failures throw with `status: 0`, `code: 'network'`. |
+| `api.js` | `api`, `auth`, `reference`, `games`, `gameImages`, `mapImages`, `drafts`, `draftImages`, `stats`, `admin`, `seasons`, `ratings` | Typed wrapper around `fetch`. All requests `credentials: 'same-origin'`. Throws Errors with `.status`, `.code` (server error code), and `.data` (full response body). Network failures throw with `status: 0`, `code: 'network'`. |
 | `components.js` | `el`, `clear`, `toast`, `pill`, `fmtDate`, `fmtDuration`, `fmtScore`, `selectOptions`, `confirmModal`, `promptModal` | DOM helpers. **Use these — don't template-string HTML.** `el(tag, attrs?, children?)` is the workhorse; `attrs.class`, `attrs.style` (object), `attrs.onClick`. |
 | `lightbox.js` | `openLightbox({ items, startIndex, thumbFor })` | Full-screen photo viewer. Opens with a **FLIP** zoom out of the clicked thumbnail — only `transform`/`opacity` are animated, the two properties the compositor can handle without re-running layout. Cycles with arrows / chevrons / swipe, closes on Esc / backdrop / swipe-down, preloads neighbours, locks body scroll, restores focus, and honours `prefers-reduced-motion`. `thumbFor(index)` is re-queried on close so it zooms back into whichever photo you cycled to. |
 | `zip.js` | `extractImagesFromZip(file)`, `isZipFile(file)` | Dependency-free ZIP reader, because Google Photos hands you a `.zip` for a multi-photo download. Inflates via the browser's `DecompressionStream('deflate-raw')`. Handles STORED + DEFLATE in a classic (non-Zip64) archive; skips directories, `__MACOSX/`, dot-files and non-images, and skips an unreadable entry rather than failing the batch. Importable in plain Node, so it's testable without a browser. |
-| `live.js` | `startLiveFeed`, `stopLiveFeed`, `isLiveConnected` | Singleton `EventSource` connection to `/api/events`. Listens for the SSE `game.saved` event **only** and re-dispatches it as a `live:game.saved` CustomEvent on `document`. (The API also broadcasts `season.changed` from `routes/seasons.js`; nothing on the client subscribes to it yet.) Browser-native retry handles reconnects. |
+| `live.js` | `startLiveFeed`, `stopLiveFeed`, `isLiveConnected` | Singleton `EventSource` connection to `/api/events`. Listens for the SSE `game.saved` and `draft.updated` events and re-dispatches each as a `live:game.saved` / `live:draft.updated` CustomEvent on `document`. (The API also broadcasts `season.changed` from `routes/seasons.js`; nothing on the client subscribes to it yet.) Browser-native retry handles reconnects. |
+| `game-rules.js` | `ROUNDS`, `DEFAULT_EDITION`, `MATCHED_PLAY_LAYOUTS`, `E11_PRIMARY_CAP`, `E11_SECONDARY_CAP`, `FORCE_DISPOSITIONS`, `PRIMARY_MATRIX`, `parseDuration`, `sumPrimary`, `sumSecondaries`, `sumSecondaryPoints`, `capLabel`, `calcTotal` | 40k rules constants + score maths shared by `views/game-form.js` and `views/live-game.js`. **`calcTotal()` must track `computeFinalScores()` in `api/lib/game-scoring.js` exactly** — it is a hand-maintained mirror driving the live readout only; the server value is authoritative. |
+| `images.js` | `shrink(file, maxDim, quality)` | Browser-side downscale → JPEG re-encode, returning `{ dataUrl, width, height }`. `createImageBitmap(file, { imageOrientation: 'from-image' })` is load-bearing (see "Images" below). |
 
 ## Conventions
 
@@ -44,7 +46,7 @@ For new view files, see `views/README.md`.
 ## Images
 
 Photos and terrain-layout pictures are **downscaled in the browser** before
-upload (`shrink()` in `views/game-detail.js`) and posted as base64 data URLs:
+upload (`shrink()` in `images.js`) and posted as base64 data URLs:
 a ~2048px full plus a ~400px thumb. That keeps a native image library out of the
 container and stops a 12MP phone photo crossing the wire whole.
 

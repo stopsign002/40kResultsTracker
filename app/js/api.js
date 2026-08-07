@@ -94,6 +94,29 @@ export const games = {
   update: (id, payload) => api.put(`/games/${id}`, payload),
 };
 
+// In-progress games tracked round-by-round. A draft is shared with the
+// opponent by token until submit() turns it into a real game.
+export const drafts = {
+  list:    ()             => api.get('/drafts'),
+  get:     (id, token)    => api.get(`/drafts/${id}` + (token ? `?token=${encodeURIComponent(token)}` : '')),
+  create:  (payload)      => api.post('/drafts', payload),
+  patch:   (id, body)     => api.patch(`/drafts/${id}`, body),
+  join:    (id, token)    => api.post(`/drafts/${id}/join`, { token }),
+  invite:  (id, userId)   => api.post(`/drafts/${id}/invite`, { userId }),
+  uninvite: (id)          => api.del(`/drafts/${id}/invite`),
+  submit:  (id)           => api.post(`/drafts/${id}/submit`),
+  remove:  (id)           => api.del(`/drafts/${id}`),
+};
+
+// Photos attached to a draft. Same browser-downscaled base64 upload as
+// gameImages; reads are plain /uploads URLs, not API calls.
+export const draftImages = {
+  list:   (draftId)            => api.get(`/drafts/${draftId}/images`),
+  upload: (draftId, body)      => api.post(`/drafts/${draftId}/images`, body),
+  remove: (draftId, imageId)   => api.del(`/drafts/${draftId}/images/${imageId}`),
+  url:    (draftId, fileName)  => `/uploads/drafts/${draftId}/${fileName}`,
+};
+
 export const stats = {
   overview:               (q) => api.get('/stats/overview' + qstr(q)),
   factionWinRates:        (q) => api.get('/stats/faction-winrates' + qstr(q)),

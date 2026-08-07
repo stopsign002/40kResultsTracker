@@ -1,6 +1,7 @@
 import { games, admin, gameImages, mapImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
 import { extractImagesFromZip, isZipFile } from '../zip.js';
+import { shrink } from '../images.js';
 import { el, fmtDate, pill, toast, confirmModal, fmtDuration } from '../components.js';
 
 export async function renderGameDetail(state, gameId) {
@@ -65,29 +66,13 @@ export async function renderGameDetail(state, gameId) {
 }
 
 // Longest edge of the stored full-size image and of the list thumbnail. The
-// browser does the resizing (see shrink()), so the server never needs an image
+// browser does the resizing (see shrink() in images.js), so the server never needs an image
 // library and a 12MP phone photo never crosses the wire at full size.
 // 2048 keeps a photo sharp when opened full-screen; at q0.82 that is typically
 // 400-900KB, well inside the upload route's 12mb body limit.
 const FULL_MAX_PX = 2048;
 const THUMB_MAX_PX = 400;
 const JPEG_QUALITY = 0.82;
-
-// Decode -> downscale -> re-encode as JPEG. `imageOrientation: 'from-image'`
-// matters: without it, portrait phone photos (which carry their rotation in
-// EXIF) come out sideways once re-encoded from a canvas.
-async function shrink(file, maxDim, quality) {
-  const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-  const w = Math.max(1, Math.round(bitmap.width * scale));
-  const h = Math.max(1, Math.round(bitmap.height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
-  bitmap.close?.();
-  return { dataUrl: canvas.toDataURL('image/jpeg', quality), width: w, height: h };
-}
 
 // Picture of the terrain layout this game was played on. It belongs to the
 // layout (deployment_maps row), not the game, so uploading it once makes it
@@ -515,9 +500,23 @@ function buildPlayerCard(p, g) {
     ]),
   ]) : null;
 
-  const armyList = p.army_list_code ? el('div', {}, [
-    el('h3', { style: { marginTop: '14px' } }, 'Army List'),
-    el('pre', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: '11px', background: 'var(--bg)', padding: '8px', borderRadius: '4px' } }, p.army_list_code),
+  // Collapsed by default: a full list is 20+ lines and would push the scoring
+  // breakdown off the screen, but the whole reason it's stored is that GW's app
+  // throws it away, so it has to be one tap from the game.
+  // `overflow-wrap` rather than `break-all` — the pasted text is unit names now,
+  // not base64, and mid-word breaks make it unreadable.
+  const armyList = p.army_list_code ? el('details', { style: { marginTop: '14px' } }, [
+    el('summary', { class: 'detail-summary' }, 'Army List'),
+    el('pre', {
+      tabindex: '0',
+      role: 'region',
+      'aria-label': 'Army list',
+      style: {
+        whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: '12px',
+        background: 'var(--bg)', padding: '10px', borderRadius: '4px',
+        marginTop: '8px', maxHeight: '420px', overflowY: 'auto',
+      },
+    }, p.army_list_code),
   ]) : null;
 
   return el('div', { class: 'player-panel' }, [

@@ -48,7 +48,7 @@ html, body {
   font-family: var(--font);
   font-size: var(--scale-body);
   line-height: 1.45;
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* Subtle hex-grid backdrop */
@@ -64,7 +64,7 @@ body::before {
   background-attachment: fixed;
 }
 
-#app { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+#app { position: relative; z-index: 1; min-height: 100dvh; display: flex; flex-direction: column; }
 
 /* ── Header / Nav ──────────────────────────────────────────── */
 header.topbar {
@@ -144,7 +144,7 @@ main { flex: 1; padding: 24px; max-width: 1400px; width: 100%; margin: 0 auto; }
   color: var(--text-muted);
   font-weight: 600;
 }
-.panel-body { padding: 18px; }
+.panel-body { padding: 18px; overflow-x: auto; }
 
 .card {
   background: var(--card-bg);
@@ -186,12 +186,33 @@ select, textarea {
   transition: border-color .15s ease, background .15s ease;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); background: var(--panel-alt); }
+input:disabled, select:disabled, textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--panel-bg);
+}
 textarea { min-height: 70px; resize: vertical; font-family: var(--font-mono); }
 .form-row { display: grid; gap: 12px; margin-bottom: 14px; }
 .form-row.cols-2 { grid-template-columns: 1fr 1fr; }
 .form-row.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .form-row.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .form-group { display: flex; flex-direction: column; }
+/* Checkbox + text on one row. The wrapping <label> gives implicit association
+   and a full-width hit target; the overrides undo the block/uppercase base
+   `label` rule above, which is meant for field captions. */
+.inline-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin-bottom: 0;
+  cursor: pointer;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+}
+.inline-toggle input[type="checkbox"] { width: 18px; height: 18px; flex-shrink: 0; }
 
 /* ── Buttons ───────────────────────────────────────────────── */
 .btn {
@@ -213,6 +234,7 @@ textarea { min-height: 70px; resize: vertical; font-family: var(--font-mono); }
 .btn:hover { background: var(--card-hover); border-color: var(--accent); color: var(--accent); }
 .btn:active { transform: translateY(1px); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn.primary { background: var(--accent); color: var(--accent-on); border-color: var(--accent); }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-on); }
 .btn.danger { color: var(--danger); border-color: var(--danger); }
@@ -261,7 +283,7 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .pill.win { color: var(--success); border-color: var(--success); }
 .pill.loss { color: var(--danger); border-color: var(--danger); }
 .pill.draw { color: var(--warning); border-color: var(--warning); }
-.pill.hidden { color: var(--text-dim); border-color: var(--border); background: transparent; }
+.pill.is-hidden { color: var(--text-dim); border-color: var(--border); background: transparent; }
 .pill.first { color: var(--info); border-color: var(--info); }
 
 /* ── Login ─────────────────────────────────────────────────── */
@@ -269,7 +291,7 @@ td.tabular { font-variant-numeric: tabular-nums; }
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 100vh;
+  min-height: 100dvh;
   padding: 40px 20px;
 }
 .login-card {
@@ -466,6 +488,10 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .nav-toggle:hover .nav-toggle-caret { color: var(--accent); }
 
 @media (max-width: 700px) {
+  /* 24px gutters plus .panel-body's 18px each side spent 23% of a 360px screen
+     on whitespace before any content. */
+  main { padding: 12px; }
+
   .players-grid { grid-template-columns: 1fr; }
   .form-row.cols-2, .form-row.cols-3, .form-row.cols-4 { grid-template-columns: 1fr; }
 
@@ -569,7 +595,13 @@ td.tabular { font-variant-numeric: tabular-nums; }
 .modal-dialog .modal-body { padding: 18px; color: var(--text); font-size: 14px; line-height: 1.5; }
 .modal-dialog .modal-body label { margin-bottom: 6px; }
 .modal-dialog .modal-body input { width: 100%; }
-.modal-dialog .modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; }
+/* Modal controls are parented to <body>, outside the wizard's own `.lg input`
+   rule, so without this the live tracker's VP prompt — its most-tapped numeric
+   field — sat at 14px and zoomed the viewport on every iOS focus. */
+.modal-dialog .modal-body input,
+.modal-dialog .modal-body select,
+.modal-dialog .modal-body textarea { font-size: 16px; min-height: 44px; }
+.modal-footer { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; }
 
 /* ── Theatre of War tooltip + legend ──────────────────────── */
 .warmap-tooltip {
@@ -623,7 +655,7 @@ td.tabular { font-variant-numeric: tabular-nums; }
   left: 14px;
   z-index: 25;
   max-width: 320px;
-  max-height: 60vh;
+  max-height: 60dvh;
   overflow-y: auto;
   background: rgba(2, 6, 16, 0.96);
   border: 1px solid rgba(120, 220, 255, 0.45);
@@ -803,14 +835,14 @@ body.lb-lock { overflow: hidden; }
 
 .lb-stage {
   max-width: 94vw;
-  max-height: 88vh;
+  max-height: 88dvh;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .lb-img {
   max-width: 94vw;
-  max-height: 88vh;
+  max-height: 88dvh;
   object-fit: contain;
   border-radius: 4px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
@@ -877,7 +909,7 @@ body.lb-lock { overflow: hidden; }
 @media (max-width: 700px) {
   /* No hover on touch, and the chevrons crowd a phone screen — swipe covers it. */
   .lb-prev, .lb-next { display: none; }
-  .lb-img, .lb-stage { max-width: 100vw; max-height: 82vh; }
+  .lb-img, .lb-stage { max-width: 100vw; max-height: 82dvh; }
 }
 
 /* ── Games-list thumbnail hover preview ──────────────────────── */
@@ -941,4 +973,509 @@ body.lb-lock { overflow: hidden; }
   right: 6px;
   background: var(--info);
   color: #14141a;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   Live Game tracker (#/play) — app/js/views/live-game.js
+   ══════════════════════════════════════════════════════════════
+   This is the only touch-first surface in the app: it's used one-handed,
+   standing at a table, mid-game. Hence its own scale — 44px targets and
+   16px inputs throughout, rather than the 31px buttons / 14px inputs the
+   desktop views use. Everything is a real class; do not reach for the
+   `div[style*="grid-template-columns"]` attribute hack the 700px block
+   uses for game-form's inline grids.
+   ────────────────────────────────────────────────────────────── */
+
+/* On desktop the wizard reads as one panel, like every other page — same
+   border/radius/background as .panel, but WITHOUT its `overflow: hidden`,
+   which would kill the sticky footer. The phone breakpoint strips the chrome
+   and goes full-bleed. */
+.lg {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+/* ── Step header ─────────────────────────────────────────────── */
+/* Static by default. It only becomes sticky on phones (see the breakpoint at
+   the end of this block), because the site header is itself sticky at z-50 on
+   desktop and a second sticky bar at top:0 would slide underneath it. A desktop
+   viewport shows a whole round without scrolling anyway. */
+.lg-topbar {
+  background: var(--panel-bg);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: 14px 18px 10px;
+}
+.lg-topline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.lg-step-title {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.10em;
+  margin: 0;
+}
+.lg-scoreline { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+.lg-sc {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lg-sc.is-behind { color: var(--text-muted); }
+.lg-sc-sep { color: var(--text-dim); font-size: 14px; }
+
+/* Round pips — progress indicator AND round jump. They are real <button>s, so
+   they need the UA reset; the bar is drawn in ::before at 4px while the button
+   itself is 20px tall, because a 4px tap target is not a tap target. */
+.lg-progress { display: flex; gap: 6px; }
+.lg-pip {
+  flex: 1;
+  height: 20px;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  border-radius: 2px;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lg-pip::before {
+  content: '';
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background .15s ease;
+}
+.lg-pip.is-done::before { background: var(--text-dim); }
+.lg-pip.is-current::before { background: var(--accent); }
+.lg-pip:disabled { cursor: default; }
+.lg-pip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-pip:hover:not(:disabled)::before { background: var(--text-muted); }
+  .lg-pip.is-current:hover::before { background: var(--accent); }
+}
+
+/* ── Save-status chip ────────────────────────────────────────── */
+.lg-save {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: var(--font-display);
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lg-save::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.lg-save.is-saving  { color: var(--text-muted); }
+.lg-save.is-saved   { color: var(--success); }
+.lg-save.is-offline { color: var(--warning); }
+.lg-save.is-error   { color: var(--danger); }
+
+/* ── Seat switcher (narrow screens only) ─────────────────────── */
+.lg-seat-tabs { display: none; gap: 6px; }
+.lg > .lg-seat-tabs { padding: 14px 18px 0; }
+.lg-body > .lg-seat-tabs { padding: 0 0 12px; }
+.lg-seat-tab {
+  flex: 1;
+  min-height: 44px;
+  font-family: var(--font-display);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--panel-alt);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lg-seat-tab.is-active {
+  background: var(--accent);
+  color: var(--accent-on);
+  border-color: var(--accent);
+}
+.lg-seat-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-seat-tab:not(.is-active):hover {
+    background: var(--card-hover);
+    border-color: var(--border-light);
+    color: var(--text);
+  }
+}
+
+/* ── Body + seat columns ─────────────────────────────────────── */
+/* The footer is sticky, not fixed, so it stays in flow and nothing scrolls
+   underneath it — this only needs breathing room, not clearance. */
+.lg-body { flex: 1; padding: 18px; }
+.lg-seats { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.lg-seat {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.lg-seat.is-readonly { border-style: dashed; }
+/* Hide the CONTROLS, never the values — hiding .lg-stepper left the opponent's
+   seat showing "PRIMARY VP · ROUND 3" over blank space. The card actions and
+   draw button aren't even rendered for a read-only seat; these two are the ones
+   that are. */
+.lg-seat.is-readonly .lg-step-btn,
+.lg-seat.is-readonly .lg-timer-btn { display: none; }
+.lg-seat-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.lg-seat-name {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.lg-seat-faction { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+/* Matches .kpi .value — the app's existing "big number that isn't the headline
+   score" size. (.score-big's 38px is the game-detail headline.) */
+.lg-seat-total {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.lg-seat-split { font-size: 11px; color: var(--text-dim); text-align: right; }
+
+.lg-field { margin-bottom: 14px; }
+.lg-field > label { margin-bottom: 6px; }
+/* .lg-field inside a .form-row would otherwise stack its 14px on the row's own
+   14px and break the vertical rhythm against standalone fields. */
+.form-row > .lg-field { margin-bottom: 0; }
+
+/* Utilities. These exist so the view stops hand-rolling inline flex rows and an
+   11px dim note four times over — the inline-layout habit is what forced the
+   `div[style*="grid-template-columns"]` selector into the 700px block. */
+/* Collapsible section heading — same treatment as the h3s it sits among,
+   without re-declaring the five properties inline. */
+.detail-summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-size: var(--scale-h3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+.lg-grow { flex: 1; min-width: 0; }
+.lg-statusline { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; }
+.lg-inline-row { display: flex; align-items: center; gap: 8px; }
+.lg-det-row { display: flex; gap: 6px; margin-bottom: 6px; }
+
+/* One place for the touch behaviour, rather than three of seven controls. */
+.lg-pip, .lg-seat-tab, .lg-step-btn, .lg-card-btn, .lg-picker-item, .lg-list-item {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lg-seat-tab, .lg-card-btn, .lg-picker-item {
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+/* The house press affordance. On touch it is the only feedback there is —
+   the hover rules above are all behind a (hover: hover) guard. */
+.lg-seat-tab:active, .lg-card-btn:active, .lg-picker-item:active, .lg-list-item:active {
+  transform: translateY(1px);
+}
+/* .btn.small is ~25px: fine in a desktop table row, not on the one surface in
+   the app built for thumbs. */
+.lg .btn.small { min-height: 44px; padding: 5px 12px; }
+
+/* ── ± stepper ───────────────────────────────────────────────── */
+.lg-stepper { display: flex; align-items: stretch; gap: 8px; }
+.lg-step-btn {
+  width: 52px;
+  min-height: 48px;
+  flex-shrink: 0;
+  font-size: 24px;
+  line-height: 1;
+  font-family: var(--font);
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lg-step-btn:active { background: var(--accent); color: var(--accent-on); }
+.lg-step-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.lg-step-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-step-btn:hover:not(:disabled) { background: var(--card-hover); border-color: var(--accent); color: var(--accent); }
+}
+/* `.lg` prefix is load-bearing: the blanket `.lg input[type="number"]` rule at
+   the end of this block has identical specificity and comes later, so without
+   it this loses the tie and the score renders at 16px next to 24px ± glyphs.
+   The max-width stops a 660px-wide box with one digit in it on desktop. */
+.lg .lg-stepper input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  max-width: 180px;
+  min-height: 48px;
+  text-align: center;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+.lg-stepper input[type="number"]::-webkit-outer-spin-button,
+.lg-stepper input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* ── Secondary cards: the hand ───────────────────────────────── */
+.lg-cards { display: flex; flex-direction: column; gap: 6px; }
+.lg-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-height: 48px;
+}
+.lg-card-main { flex: 1; min-width: 0; }
+.lg-card-name { font-size: 14px; overflow-wrap: anywhere; }
+.lg-card-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 2px;
+}
+.lg-card-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.lg-card-btn {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 12px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--card-bg);
+  color: var(--text);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.lg-card-btn.is-score { border-color: var(--success); color: var(--success); }
+.lg-card-btn.is-score:active { background: var(--success); color: var(--bg); }
+.lg-card-btn.is-discard { border-color: var(--border-light); color: var(--text-dim); }
+.lg-card-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-card-btn.is-score:hover { background: var(--success); color: var(--bg); }
+  .lg-card-btn.is-discard:hover { border-color: var(--danger); color: var(--danger); }
+}
+.lg-card.is-scored { border-color: var(--success); opacity: 0.75; }
+.lg-card.is-discarded { opacity: 0.45; }
+.lg-card-vp {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--success);
+  flex-shrink: 0;
+  min-width: 30px;
+  text-align: right;
+}
+.lg-draw {
+  min-height: 48px;
+  width: 100%;
+  justify-content: center;
+  margin-top: 8px;
+}
+.lg-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 10px 0;
+  text-align: center;
+}
+
+/* Card picker inside the modal — a tall scrolling list of tap targets. */
+.lg-picker { max-height: 52dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.lg-picker-item {
+  min-height: 48px;
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 15px;
+  background: var(--panel-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.lg-picker-item:active { background: var(--accent); color: var(--accent-on); }
+.lg-picker-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-picker-item:hover { background: var(--card-hover); border-color: var(--border-light); }
+}
+
+/* ── Round timer ─────────────────────────────────────────────── */
+.lg-timer { display: flex; align-items: center; gap: 10px; }
+.lg-timer-val {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  flex: 1;
+}
+.lg-timer.is-running .lg-timer-val { color: var(--success); }
+.lg-timer-btn { min-height: 44px; min-width: 88px; justify-content: center; }
+
+/* ── Photos ──────────────────────────────────────────────────── */
+.lg-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; }
+.lg-photo {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.lg-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ── Sticky footer nav ───────────────────────────────────────── */
+.lg-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 18px;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel-bg);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+/* Capped, or at 1400px "Next →" is a 640px slab with 14px of text in the
+   middle of it. The label takes the slack. */
+.lg-nav-btn {
+  min-height: 50px;
+  flex: 1;
+  max-width: 260px;
+  justify-content: center;
+  font-size: 14px;
+}
+.lg-nav-btn.is-icon { flex: 0 0 62px; }
+/* Takes the slack between the capped nav buttons, so the row stays balanced at
+   any width instead of the buttons stretching to fill it. */
+.lg-footer-label {
+  flex: 1;
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Draft list (#/play) ─────────────────────────────────────── */
+.lg-list { display: flex; flex-direction: column; gap: 10px; }
+/* Chrome comes from .card; this only adds the row layout. */
+.lg-list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  min-height: 60px;
+}
+.lg-list-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .lg-list-item:hover { background: var(--card-hover); border-color: var(--border-light); }
+}
+.lg-list-main { flex: 1; min-width: 0; }
+.lg-list-title { font-family: var(--font-display); font-size: 15px; overflow-wrap: anywhere; }
+.lg-list-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+
+/* ── Summary ─────────────────────────────────────────────────── */
+.lg-table-wrap { overflow-x: auto; }
+.lg-summary-table { font-size: 13px; }
+.lg-summary-table td, .lg-summary-table th { padding: 8px 10px; }
+.lg-winner {
+  font-family: var(--font-display);
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding: 12px;
+  color: var(--accent);
+}
+
+/* Every control in the wizard is finger-sized, phone or not. */
+.lg input[type="text"], .lg input[type="number"], .lg input[type="date"],
+.lg select, .lg textarea {
+  font-size: 16px;
+  min-height: 44px;
+}
+.lg textarea { min-height: 80px; }
+
+/* Same 700px breakpoint as the rest of the file — a second one 60px away just
+   creates a band where this block has collapsed and the shared .form-row rules
+   have not. */
+@media (max-width: 700px) {
+  /* Full-bleed on phones only. On a desktop the wizard sits in the same gutters
+     as every other page. The view adds `live-game-mode` to <body> on mount and
+     MUST remove it on teardown. */
+  body.live-game-mode main { padding: 0; max-width: none; }
+  .lg { border: none; border-radius: 0; box-shadow: none; background: none; }
+  .lg-topbar { position: sticky; top: 0; z-index: 40; border-radius: 0; }
+  .lg-footer { border-radius: 0; }
+
+  /* One seat at a time, chosen by the tab strip — stacking both would put
+     the second player's controls a full screen-scroll away mid-turn. */
+  .lg-seat-tabs { display: flex; }
+  .lg-seats { grid-template-columns: 1fr; }
+  .lg-seat.is-inactive { display: none; }
+  .lg-step-title { font-size: 16px; }
+  .lg-sc { font-size: 20px; }
+  .lg-seat-total { font-size: 28px; }
+  /* The footer is the full width of a phone; capping it strands the buttons. */
+  .lg-nav-btn { max-width: none; }
+
+  /* Tighter shells on a phone, and — because the wizard is edge-to-edge here —
+     the horizontal safe-area insets, or a notch eats the first control in
+     landscape. The bottom inset is already on .lg-footer. */
+  .lg-topbar {
+    padding: calc(10px + env(safe-area-inset-top, 0px)) max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left));
+  }
+  .lg-body {
+    padding: 12px max(12px, env(safe-area-inset-right)) 16px max(12px, env(safe-area-inset-left));
+  }
+  .lg-footer {
+    padding: 10px max(14px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left));
+  }
+  .lg > .lg-seat-tabs { padding: 10px 14px 0; }
 }

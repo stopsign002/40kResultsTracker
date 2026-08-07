@@ -50,12 +50,41 @@ export async function renderProfile(state) {
         el('div', { class: 'form-group' }, [
           el('label', {}, 'Army Name'),
           armyInput,
-          el('div', { class: 'muted', style: { fontSize: '11px', marginTop: '4px' } },
+          el('div', { class: 'hint' },
             'Shown on the Theatre of War map for every faction you play. Leave blank to fall back to your display name.'),
         ]),
       ]),
       errEl,
       saveBtn,
+    ]),
+  ]));
+
+  // Live-game preference. Some people want the nudge between rounds because a
+  // board photo is exactly the thing that slips the mind; others find it
+  // intrusive. Off here means the prompt never fires — the round screen keeps
+  // its own upload button either way.
+  const photoToggle = el('input', { type: 'checkbox' });
+  photoToggle.checked = me.promptRoundPhoto !== false;
+  photoToggle.addEventListener('change', async () => {
+    try {
+      const updated = await auth.updateMe({ promptRoundPhoto: photoToggle.checked });
+      if (state.user) state.user.promptRoundPhoto = updated.promptRoundPhoto;
+      toast(photoToggle.checked ? 'Photo prompts on' : 'Photo prompts off');
+    } catch (e) {
+      photoToggle.checked = !photoToggle.checked;
+      toast(e.message || 'Failed to save', 'error');
+    }
+  });
+
+  root.appendChild(el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, el('h2', {}, 'Live Game')),
+    el('div', { class: 'panel-body' }, [
+      el('div', { class: 'form-group' }, [
+        el('label', {}, 'Photo prompts'),
+        el('label', { class: 'inline-toggle' }, [photoToggle, 'Ask me to snap a board photo between rounds']),
+      ]),
+      el('div', { class: 'hint' },
+        'You can always add photos from the round screen, whether this is on or off.'),
     ]),
   ]));
 

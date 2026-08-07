@@ -17,9 +17,9 @@ Vanilla HTML/CSS/JS. **No build step**, no framework, no bundler. Caddy serves t
 2. `app.js` resolves the current hash, calls `auth.me()` to check the session, then dispatches to the matching view.
 3. The view fetches its data via `api.js` and returns a single root DOM node.
 4. `app.js` swaps that node into `<main>`.
-5. SSE feed (`live.js`) opens once; views can subscribe to `'live:game.saved'` on `document` for live refresh.
+5. SSE feed (`live.js`) opens once; views can subscribe to `'live:game.saved'` or `'live:draft.updated'` on `document` for live refresh.
 
-There is no service worker, no localStorage other than the new-game draft, no IndexedDB, no router library.
+There is no service worker, no IndexedDB, no router library. localStorage holds exactly two things, and they must stay distinct or the "Restore unsaved game?" prompt cross-contaminates: `tg40k:newGameDraft` (`views/game-form.js`, one in-flight new game, written only on a structural rerender) and `tg40k:liveDraft:<id>` (`views/live-game.js`, written on every mutation as the offline backstop, and cleared as soon as the server has the change — so its presence on load means this device holds edits the server never got).
 
 ## Conventions
 

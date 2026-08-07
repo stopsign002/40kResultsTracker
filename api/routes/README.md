@@ -15,6 +15,7 @@ Each file exports a `Router()` mounted from `api/server.js`. The full endpoint c
 | `reference.js` | `/reference` | `requireAuth` | factions, per-faction detachments (UNION of seeded + free-text from past games), mission packs, mission details, users, distinct player names |
 | `events.js` | `/events` | `requireAuth` | SSE long-poll. Heartbeat every 25s; emits `game.saved`, `season.changed` |
 | `seasons.js` | `/seasons` | mixed (`GET` auth, `POST` admin) | list seasons, start a new season (closes current, generates new map seed) |
+| `drafts.js` | `/drafts` | **per-route** (`GET /:id` also accepts `?token=`) | **live game tracker** — in-progress games ("drafts") in their own `game_drafts` table. Create / list / autosave-PATCH / invite / join / submit / delete plus mid-game photos under `UPLOAD_DIR/drafts/<id>/`. A draft is NOT a result: it never reaches `/games`, `/stats`, `/ratings` or the war map until `POST /:id/submit` runs it through `lib/game-write.js#createGame` (11e only) and moves its photos onto the new game. |
 | `ratings.js` | `/ratings` | `requireAdmin` (top-level) | **admin-only** Glicko-2 player ranking: leaderboard, balanced matchmaking (`/suggest`), per-player rating history. Computed on the fly via `lib/ratings.js`; no tables. |
 
 ## Quirks worth knowing
@@ -30,6 +31,14 @@ Each file exports a `Router()` mounted from `api/server.js`. The full endpoint c
   parser so they can parse themselves at 12mb. If you add another upload
   endpoint, add it to that pattern or it will silently reject anything over
   256kb. See CLAUDE.md "Game photos → Body limits".
+- **`drafts.js` writes are scoped, not just authenticated.** The draft *owner*
+  may patch anything; an invited *opponent* may patch only `patch.players["1"]`
+  — see `lib/README.md` "The draft patch shape". `PATCH /drafts/:id` takes a
+  `SELECT … FOR UPDATE` inside `withTx` so two phones autosaving at once
+  serialise instead of clobbering each other.
+- **`draft.updated` SSE events carry no draft content.** `GET /events` is public
+  and unfiltered, so the payload is only `{ id, rev, by }` — enough for the other
+  phone to decide to re-read, and useless to an eavesdropper.
 - **`games.js` reads are public.** The comment at the top of the file is the
   authority, not the auth table in older docs: unauthenticated visitors can
   browse games and photos; only writes call `requireAuth` inline.

@@ -15,6 +15,8 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 | `whr.js` | `fitGlobal(games)` | **Whole-history** rating: a global Bayesian Bradley-Terry MAP fit over all games at once (retroactive — evidence flows both directions). Prior regularises undefeated players and pins disconnected groups; returns `{rating, rd}` per player on the same ~1500 scale as glicko. Each game may carry a weight `w` (default 1) scaling its evidence + information — used for recency decay. Tested in `test/whr.test.js`. No DB, no deps. |
 | `ratings.js` | `computeRatings(opts)`, `balancedPairings`, `outcomeScore`, `displayRating`, `displayFloor`, `displayConfidence`, `MOV_FULL` | Turns the game record into all-time ratings under either model (`opts.model = 'glicko'|'whr'`): shared parse + connectivity, then `runGlicko` (per-day forward batches, elapsed-time RD decay) or `runWHR` (refit the graph at each game-date, **recency-weighted** via `recencyWeight`/`RECENCY_HALF_LIFE_DAYS`). `displayFloor` (rating − K·RD) is the confidence-adjusted **ranking key**. `db.js` imported lazily so pure helpers test without `pg`. Tunables (`MOV_FULL`, `PERIOD_DAYS`, `RANK_FLOOR_K`, `RECENCY_HALF_LIFE_DAYS`, display scale, provisional thresholds) at the top. |
 | `adopt-guest.js` | `previewGuests()`, `promoteAllGuests(client)` | Promotes free-text guests into real **inactive** user accounts (or links to existing ones), then migrates `banner_first_seen` so the war map stays put. Idempotent + transactional (pass a `withTx` client). Backs `/admin/guests/preview` + `/admin/promote-guests`. |
+| `game-write.js` | `createGame(client, body, actorUserId)`, `resolvePlayerIdentities`, `resolveGameLookups`, `insertPlayerChildren`, `recordBannerFirstSeen`, `detachmentList`, `joinDetachments`, `notifyGameLogged`, `FORCE_DISPOSITIONS` | The single INSERT path into `games` + `game_players` + children, shared by `POST /games` and `POST /drafts/:id/submit`. Call `createGame` inside `withTx`. The caller keeps the surrounding pipeline (validate → `resolvePlayerIdentities` → `computeFinalScores` → `resolvePlayerTimes` before; `audit` → `broadcast` → `notifyGameLogged` after). `PUT /games/:id` keeps its own delete-then-reinsert body but shares these helpers. |
+| `draft.js` | `mergePatch`, `mergeDraftPatch`, `opponentSeatPatch`, `normalizeDraftRounds`, `validateDraftSubmit` | Pure helpers behind `routes/drafts.js`. `mergeDraftPatch` is the autosave merge: objects merge key by key, **arrays replace wholesale**, `null` is a value — except `players`, which a patch addresses as an object keyed by seat index and which merges seat-by-seat (see below). `normalizeDraftRounds` forces round numbers inside 1–5 before they hit the DB CHECK. Tested in `test/draft-merge.test.js` + `test/draft-submit.test.js`. |
 | `game-filter.js` | `COUNTED_GAMES`, `INCLUDE_DIGITAL_IN_STATS` | The single "counts toward competitive surfaces" SQL gate (drop-in where the `games` table is aliased `g`), used by `ratings.js`, `warmap.js`, `stats.js`. Includes digital (Tabletop Simulator) games by default; env `INCLUDE_DIGITAL_IN_STATS=false` excludes them everywhere at once. With it on, it equals the legacy `g.hidden_from_stats = FALSE` byte-for-byte. |
 
 ## Conventions
@@ -23,6 +25,16 @@ Pure-JS modules used by `routes/*`. Every file has `// @ts-check` at the top and
 - **Side-effect-free where possible.** `game-scoring.js` is the model: no DB, no env, no `req`/`res`. Easier to test, easier to reuse.
 - **Transactions:** use `withTx(async (client) => {...})` and pass `client` to inner queries. Don't BEGIN/COMMIT manually.
 - **Audit + broadcast** are paired: when a write-path endpoint changes state, both fire (audit for posterity, broadcast for live UI).
+
+## The draft patch shape (`draft.js`)
+
+A draft payload holds `players` as an **array** of two seats. A PATCH body
+addresses them as an **object keyed by seat index** (`{ players: { "0": …, "1": … } }`).
+That asymmetry is deliberate: wholesale array replacement is right for
+`rounds` / `secondaries` / `detachments` (an element merge would resurrect a
+deleted entry) and wrong for `players`, where one phone patching its own seat
+would wipe the seat it never sent. `opponentSeatPatch` enforces the invited
+opponent's scope — a lone `players["1"]` and nothing else.
 
 ## The detail ladder (`game-scoring.js`)
 

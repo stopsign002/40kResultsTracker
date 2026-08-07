@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
   army_name     TEXT,
+  prompt_round_photo BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 -- Migration: add army_name if upgrading from earlier schema
@@ -17,6 +18,15 @@ DO $$ BEGIN
     WHERE table_name='users' AND column_name='army_name'
   ) THEN
     ALTER TABLE users ADD COLUMN army_name TEXT;
+  END IF;
+END $$;
+-- Migration: the live game tracker offers a photo prompt between rounds; opt-out per user
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='users' AND column_name='prompt_round_photo'
+  ) THEN
+    ALTER TABLE users ADD COLUMN prompt_round_photo BOOLEAN NOT NULL DEFAULT TRUE;
   END IF;
 END $$;
 
@@ -442,3 +452,42 @@ SELECT
 FROM game_players gp
 JOIN games g ON g.id = gp.game_id
 JOIN game_players opp ON opp.game_id = gp.game_id AND opp.seat <> gp.seat;
+
+-- ── Live game tracker ─────────────────────────────────────────
+-- In-progress games ("drafts"). Deliberately a separate table from `games`:
+-- a draft is not a result, so it must never reach /stats, /ratings or the war
+-- map. It only becomes a game when the owner submits, at which point
+-- submitted_game_id points at the row it produced and the draft is retired.
+CREATE TABLE IF NOT EXISTS game_drafts (
+  id                SERIAL PRIMARY KEY,
+  owner_user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  opponent_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  share_token       TEXT NOT NULL UNIQUE,
+  payload           JSONB NOT NULL,
+  current_step      TEXT NOT NULL DEFAULT 'setup',
+  rev               INTEGER NOT NULL DEFAULT 0,
+  submitted_game_id INTEGER REFERENCES games(id) ON DELETE SET NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_drafts_owner
+  ON game_drafts(owner_user_id) WHERE submitted_game_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_game_drafts_opponent
+  ON game_drafts(opponent_user_id) WHERE submitted_game_id IS NULL;
+
+-- Photos taken mid-game. Bytes live under UPLOAD_DIR/drafts/<draft_id>/ and are
+-- moved into UPLOAD_DIR/<game_id>/ (with a matching game_images row) on submit.
+CREATE TABLE IF NOT EXISTS game_draft_images (
+  id                  SERIAL PRIMARY KEY,
+  draft_id            INTEGER NOT NULL REFERENCES game_drafts(id) ON DELETE CASCADE,
+  uploaded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  file_name           TEXT NOT NULL,
+  thumb_name          TEXT,
+  caption             TEXT,
+  round_number        INTEGER CHECK (round_number BETWEEN 1 AND 5),
+  width               INTEGER,
+  height              INTEGER,
+  bytes               INTEGER,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_game_draft_images_draft ON game_draft_images(draft_id);

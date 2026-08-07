@@ -11,6 +11,7 @@ import { renderAdmin } from './views/admin.js';
 import { renderPlayer } from './views/player.js';
 import { renderProfile } from './views/profile.js';
 import { renderRatings } from './views/ratings.js';
+import { renderLiveGame } from './views/live-game.js';
 
 const root = document.getElementById('app');
 
@@ -22,6 +23,8 @@ const routes = [
   { match: /^\/$/,                   handler: () => renderWarmap(state) },
   { match: /^\/war$/,                handler: () => renderWarmap(state) },
   { match: /^\/games$/,              handler: () => renderGamesList(state) },
+  { match: /^\/play$/,               handler: () => renderLiveGame(state, null),                requireAuth: true },
+  { match: /^\/play\/(\d+)$/,        handler: (m) => renderLiveGame(state, parseInt(m[1], 10)), requireAuth: true },
   { match: /^\/games\/new$/,         handler: () => renderGameForm(state, null),               requireAuth: true },
   { match: /^\/games\/(\d+)\/edit$/, handler: (m) => renderGameForm(state, parseInt(m[1], 10)), requireAuth: true },
   { match: /^\/games\/(\d+)$/,       handler: (m) => renderGameDetail(state, parseInt(m[1], 10)) },
@@ -55,6 +58,7 @@ function renderShell(viewNode) {
     { href: '/games', label: 'Games' },
     { href: '/stats', label: 'Stats' },
   ];
+  if (state.user) linkDefs.push({ href: '/play', label: 'Live Game' });
   if (state.user) linkDefs.push({ href: '/games/new', label: 'New Game' });
   if (state.user?.role === 'admin') linkDefs.push({ href: '/rankings', label: 'Rankings' });
   if (state.user?.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });

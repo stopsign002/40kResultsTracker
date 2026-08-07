@@ -29,12 +29,12 @@ export const UPLOAD_DIR = process.env.UPLOAD_DIR || '/data/uploads';
 // arbitrary blob onto the disk. The tighter of the two limits is the route's
 // 12mb JSON body cap below: base64 inflates by ~33%, so an 8MB image arrives as
 // ~10.7MB of payload and only just fits.
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_PER_GAME = 40;
 const ALLOWED = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
 
 /** Decode a `data:image/jpeg;base64,...` URL into a buffer + extension. */
-function decodeDataUrl(dataUrl) {
+export function decodeDataUrl(dataUrl) {
   if (typeof dataUrl !== 'string') throw Object.assign(new Error('image data required'), { status: 400 });
   const m = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl);
   if (!m) throw Object.assign(new Error('expected a base64 data URL'), { status: 400 });
@@ -52,7 +52,7 @@ function gameDir(gameId) {
 
 // Best-effort unlink: a missing file must not block the DB row from going away,
 // or a half-failed upload would be undeletable through the UI.
-async function unlinkQuiet(p) {
+export async function unlinkQuiet(p) {
   try { await fs.unlink(p); } catch { /* already gone */ }
 }
 

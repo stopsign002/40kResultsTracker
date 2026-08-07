@@ -509,7 +509,7 @@ function buildTable(list) {
         g.play_medium === 'digital' ? ' ' : null,
         g.play_medium === 'digital' ? pill('Digital', '') : null,
         g.hidden_from_stats ? ' ' : null,
-        g.hidden_from_stats ? pill('Hidden', 'hidden') : null,
+        g.hidden_from_stats ? pill('Hidden', 'is-hidden') : null,
       ].filter(Boolean)),
       el('td', {}, el('a', { class: 'btn small', href: '#/games/' + g.id, onClick: (e) => e.stopPropagation() }, 'View')),
     ]);

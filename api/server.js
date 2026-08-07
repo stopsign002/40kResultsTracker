@@ -14,6 +14,7 @@ import warmapRoutes from './routes/warmap.js';
 import eventsRoutes from './routes/events.js';
 import seasonsRoutes from './routes/seasons.js';
 import ratingsRoutes from './routes/ratings.js';
+import draftRoutes from './routes/drafts.js';
 
 const PgSession = connectPgSimple(session);
 const app = express();
@@ -24,7 +25,7 @@ app.set('trust proxy', 1);
 // reject the body with a 413 before the route's own parser ever saw it — so
 // that one path is skipped here and parses itself (see routes/images.js).
 const jsonBody = express.json({ limit: '256kb' });
-const IMAGE_UPLOAD_PATH = /^\/(?:games\/\d+\/images|maps\/\d+\/image)\/?$/;
+const IMAGE_UPLOAD_PATH = /^\/(?:games\/\d+\/images|maps\/\d+\/image|drafts\/\d+\/images)\/?$/;
 app.use((req, res, next) => {
   if (req.method === 'POST' && IMAGE_UPLOAD_PATH.test(req.path)) return next();
   return jsonBody(req, res, next);
@@ -69,6 +70,7 @@ app.use('/stats', warmapRoutes);
 app.use('/events', eventsRoutes);
 app.use('/seasons', seasonsRoutes);
 app.use('/ratings', ratingsRoutes);
+app.use('/drafts', draftRoutes);
 
 // Standard error response shape: { error: <message>, code?: <string> }.
 // Status code carries the category; message is human-readable.

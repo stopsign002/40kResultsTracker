@@ -751,3 +751,4 @@ JOIN games g ON g.id = gp.game_id AND g.hidden_from_stats = FALSE
 WHERE gp.faction_id IS NOT NULL
 GROUP BY player_key, gp.faction_id
 ON CONFLICT (player_key, faction_id) DO NOTHING;
+

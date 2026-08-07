@@ -32,41 +32,44 @@ router.get('/me', async (req, res) => {
   if (!req.session?.userId) return res.status(401).json({ error: 'unauthorized' });
   // Pull fresh fields (army_name) rather than relying on stale session
   const { rows } = await pool.query(
-    'SELECT id, username, display_name, role, army_name FROM users WHERE id = $1',
+    'SELECT id, username, display_name, role, army_name, prompt_round_photo FROM users WHERE id = $1',
     [req.session.userId]
   );
   if (!rows[0]) return res.status(401).json({ error: 'unauthorized' });
-  const u = rows[0];
-  res.json({
+  res.json(publicUser(rows[0]));
+});
+
+function publicUser(u) {
+  return {
     id: u.id,
     username: u.username,
     displayName: u.display_name,
     role: u.role,
     armyName: u.army_name,
-  });
-});
+    promptRoundPhoto: u.prompt_round_photo,
+  };
+}
 
 // Self-serve update of profile fields the user can edit themselves.
-// Currently just army_name; extendable to display_name, etc.
+// army_name plus the live tracker's between-rounds photo prompt.
 router.patch('/me', requireAuth, async (req, res) => {
-  const { armyName } = req.body || {};
+  const { armyName, promptRoundPhoto } = req.body || {};
   if (armyName !== undefined && typeof armyName !== 'string') {
     return res.status(400).json({ error: 'armyName must be a string' });
   }
   const { rows } = await pool.query(
-    `UPDATE users SET army_name = $1 WHERE id = $2
-     RETURNING id, username, display_name, role, army_name`,
-    [armyName ? armyName.trim() || null : null, req.session.userId]
+    `UPDATE users SET army_name = $1,
+                      prompt_round_photo = COALESCE($2, prompt_round_photo)
+      WHERE id = $3
+     RETURNING id, username, display_name, role, army_name, prompt_round_photo`,
+    [
+      armyName ? armyName.trim() || null : null,
+      typeof promptRoundPhoto === 'boolean' ? promptRoundPhoto : null,
+      req.session.userId,
+    ]
   );
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
-  const u = rows[0];
-  res.json({
-    id: u.id,
-    username: u.username,
-    displayName: u.display_name,
-    role: u.role,
-    armyName: u.army_name,
-  });
+  res.json(publicUser(rows[0]));
 });
 
 router.post('/change-password', requireAuth, async (req, res) => {
