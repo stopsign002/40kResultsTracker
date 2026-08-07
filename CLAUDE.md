@@ -8,7 +8,9 @@ This file is auto-loaded by Claude Code into every session. It is the single sou
 
 Multi-user Warhammer 40,000 game-results tracker (10th and 11th edition — each game carries an `edition` flag; new games default to 11e). Friends log matches (mission, factions, per-round scoring, secondaries, challenger cards), browse a filterable game list, view a stats dashboard, and stake territory on a seeded "Theatre of War" galaxy map. Hosted at **https://40k.thewheeliebois.com** as a Docker stack alongside other thewheeliebois.com sites. See `DEPLOY.md` for infra/deploy steps.
 
-There are **two ways in**. `/games/new` is the one-page form for a game that's already over (and the only path for a 10e game). `#/play` is the **live tracker** — a mobile-first Setup → Round 1..5 → Summary wizard you drive *during* an 11e game, autosaving to a server-side draft, optionally co-edited by your opponent on their own phone, and filed as a normal game by one Submit at the end. See "Live game tracker" below.
+There are **two ways in**. `/games/new` is the one-page form for a game that's already over (and the only path for a 10e game). `#/play` is the **live tracker** — a mobile-first Setup → Round 1..5 → Summary wizard you drive *during* an 11e game, autosaving to a server-side draft, optionally co-edited by your opponent on their own phone, watchable by anyone else as a read-only spectator, and filed as a normal game by one Submit at the end. See "Live game tracker" below.
+
+Deletion is **recoverable**: removing a game or a live game archives it into a recycle bin an admin can restore from. See "Restorable deletes".
 
 ---
 
@@ -34,7 +36,9 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
 │                           and the optional MAILER_URL / MAILER_TOKEN pair)
 ├── scripts/
 │   ├── README.md           per-script doc
-│   └── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
+│   ├── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
+│   ├── test-unit.sh        the unit suite — no network, no DB, no container
+│   └── test-live.sh        the integration suite — needs the API + real Postgres up
 ├── api/
 │   ├── README.md           service overview + npm scripts (start, test, typecheck)
 │   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
@@ -52,7 +56,14 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
 │   ├── lib/                helpers — see api/lib/README.md
 │   │   ├── db.js           pg pool + withTx() generic
 │   │   ├── auth.js         bcrypt helpers, requireAuth / requireAdmin middleware
-│   │   ├── audit.js        fire-and-forget audit log writer
+│   │   ├── async-routes.js catchAsync(router) + installRejectionGuard() — the
+│   │   │                   reason an async throw no longer kills the process
+│   │   ├── params.js       idParam / intParam — id parsing that respects the pg
+│   │   │                   32-bit integer ceiling
+│   │   ├── archive.js      the recycle bin: archiveGame / archiveDraft /
+│   │   │                   restoreItem / purgeItem / removeArchivedFiles
+│   │   ├── audit.js        fire-and-forget audit log writer — NEVER hand it a
+│   │   │                   raw request body; see "Security posture"
 │   │   ├── events.js       in-process SSE broadcaster (subs Set + broadcast())
 │   │   ├── game-scoring.js computeFinalScores + resolvePlayerTimes + validateGameInput (pure, tested)
 │   │   ├── game-write.js   the ONE INSERT path into games/game_players/children —
@@ -74,7 +85,8 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
 │   │                       no-ops unless MAILER_URL + MAILER_TOKEN are set
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
-│   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete, audit log
+│   │   ├── admin.js        /admin/* — user CRUD, game visibility, game delete,
+│   │   │                   the recycle bin (/admin/deleted*), guests, audit log
 │   │   ├── games.js        /games/* — list/get (PUBLIC) + create/update (auth);
 │   │   │                   the write helpers now live in lib/game-write.js
 │   │   ├── drafts.js       /drafts/* — LIVE GAME TRACKER: in-progress games in their own
@@ -96,17 +108,28 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
 │   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
 │   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
-│   └── test/
+│   └── test/                see "Testing" — 156 unit + 122 integration
 │       ├── README.md       how to run + what's covered
-│       ├── game-scoring.test.js  11 cases pinning the camelCase payload contract
-│       ├── glicko2.test.js       pins Glicko-2 math to Glickman's worked example
-│       ├── ratings.test.js       margin-of-victory + display mapping + balanced pairing
-│       ├── whr.test.js           whole-history fit: transitivity, bounded undefeated, uncertainty
-│       ├── game-filter.test.js   COUNTED_GAMES SQL shape with digital on/off
-│       ├── draft-merge.test.js   the autosave merge: arrays replace, null is a value,
+│       ├── game-scoring.test.js  38 cases pinning the camelCase payload contract
+│       ├── game-rules.test.js    34 — the client mirror, cross-checked payload-by-payload
+│       │                         against the server's computeFinalScores
+│       ├── army-list.test.js     24 — YAAB decoding off real round-tripped codes,
+│       │                         plus a format-drift canary that reads yaab's storage.js
+│       ├── draft-merge.test.js   16 — the autosave merge: arrays replace, null is a value,
 │       │                         seat-keyed players patch, opponent scope rejection
-│       └── draft-submit.test.js  validateDraftSubmit messages + round-number sanitising
-│                                 + the 11e 45/45 halves surviving the submit path
+│       ├── draft-submit.test.js  15 — validateDraftSubmit messages + round-number sanitising
+│       │                         + the 11e 45/45 halves surviving the submit path
+│       ├── nav-stack.test.js     12 — back-button layering, against a fake History
+│       ├── whr.test.js           8 — whole-history fit: transitivity, bounded undefeated
+│       ├── glicko2.test.js       4 — pins Glicko-2 math to Glickman's worked example
+│       ├── ratings.test.js       4 — margin-of-victory + display mapping + balanced pairing
+│       ├── game-filter.test.js   1 — COUNTED_GAMES SQL shape with digital on/off
+│       └── integration/          ⚠ runs against the LIVE API and the REAL database
+│           ├── _harness.js               login/fixtures/cleanup — read its comments first
+│           ├── drafts-permissions.test.js 70 — every seat × every route
+│           ├── drafts-lifecycle.test.js   30 — create → autosave → submit → photos
+│           ├── deleted-items.test.js      19 — archive / restore / purge, incl. the FK scrub
+│           └── zz-residue.test.js         3 — runs LAST; fails the build on leaked test data
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
     ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
@@ -127,6 +150,8 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
         │                   the browser-side downscale every upload path goes through
         ├── army-list.js    decodes YAAB army-list share codes (YAAB1:…) — zero deps,
         │                   DecompressionStream('deflate-raw') + atob
+        ├── nav-stack.js    back-button support for overlays and wizard steps —
+        │                   pushLayer(onPop) / layer.done(); see "Back-button handling"
         ├── live.js         singleton EventSource on /api/events → 'live:game.saved' and
         │                   'live:draft.updated' CustomEvents on document
         ├── lightbox.js     full-screen photo viewer; FLIP zoom + cycle + swipe
@@ -141,7 +166,8 @@ There are **two ways in**. `/games/new` is the one-page form for a game that's a
             │                      mobile-first, server-side draft, SSE co-editing
             ├── stats.js           KPIs + Chart.js charts; matchup heatmap; calendar; trends
             ├── warmap.js          ⚠ Theatre of War canvas — DO NOT TOUCH constants (see invariants)
-            ├── admin.js           user management, audit log, seasons, guest-account promotion, change-own-password
+            ├── admin.js           user management, audit log, seasons, guest-account promotion,
+            │                      Deleted Items (the recycle bin), change-own-password
             ├── ratings.js         ⚠ ADMIN-ONLY /rankings — Glicko-2 leaderboard + balanced matchmaker
             ├── player.js          per-player profile (overview + per-faction + streaks)
             └── profile.js         self-serve "My Profile" — army_name, change password,
@@ -167,7 +193,8 @@ These are load-bearing. Changing any of them silently breaks production.
 | The two localStorage draft keys are distinct | `game-form.js` vs `live-game.js` | `tg40k:newGameDraft` (the `/games/new` form's restore prompt) and `tg40k:liveDraft:<id>` (the live tracker's per-draft offline mirror) are separate namespaces on purpose. Merge or rename them and the "Restore unsaved game?" prompt on `/games/new` starts offering half-played live games. |
 | Existing games are 10e | `schema.sql` edition migration | Every game logged before the `edition` column existed was 10th edition. The migration adds the column with `DEFAULT '10'` **and then** flips the default to `'11'` — so the backfill lands on 10e and only new rows get 11e. Don't "simplify" that to a single `DEFAULT '11'`; it would silently re-label the entire back catalogue. |
 | No public signup | `routes/auth.js` (no register endpoint) | Admin creates all accounts via `POST /admin/users`. Login page must not have a "Sign up" link. |
-| No game deletion **from `/games`** | `routes/games.js` (no DELETE) | Hiding is the normal move — `PATCH /admin/games/:id/visibility { hidden: true }` — because results are meant to be permanent. A hard delete does exist, but only as an admin escape hatch on the *admin* router (`DELETE /admin/games/:id`, which also unlinks the photo files). Don't add a DELETE to `games.js`. |
+| No game deletion **from `/games`** | `routes/games.js` (no DELETE) | Hiding is the normal move — `PATCH /admin/games/:id/visibility { hidden: true }` — because results are meant to be permanent. Deletion exists only as an admin escape hatch on the *admin* router (`DELETE /admin/games/:id`), and it now **archives into `deleted_items`** rather than destroying anything. Don't add a DELETE to `games.js`. |
+| Deletes **archive rows out**, they don't set a flag | `lib/archive.js`, `deleted_items` | The obvious design is `games.deleted_at` + `WHERE deleted_at IS NULL`. It would need gating **~20 queries** across the 13 endpoints in `stats.js`, `warmap.js`, `ratings.js`, the games list — and `v_game_player_stats`, which (see "View") already can't express the digital filter. Miss one and a deleted game leaks back into the stats or the war map, silently and permanently. Archiving the row-set *out* of the live tables means **nothing that reads `games` has to learn about deletion at all**. Don't "simplify" it back into a soft-delete column. |
 | Bootstrap admin only when users table is empty | `lib/auth.js` `ensureBootstrapAdmin()` | After first run, `ADMIN_PASSWORD` env var is ignored. To recover, INSERT directly via psql. |
 
 ---
@@ -326,24 +353,48 @@ consumer** (`POST /drafts/:id/images`, which parses itself at 12mb inside
 `routes/drafts.js`), so the trap is live again for whatever gets added third.
 **Any size-limit test needs a realistically-sized payload.**
 
+### 12. An async handler that throws used to kill the container
+
+Express 4 doesn't await handlers and Node 22 exits on an unhandled rejection, so
+for a while `POST /auth/login {"username":"admin","password":{}}` — no session
+needed — took the whole site down. `catchAsync()` (applied to every mount) and
+`installRejectionGuard()` now cover it, but the habit still matters:
+
+- **Register routes inside the route module.** `catchAsync` walks the stack once,
+  at mount time; anything added to a router afterwards is unwrapped.
+- **Parse ids with `idParam` / `intParam` from `lib/params.js`**, not `parseInt`.
+  `parseInt('abc')` is `NaN` (pg `22P02`) and `Number.isInteger(1e20)` is `true`
+  while Postgres `integer` stops at 2147483647 (pg `22003`). `stats.js`,
+  `warmap.js` and `seasons.js` haven't been converted yet.
+- **Never hand a raw request body to `audit()`.** Build the payload explicitly.
+  Doing otherwise put plaintext passwords in `audit_log`, on screen in the admin
+  panel, and in every offsite backup.
+
+Full write-up in "Security posture".
+
 ---
 
 ## Backend architecture
 
 ### Boot sequence (`api/server.js`)
 
+0. **`installRejectionGuard()`** — the very first statement in the file, before
+   the app object exists. See "Security posture"; without it a single async
+   throw took the whole container down.
 1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`, table `session`, cookie **`tg40k.sid`**, `httpOnly` + `sameSite: 'lax'`, `secure` only when `NODE_ENV === 'production'`, 30-day `maxAge`). `app.set('trust proxy', 1)` — Caddy is in front.
-2. Apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min)
-3. `initSchema()` — runs `schema.sql` then `seed.sql` (both idempotent)
-4. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin
-5. Mount `/health`, `/auth`, `/admin`, `/maps` (images.js's `mapRouter`), `/games` (twice — `images.js` **before** `games.js`), `/stats` (twice — once for `stats.js`, once for `warmap.js`), `/reference`, `/events`, `/seasons`, `/ratings`, `/drafts`
+2. Register **`/health`** inline, then apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min). It's the only limiter on the app.
+3. Mount every router, each wrapped in **`catchAsync()`**: `/auth`, `/admin`, `/maps` (images.js's `mapRouter`), `/games` (twice — `images.js` **before** `games.js`), `/stats`, `/reference`, `/stats` again (warmap.js), `/events`, `/seasons`, `/ratings`, `/drafts`
 
    **`/drafts` is a top-level mount, not `/games/drafts`.** `games.js` has a
    `router.get('/:id')`, which would swallow `/games/drafts` as a game id and
    return an opaque 404 (or worse, a NaN query). Keeping drafts off the `/games`
    prefix also mirrors the invariant: a draft is not a game.
-6. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`. It special-cases 413 / `entity.too.large` into a human "that file is too large to upload" with `code: 'too_large'`
-7. `app.listen(PORT)`
+
+   `catchAsync` **rewrites the router's handler stack in place, at mount time**,
+   so a handler registered on a router *after* it is mounted is not wrapped.
+   Register routes in the route module, never from outside it.
+4. Top-level error handler emits the uniform `{ error, code? }` body with status from `err.status`. Messages are replaced with `'internal error'` for any status ≥ 500, so a pg error's text never reaches a client. It special-cases 413 / `entity.too.large` into a human "that file is too large to upload" with `code: 'too_large'`
+5. Then, inside an async IIFE: `initSchema()` (runs `schema.sql` then `seed.sql`, both idempotent) → `ensureBootstrapAdmin()` (if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin) → `app.listen(PORT)`. A failure here is the one deliberate `process.exit(1)` in the codebase — a box that can't migrate its schema must not serve traffic.
 
 Steps 1–2 also install the split body parser: `express.json({ limit: '256kb' })`
 runs app-wide **except** on paths matching `IMAGE_UPLOAD_PATH`
@@ -359,11 +410,16 @@ reached — see pitfall #11.
 `reference.js`, `events.js` and `GET /seasons` have **no** auth gate at all — an
 anonymous visitor can browse the whole site — and `images.js`, `auth.js`,
 `seasons.js` and `drafts.js` apply `requireAuth` / `requireAdmin` per route.
-`drafts.js` is the one module where per-route isn't enough: a session gets you
-in the door, but the handler then has to establish *which seat you are* (see
-"Live game tracker"). Don't add a
+`drafts.js` is the one module where per-route isn't enough: its three GETs
+(`/`, `/:id`, `/:id/images`) are **ungated like the rest of the site's reads**,
+and on the write routes a session only gets you in the door — the handler then
+has to establish *which seat you are* (see "Live game tracker"). Don't add a
 blanket `router.use(requireAuth)` to a read module: it would silently take the
 site private. The template below is for a module that *should* be gated.
+
+Whatever the module does about auth, `server.js` wraps it in `catchAsync()` at
+mount time, so a handler may `throw` / reject freely and the top-level error
+handler will shape the response — see "Security posture".
 
 A gated `routes/*.js` looks like:
 
@@ -397,6 +453,11 @@ There are now **two** callers that create a game — `POST /games` and
 - Also here: `resolvePlayerIdentities`, `resolveGameLookups`,
   `recordBannerFirstSeen`, `detachmentList` / `joinDetachments`,
   `notifyGameLogged`, `FORCE_DISPOSITIONS`.
+- Two card-id helpers, and the difference between them is load-bearing:
+  **`findCardId`** (match-only, used for secondaries) never inserts, whereas
+  **`resolveCardId`** (challengers) does. **`dropDanglingCardIds`** runs *after*
+  `resolveGameLookups` and degrades an unresolvable id to name-only. All three
+  are explained in "Security posture".
 
 `createGame` deliberately does **not** own the surrounding pipeline. Each caller
 keeps `validate… → resolvePlayerIdentities → computeFinalScores →
@@ -510,6 +571,79 @@ apart. Extend these rather than re-implementing in a view:
   photos, zip batches).
 - **`army-list.js`** — YAAB share-code decoding; see "Army lists" below.
 
+### Back-button handling (`app/js/nav-stack.js`)
+
+The app is hash-routed, so back moves between **routes**. Anything layered on top
+of a route — the photo viewer, a modal, the live wizard's draw picker, a wizard
+step — is invisible to history, so back skipped straight past it and left the
+page. On a phone that reads as the app throwing you out.
+
+```js
+const layer = pushLayer((reason) => teardown());   // the BACK path
+function close() { teardown(); layer.done(); }     // the own-means path
+```
+
+`teardown()` **must be idempotent** — both paths reach it. `reason` is
+`'popstate'` (back) or `'route'` (a hash change tore the view down anyway).
+
+**One sentinel, not one entry per layer.** The invariant is: *while any layer is
+open, exactly one sentinel history entry sits above the route entry.* Back
+consumes it, the top layer closes, and `arm()` puts it back if layers remain.
+
+The obvious design — a history entry per layer, matched by id in `history.state` —
+was tried and is worse in one specific, miserable-to-reproduce way: if a
+`pushState` silently doesn't take (WebKit rate-limits them), back falls through to
+the previous **route**, so a single press closes the overlay *and* navigates away
+underneath it. One `pushState` per overlay session also keeps us clear of that
+rate limit entirely. `arm()` swallows a failed push: the layer still works, it
+just doesn't answer back that time.
+
+`disarm()` uses `history.back()` on an entry pushed **with no url**, so it fires
+`popstate` but not `hashchange` — the route is untouched.
+
+Two more things it does:
+
+- **A route change sweeps orphans.** Overlays are appended to `<body>`, not
+  `#app`, so a route re-render doesn't remove them. On `hashchange` every layer
+  is popped with reason `'route'` and `sweepOrphans()` removes any stray
+  `.lb-overlay` / `.modal-overlay` and drops `lb-lock` from `<body>`. Add new
+  overlay class names to that selector.
+- **It is importable outside a browser** (`hasDom` guard), because the unit
+  tests import `components.js`, and a bare `window.addEventListener` at module
+  scope would throw before a single assertion ran.
+
+Consumers: `components.js` (`confirmModal` / `promptModal` — back = cancel),
+`lightbox.js` (the photo viewer, the only caller that reads `reason`), and
+`live-game.js` twice (wizard step navigation, and the draw picker). Pinned by
+`nav-stack.test.js` against a fake `History`.
+
+### The stats dashboard on a phone
+
+`/stats` used to scroll sideways. The cause is worth remembering because it will
+recur: **a grid item's default `min-width: auto` is its min-content width**, so a
+single wide table inside a `.stat-card` widened the whole grid track and gave the
+*page* a horizontal scrollbar. `.stat-card` has neither of the `overflow` rules
+that `.panel` / `.panel-body` carry, so nothing contained it.
+
+- `.stats-grid > * { min-width: 0 }` breaks the propagation; anything genuinely
+  wider than its card scrolls **inside its own `.stats-scroll` wrapper**
+  (`tableScroll()` in `stats.js`).
+- Charts are sized from CSS (`.stats-chart`, `.is-tall`) with
+  `maintainAspectRatio: false` on every Chart.js instance. Without it an 18-bar
+  chart is ~14px per bar on a phone — unreadable and untappable. Row-driven
+  heights come from `rowChartHeight()`.
+- The **29×29 matchup matrix** renders twice and CSS picks: the grid above 700px,
+  a faction-picker `<select>` + tappable row list below it. 29 columns of 28px
+  cells whose only affordance is a `title` tooltip is not a thing a touch device
+  can read or hit.
+- **Calendar days select rather than navigate.** Tapping a lit day shows a
+  readout with a separate "View games" button. A 11px cell is far too easy to
+  hit by accident to make it a navigation.
+- The `.stat-card[style*="grid-column"]` attribute-selector hack is **gone** —
+  it's a real `.stats-span` class now. The surviving
+  `div[style*="grid-template-columns"]` rules reach into `game-form.js`'s inline
+  grids and are the pattern *not* to propagate (see "CSS" under the live tracker).
+
 ### `api.js` shape
 
 Always extend the right export object — never call `fetch` directly from a view:
@@ -528,7 +662,8 @@ export const stats     = { overview, factionWinRates, playerWinRates, factionMis
                             firstTurnImpact, secondaryAverages, warmap, warmapTimeline,
                             detachmentWinRates, trends, player, calendar };
 export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit,
-                            guestsPreview, promoteGuests };
+                            guestsPreview, promoteGuests,
+                            deleted, restoreDeleted, purgeDeleted };   // the recycle bin
 export const seasons   = { list, start };
 export const ratings   = { leaderboard, suggest, history };   // admin-only
 ```
@@ -569,16 +704,16 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only. Responds **201**. Server-side caps: `MAX_IMAGE_BYTES` 8MB **decoded** (413), `MAX_PER_GAME` 40 photos (409), MIME must be jpeg/png/webp (415) |
 | PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string, isMap?: boolean }` — each flag is clear-then-set, because the partial unique index rejects a second winner while the old one is still flagged |
 | DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
-| GET | `/drafts` | auth | my in-progress drafts — `owner_user_id = me OR opponent_user_id = me`, `submitted_game_id IS NULL`, newest `updated_at` first. Each row carries enough to render a list card: `isOwner`, `viewerSeat`, `playedAt`, `pointsLimit`, `playerNames[]`, `playerFactionIds[]` |
+| GET | `/drafts` | **public** | **every** in-progress game, not just yours — `submitted_at IS NULL`, yours sorted first, then newest `updated_at`. A game nobody can find is a game nobody can watch. Each row carries enough to render a list card: `isOwner`, `viewerSeat`, `playedAt`, `pointsLimit`, `playerNames[]`, `playerFactionIds[]` |
 | POST | `/drafts` | auth | body **is** the initial payload, stored verbatim as JSONB → `{ id, shareToken, rev }`. Responds **201** |
-| GET | `/drafts/:id` | owner/opponent session **or** `?token=<share_token>` | the full draft + `images[]`, plus computed `viewerSeat` (1 = owner, 2 = opponent, else null) and `isOwner`. `share_token` is returned to the **owner only**. The only route in `drafts.js` with no `requireAuth` — 401 for an anonymous caller with no/blank token, 403 for a logged-in non-participant |
+| GET | `/drafts/:id` | **public** | the full draft + `images[]`, plus computed `viewerSeat` (1 = owner, 2 = opponent, `null` = spectator) and `isOwner`. `share_token` is returned to the **owner only** — it is the join credential. Reads are public like games/stats/the war map; writing is what's gated |
 | PATCH | `/drafts/:id` | auth, **seat-scoped** | the autosave endpoint. `{ baseRev, clientId, patch, currentStep }` → `{ rev, stale }`. Read-merge-write under `SELECT … FOR UPDATE` in `withTx`. 403 if an invited opponent tries to write anything but their own seat; 409 once submitted. Broadcasts `draft.updated`. See "Live game tracker" |
 | POST | `/drafts/:id/invite` | owner | `{ userId }` → `{ ok: true, opponentUserId }`. 400 self / non-integer, 404 unknown or inactive user, 409 someone already joined |
 | DELETE | `/drafts/:id/invite` | owner | clears the opponent back to null → `{ ok: true, opponentUserId: null }` |
 | POST | `/drafts/:id/join` | auth + `{ token }` | claim the opponent seat via a share link → `{ id, viewerSeat: 2, isOwner: false, rev }`. Idempotent for the current opponent; 409 if someone else got there first; 400 if you own it |
 | POST | `/drafts/:id/submit` | owner | file the draft as a real game → `{ gameId }`. Forces `edition: '11'`. 409 if already submitted, 400 with a player-facing message from `validateDraftSubmit` |
-| DELETE | `/drafts/:id` | owner | discard; also unlinks the `UPLOAD_DIR/drafts/<id>/` photo folder |
-| GET | `/drafts/:id/images` | owner or opponent | `[{ id, file_name, thumb_name, caption, round_number, width, height, uploaded_by_name }]` |
+| DELETE | `/drafts/:id` | owner **or admin** | discard — **archived into `deleted_items`**, and the `UPLOAD_DIR/drafts/<id>/` photo folder is deliberately left on disk so a restore comes back with its pictures. The one place admin *is* a bypass, so abandoned games can be cleared out |
+| GET | `/drafts/:id/images` | **public** | `[{ id, file_name, thumb_name, caption, round_number, width, height, uploaded_by_name }]` |
 | POST | `/drafts/:id/images` | owner or opponent | same base64 contract as `POST /games/:id/images` (12mb body limit on this route only, same `MAX_IMAGE_BYTES` / MIME caps, 40 photos per draft). Takes an optional `roundNumber` so a shot lands on the round it was taken in. Responds **201**; 409 once submitted |
 | DELETE | `/drafts/:id/images/:imageId` | uploader or draft owner | unlinks both files |
 | POST | `/maps/:id/image` | auth | `{ dataUrl, thumbDataUrl? }` — picture of a terrain layout (a `deployment_maps` row), shown on every game played on it. Replacing unlinks the previous pair |
@@ -604,7 +739,10 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | POST | `/admin/users` | admin | `{ username, displayName, password, role, armyName? }` |
 | PATCH | `/admin/users/:id` | admin | `{ displayName?, role?, isActive?, password?, armyName? }` |
 | PATCH | `/admin/games/:id/visibility` | admin | `{ hidden: bool }` (broadcasts `game.saved`) |
-| DELETE | `/admin/games/:id` | admin | hard delete; cascades to rounds/secondaries/challengers (broadcasts `game.saved`) |
+| DELETE | `/admin/games/:id` | admin | **archives into `deleted_items`** and hard-deletes the originals (children cascade). Photo files are deliberately **left on disk** so a restore comes back with its pictures (broadcasts `game.saved` with `action: 'delete'`). See "Restorable deletes" |
+| GET | `/admin/deleted` | admin | the recycle bin, newest first: `[{ id, kind, original_id, label, deleted_by_name, deleted_at, canRestore }]`. `canRestore` is false when the original id is occupied in the live table again — the re-insert would collide on the primary key |
+| POST | `/admin/deleted/:id/restore` | admin | re-insert the archived row-set → `{ ok, kind, restoredId, repaired }`. `repaired` lists what the FK scrub had to change (see "Restorable deletes"). Broadcasts `game.saved` or `draft.updated` |
+| DELETE | `/admin/deleted/:id` | admin | **permanent.** Drops the bin row and unlinks the photo bytes — the only path that touches the files |
 | GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at; `limit` is capped at 500 |
 | GET | `/admin/guests/preview` | admin | read-only: which guests a promotion run would `create` vs `link` |
 | POST | `/admin/promote-guests` | admin | promote all unlinked guests to inactive accounts (idempotent, war-map-safe) |
@@ -613,7 +751,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
 | GET | `/events` | public | Server-Sent Events stream; emits `game.saved`, `season.changed`, `draft.updated`. Comment heartbeat every 25s. The subscriber records `req.session?.userId` when there is one, but a session is **not** required — anonymous viewers get live updates too, which is exactly why `draft.updated` carries **no draft content**, only `{ id, rev, by }` |
 
-**Total: 63 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
+**Total: 66 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
 
 ```bash
 grep -hE "(router|mapRouter)\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
@@ -647,9 +785,10 @@ Tables (snake_case throughout):
 | `player_detachments` | a player's detachments; 11e allows more than one. **Source of truth** — `game_players.detachment_name` is the derived display string | id, game_player_id (CASCADE), detachment_id (nullable), detachment_name, sort_order |
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at, anchor_x + anchor_y (REAL, nullable — the banner's own map anchor; NULL falls back to `FACTION_HOMES`); PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
-| `game_drafts` | **in-progress games** for the live tracker. Deliberately NOT a row in `games` — see the invariant table. Retired, not deleted, on submit: `submitted_game_id` is stamped and the row stays. | id, owner_user_id (FK users CASCADE), opponent_user_id (FK users SET NULL — the invited second phone), share_token (TEXT UNIQUE, the join link), **payload (JSONB)** — exactly the camelCase shape `serializeDraft()` produces in `game-form.js`, so submit is a straight hand-off — current_step (TEXT, `'setup'` \| `'round1'`..`'round5'` \| `'summary'`; plain TEXT, no CHECK), rev (INTEGER, bumped on every accepted PATCH), submitted_game_id (FK games SET NULL), created_at, updated_at. Two **partial** indexes on owner / opponent `WHERE submitted_game_id IS NULL` — the only query that matters is "my open games" |
+| `game_drafts` | **in-progress games** for the live tracker. Deliberately NOT a row in `games` — see the invariant table. Retired, not deleted, on submit: `submitted_at` is stamped and the row stays. | id, owner_user_id (FK users CASCADE), opponent_user_id (FK users SET NULL — the invited second phone), share_token (TEXT UNIQUE, the join link), **payload (JSONB)** — exactly the camelCase shape `serializeDraft()` produces in `game-form.js`, so submit is a straight hand-off — current_step (TEXT, `'setup'` \| `'round1'`..`'round5'` \| `'summary'`; plain TEXT, no CHECK), rev (INTEGER, bumped on every accepted PATCH), **submitted_at** (TIMESTAMPTZ, NULL = still in progress — this and *not* `submitted_game_id` is what "finished" means), submitted_game_id (FK games **SET NULL** — a pointer for navigation only; it goes NULL if the resulting game is later hard-deleted, which is exactly why the lifecycle flag had to be separated from it), **started_notified_at** (TIMESTAMPTZ, NULL = not yet announced — the once-only guard for the "game started" email; see "Live game tracker"), created_at, updated_at. Two **partial** indexes on owner / opponent `WHERE submitted_at IS NULL` |
 | `game_draft_images` | photos taken mid-game; same bytes-on-disk rule as `game_images`, under `UPLOAD_DIR/drafts/<draft_id>/`. On submit the files are `fs.rename`d into `UPLOAD_DIR/<game_id>/` and re-created as `game_images` rows | id, draft_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, round_number (nullable, CHECK 1-5 — which battle round the shot belongs to), width, height, bytes, created_at |
-| `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB. | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
+| `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB — **never** the raw request body; see "Recycle bin and the audit log" | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
+| `deleted_items` | **the recycle bin.** One row per deleted game or draft, holding the whole row-set as JSON so it can be re-inserted verbatim. Lives at the very bottom of `schema.sql`. | id, kind (TEXT CHECK IN `'game'`/`'draft'`), original_id, label (what the admin panel shows), **payload (JSONB)** — `{version:1, tables:[{name, rows:[…]}]}` in dependency order — deleted_by_user_id (FK users SET NULL), deleted_by_name, deleted_at; **UNIQUE (kind, original_id)** so the same id can't be banked twice. Index on `deleted_at DESC` |
 
 ### View
 
@@ -684,15 +823,19 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | Log in | ✓ | ✓ | ✓ | `POST /auth/login` (rate-limited) |
 | View games / stats / war map / player profiles / photos | ✓ | ✓ | ✓ | **Nothing** — `games.js`, `stats.js`, `warmap.js`, `reference.js`, `events.js`, `GET /seasons` and `GET /games/:id/images` have no auth gate. Reads are public by design; `app.js` renders every non-flagged route for `state.user === null` |
 | Create / edit games | – | ✓ | ✓ | `requireAuth` inline on `POST /games` + `PUT /games/:id`; client-side, the `/games/new` and `/games/:id/edit` routes carry `requireAuth: true` and the "New Game" nav link only renders with a session |
-| Start / list a live game | – | ✓ | ✓ | `requireAuth` on `GET`+`POST /drafts`; the `/play` and `/play/:id` routes carry `requireAuth: true` and the **Live Game** nav link only renders with a session. `GET /drafts` is scoped to drafts you own or were invited to — there is no "all drafts" endpoint, not even for admins |
-| Read a live game in progress | – | seat or link | seat or link | `GET /drafts/:id` — owner, invited opponent, **or** anyone holding `?token=<share_token>`. The token is the whole point (you send it to your opponent), so treat it as a bearer credential: it reads the full payload. `share_token` itself is only echoed back to the owner. 401 anon without a valid token, 403 logged-in non-participant |
-| Edit a live game | – | **scoped** | **scoped** | `PATCH /drafts/:id`. The **owner may patch anything**. An invited **opponent may send only** `{ patch: { players: { "1": … } } }` — any other top-level key, a `"0"` seat, or a `currentStep` is 403. So the opponent scores their own side and their screen follows the owner's round; they can't rewrite your scores or move the game on |
-| Invite / uninvite an opponent, submit, discard a live game | – | owner only | owner only | `POST`+`DELETE /drafts/:id/invite`, `POST /drafts/:id/submit`, `DELETE /drafts/:id`. Admin is **not** a bypass here — these check `owner_user_id`, not `role` |
+| Start a live game | – | ✓ | ✓ | `requireAuth` on `POST /drafts`; the `/play` and `/play/:id` client routes carry `requireAuth: true` and the **Live Game** nav link only renders with a session |
+| List live games | ✓ | ✓ | ✓ | `GET /drafts` is public and returns **everyone's** in-progress games, yours first. Each row carries `owner_name` so you can see whose game it is |
+| Watch a live game | ✓ | ✓ | ✓ | `GET /drafts/:id` is public. A viewer with no seat is a **spectator**: `viewerSeat: null`, the client renders read-only and follows the owner's round over SSE. `share_token` is echoed only to the owner — it is the credential for *claiming the second seat*, not for reading. Note the **client** routes `/play` and `/play/:id` still carry `requireAuth: true`, so in practice a spectator is a signed-in user with no seat; the API being public is what makes a share link work without one |
+| Edit a live game | – | **scoped** | **scoped** | `PATCH /drafts/:id`. The **owner may patch anything**. An invited **opponent may send only** `{ patch: { players: { "1": … } } }` — any other top-level key, a `"0"` seat, or a `currentStep` is 403. So the opponent scores their own side; they can't rewrite your scores or move the game on. Seat indexes are bounded to 0–1 — see "Security posture" |
+| Invite / uninvite an opponent, submit a live game | – | owner only | owner only | `POST`+`DELETE /drafts/:id/invite`, `POST /drafts/:id/submit`. Admin is **not** a bypass on these — they check `owner_user_id`, not `role` |
+| Delete a live game | – | own only | **any** | `DELETE /drafts/:id` — owner, or any admin clearing out an abandoned game |
 | Join a live game as the opponent | – | ✓ + token | ✓ + token | `POST /drafts/:id/join` with the share `token`. 409 once someone else has the seat |
 | Upload / delete a mid-game photo | – | seat only | seat only | `POST`+`GET /drafts/:id/images` for either seat; `DELETE` for the uploader **or** the draft owner |
 | Edit own profile (army_name, photo prompt, password) | – | ✓ | ✓ | `PATCH /auth/me` + `POST /auth/change-password`; the "My Profile" link in the header session row routes to `/profile` |
 | Hide game from stats | – | – | ✓ | `requireAdmin` on `PATCH /admin/games/:id/visibility`; the **Hide** button in `game-detail.js` is conditionally rendered for admins only |
-| Delete a game | – | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation |
+| Delete a game | – | – | ✓ | `requireAdmin` on `DELETE /admin/games/:id`; admin-only red **Delete** button on game-detail with `confirmModal` confirmation. **Recoverable** — it archives into `deleted_items` |
+| Restore a deleted game / live game | – | – | ✓ | `requireAdmin` on `POST /admin/deleted/:id/restore`; Admin → Deleted Items panel |
+| Permanently erase a deleted item | – | – | ✓ | `requireAdmin` on `DELETE /admin/deleted/:id`. **The only action in the app that destroys data** — and the only one that unlinks photo bytes |
 | Manage users | – | – | ✓ | `requireAdmin` on `/admin/users*`; the **Admin** nav link in `app.js` only renders if `state.user.role === 'admin'` |
 | Manage seasons (start new) | – | – | ✓ | `requireAdmin` on `POST /seasons`; lives in the Admin → Seasons panel |
 | Promote guests to accounts | – | – | ✓ | `requireAdmin` on `/admin/guests/preview` + `POST /admin/promote-guests`; Admin → Guest Accounts panel |
@@ -705,6 +848,202 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | Upload / clear a terrain-layout picture | – | ✓ | ✓ | `requireAuth` on `POST`/`DELETE /maps/:id/image`. It belongs to the layout, so it changes what **every** game on that layout shows |
 
 Server enforcement is the source of truth; client gating is a UX convenience only.
+
+---
+
+## Restorable deletes — the recycle bin (`api/lib/archive.js`)
+
+Deleting a game or a live game no longer destroys it. The whole row-set is
+serialised into `deleted_items`, the originals are hard-deleted, and an admin can
+put it back from **Admin → Deleted Items**. Only `DELETE /admin/deleted/:id`
+actually erases anything.
+
+### Why it archives rows out instead of setting a `deleted_at` flag
+
+This is the design decision to understand before touching any of it. A
+soft-delete column on `games` is the obvious shape and it is the wrong one here:
+**~20 queries** would need a new `AND g.deleted_at IS NULL`, spread across the 13
+endpoints in `stats.js`, `warmap.js` + `warmap-timeline`, `ratings.js`, the games
+list and `v_game_player_stats` — the view that (see "View") already can't express
+the digital filter, so it couldn't express this one either. Miss a single query
+and a deleted game leaks silently back into the stats or onto the war map, where
+nobody will notice for weeks.
+
+Archiving the rows *out* means **nothing that reads `games` has to learn about
+deletion at all**. The cost is moved to one file that does one job. Keep it that
+way.
+
+### The payload
+
+`{ version: 1, tables: [{ name, rows: [...] }] }`, tables in **dependency order**
+(parents first) so a restore can insert them straight down the list:
+
+| kind | tables |
+|---|---|
+| `game` | `games`, `game_players`, `game_rounds`, `player_secondaries`, `player_challengers`, `player_detachments`, `game_images` |
+| `draft` | `game_drafts`, `game_draft_images` |
+
+Rows are captured with **`row_to_json(t)`, not the driver's row objects**. That
+matters: `row_to_json` renders a DATE as `'2026-07-19'` and a TIMESTAMPTZ with an
+explicit offset, so a round-trip through JSONB can't shift a `played_at` a day
+either way depending on the session timezone. A game archived on one restart and
+restored after another must come back on the same date.
+
+A game's payload also carries `links.submittedDrafts` — the `game_drafts` rows
+that pointed at it — so restore can re-point their `submitted_game_id`.
+
+### Restore
+
+`restoreItem` re-inserts every row **with its original primary key**, then resyncs
+each SERIAL:
+
+```sql
+SELECT setval(pg_get_serial_sequence('<table>', 'id'),
+               GREATEST((SELECT COALESCE(MAX(id), 1) FROM <table>), 1))
+```
+
+Preserving ids is what keeps `/games/123` links, `banner_first_seen` and audit
+rows meaningful. It also means a restore can become **impossible**: if something
+else has since taken that id, `GET /admin/deleted` reports `canRestore: false`
+and the endpoint 409s rather than colliding.
+
+Columns the table no longer has are dropped on the way in (so a column added by a
+later migration restores at its default), and `json`/`jsonb` values are
+`JSON.stringify`ed before binding — node-pg would otherwise render a plain array
+as a Postgres array literal.
+
+### The FK scrub — why a restore can come back *changed*
+
+An item can sit in the bin while the things it referred to are deleted. The scrub
+runs **before any INSERT** and reports what it had to do:
+
+| Situation | What happens |
+|---|---|
+| Nullable FK whose target is gone (`mission_pack_id`, `faction_id`, `card_id`, `season_id`, `uploaded_by_user_id`, …) | set to `NULL`, counted in `repaired.droppedRefs` (card ids also in `droppedCardIds` — the name is denormalised, so the card still displays) |
+| NOT-NULL owner whose account is gone (`games.created_by_user_id`, `game_drafts.owner_user_id`) | falls back to the **restoring admin**, else the lowest-id admin. `repaired.reassignedOwner`. With no users left at all it 409s rather than guess |
+| A `game_players` seat whose `user_id` is gone **and** which has no `guest_name` | demoted to `guest_name = "Deleted player #<old user id>"`, counted in `repaired.orphanedPlayers` |
+
+That last one is the subtle one. `game_players.user_id` is in the *nullable* list,
+so nulling it is the natural move — but `CHECK (user_id IS NOT NULL OR guest_name
+IS NOT NULL)` would then turn an FK violation into a CHECK violation, i.e. the
+same failed restore with a worse error message. The demotion is what makes the
+seat legal again.
+
+`repaired` is returned by the endpoint, written to the audit log, and **surfaced
+to the admin** — a game comes back behind a "Restored, with changes" dialog
+listing what moved, a draft behind a toast. Restoring a subtly different game
+silently would be worse than failing.
+
+### Photo bytes
+
+`DELETE /admin/games/:id` and `DELETE /drafts/:id` **deliberately leave the files
+on disk**. Unlinking there would make a restore come back with no pictures, which
+is not a restore. `removeArchivedFiles` — called by `DELETE /admin/deleted/:id`,
+*after* the transaction commits and only when the id isn't occupied — is the sole
+unlink path. A leftover file is recoverable; a row with no files is not.
+
+**If you add a third deletion path, call `archiveGame`/`archiveDraft`, not `DELETE
+FROM`,** and do not unlink anything.
+
+---
+
+## Security posture
+
+A three-part audit ran over this codebase. What it found, what was fixed, and
+what is knowingly still open — recorded here so nobody spends a day re-deriving
+the same list.
+
+### Fixed — the process-killer (CRITICAL)
+
+Express 4 does not await async handlers, and Node 22 **exits on an unhandled
+rejection**. So any async throw was a remote unauthenticated denial of service:
+
+- `POST /auth/login {"username":"admin","password":{}}` — bcrypt throws on a
+  non-string, the rejection escapes, the container dies. No session required.
+- `GET /games/abc` — `parseInt` → `NaN` → pg `22P02`.
+- `GET /games/<20 digits>/images` — the old guard was `Number.isInteger(id)`,
+  and `Number.isInteger(1e20)` is `true`. Postgres `integer` stops at
+  **2147483647**, so it's a `22003`.
+
+Two pieces now cover this, and both matter:
+
+- **`lib/async-routes.js`** — `catchAsync(router)` walks the router's handler
+  stack at mount time and wraps every handler so a returned rejected promise (or
+  a synchronous throw) goes to `next(err)`. Applied to **all 12 mounts** in
+  `server.js`. It preserves each handler's `length` and `name`, because Express
+  distinguishes error middleware by arity. Handlers added to a router *after* it
+  is mounted are **not** wrapped — register routes inside the route module.
+  `installRejectionGuard()` is the backstop and traps `uncaughtException` too, so
+  it is broader than its name: nothing short of an explicit `process.exit` takes
+  the process down now.
+- **`lib/params.js`** — `idParam(value)` returns a positive integer ≤ 2147483647
+  or **`null`**; `intParam(value, { min, max, fallback })` clamps limits/offsets/
+  day-counts. Both use `Number()`, not `parseInt`, so `'12abc'` is `null` rather
+  than `12`. Neither throws.
+
+  `admin.js`, `games.js`, `images.js`, `drafts.js` and `reference.js` use them.
+  **`stats.js`, `warmap.js` and `seasons.js` still parse with raw `parseInt`** —
+  and `warmap.js` interpolates the result straight into its SQL string rather than
+  binding it (safe from injection, not safe from `?season=1e20` → a 500). That's
+  the next thing to fix here, not a thing to assume is already done.
+
+### Fixed — the rest
+
+| Severity | What | Fix |
+|---|---|---|
+| HIGH | `PATCH /admin/users/:id` audited the **raw request body**, so a password reset wrote the plaintext into `audit_log.payload` — rendered verbatim in the admin panel, and carried into every nightly `pg_dumpall` and the unencrypted offsite backup | `password` is destructured out before the `audit()` call and replaced with `passwordChanged: true`. 12 existing rows were scrubbed. **`POST /admin/users` was already fine because it builds an explicit allow-list — do that, rather than blacklisting a key** |
+| HIGH | The draft seat merge accepted any integer index, so `{"players":{"1e7":{}}}` — a 40-byte authenticated PATCH — grew the players array to ten million entries: 618MB of heap and 30MB of JSONB | `mergeSeats` in `lib/draft.js` now `continue`s on `!Number.isInteger(index) \|\| index < 0 \|\| index > 1`. A game has exactly two seats |
+| MED | `routes/games.js` returned raw pg text to clients in two places | Both now log server-side and return a fixed message. The global handler replaces the message for any status ≥ 500 |
+| MED | An unrecognised secondary card name was **auto-inserted into the shared mission pack**, so one person's typo appeared in everyone's draw picker forever — and made pack rows referenced-but-undeletable | Secondaries are **match-only** now (`findCardId` in `game-write.js`: a scoped case-insensitive SELECT, no INSERT). Nothing is lost — `player_secondaries.card_name` is denormalised and is what every view displays. **Challengers still auto-insert** via `resolveCardId`; that asymmetry is deliberate, since the 11e secondary deck is a fixed published 18 and the challenger list isn't |
+| MED | A `cardId` stored on a draft could dangle if its pack row was deleted mid-game, and `player_secondaries.card_id` is a FK — so a game played to the end became unfileable with an opaque 500 | `dropDanglingCardIds(client, players)` in `game-write.js` batch-checks both card families and degrades an unresolvable id to name-only. It runs **after** `resolveGameLookups` on purpose: earlier, and the name would be re-resolved, silently re-creating the very row that was deleted |
+
+### Known-good — audited, found clean, don't re-audit
+
+- **The draft PATCH merge resists prototype pollution** and every seat-scope
+  escape tried against it.
+- **No SQL injection.** Every `${table}` interpolation is a fixed internal
+  allow-list (`archive.js`'s `RESTORABLE` set, `game-write.js`'s literal pairs).
+- **No mass assignment** on any write path.
+- **Upload filenames are UUID-only** — no user-controlled path component.
+- **The `wb_session` strip is present in both `reverse_proxy` blocks** of
+  `~/sites/base/conf.d/40k.caddy` (the SSE block and `handle_path /api/*`). This
+  site is **not** an SSO member; see `~/sites/CLAUDE.md`.
+- **CSRF is adequately covered** by `sameSite: 'lax'` plus JSON-only body
+  parsing — a cross-site form post can't set `Content-Type: application/json`.
+
+### Still open — accepted, not forgotten
+
+- **`role` and `is_active` are read from the 30-day session**, not re-checked per
+  request, so deactivating or demoting a user doesn't take effect until their
+  cookie expires or they log out. Fixing it means a `users` lookup in
+  `requireAuth`.
+- **No `session.regenerate()` on login** — session fixation is possible for
+  someone who can plant a cookie.
+- **`ADMIN_PASSWORD` stays in `.env`** after bootstrap, where it is ignored but
+  still readable.
+- **No security headers on this vhost** (CSP, HSTS, `X-Content-Type-Options`).
+- **Backups to B2 are unencrypted.**
+- The global error handler still returns `err.code` verbatim, which for a pg
+  error is the SQLSTATE — the class of DB failure leaks even though the text
+  doesn't.
+
+### Caching — an infra fix that lives outside this repo
+
+`~/sites/base/conf.d/40k.caddy` gained:
+
+```
+@nocache path / *.html *.js *.css *.webmanifest
+header @nocache Cache-Control "no-cache"
+```
+
+Without it, no-cache-header responses get **heuristic caching** in browsers, so a
+deploy landed and users kept running the old JS — the symptom being a fix that
+"works for you but not for them" with no service worker anywhere in sight. Every
+other vhost on the box already had this; 40k was the one that didn't. `/uploads/*`
+keeps its year-long immutable header, because those filenames are UUIDs.
+
+**This repo's `caddy.example` has not been updated to match** — a fresh install
+from it would reproduce the bug. Copy the two lines across if you touch that file.
 
 ---
 
@@ -799,14 +1138,14 @@ When in doubt, the module's own README is the closer source of truth than this f
 | Module | README |
 |---|---|
 | Backend service overview | `api/README.md` |
-| Backend helpers (`db`, `auth`, `audit`, `events`, `game-scoring`, `game-write`, `draft`) | `api/lib/README.md` |
+| Backend helpers (`db`, `auth`, `audit`, `events`, `game-scoring`, `game-write`, `draft`, `archive`, `async-routes`, `params`) | `api/lib/README.md` |
 | Route modules + mount prefixes + auth | `api/routes/README.md` |
 | Schema/seed conventions, idempotency rules, ALTER pattern | `api/db/README.md` |
-| Smoke tests | `api/test/README.md` |
+| Unit + integration suites, what's covered | `api/test/README.md` |
 | Frontend overview, no-build philosophy | `app/README.md` |
-| `app.js` / `api.js` / `components.js` / `live.js` / `game-rules.js` / `images.js` / `army-list.js` roles | `app/js/README.md` |
+| `app.js` / `api.js` / `components.js` / `live.js` / `game-rules.js` / `images.js` / `army-list.js` / `nav-stack.js` roles | `app/js/README.md` |
 | View module convention + recipes | `app/js/views/README.md` |
-| Backup script + cron | `scripts/README.md` |
+| Backup script + **both test runners** | `scripts/README.md` |
 
 ---
 
@@ -1001,8 +1340,10 @@ game. **11e only** — it hard-codes `edition: '11'` on submit. `/games/new` is
 untouched and remains the path for a game that's already over, and the only path
 for a 10e game.
 
-Two routes: `#/play` lists your in-progress games, `#/play/:id` is the wizard.
-Both `requireAuth`.
+Two routes: `#/play` lists in-progress games, `#/play/:id` is the wizard. Both
+client routes carry `requireAuth: true`. The **API** behind them is public
+(`GET /drafts`, `GET /drafts/:id`, `GET /drafts/:id/images`) — that asymmetry is
+deliberate and is what makes a share link work; see "Spectating" below.
 
 ### The draft lifecycle
 
@@ -1010,8 +1351,10 @@ Both `requireAuth`.
 POST /drafts            → game_drafts row (payload = the posted body verbatim,
                           current_step 'setup', rev 0, a fresh share_token)
   ↕ PATCH /drafts/:id   → read-merge-write, rev++, broadcast draft.updated
+                          (first move off 'setup' also fires notifyGameStarted)
   ↕ POST  /drafts/:id/images   → UPLOAD_DIR/drafts/<id>/
-POST /drafts/:id/submit → createGame() → games row; photos moved; submitted_game_id stamped
+POST /drafts/:id/submit → createGame() → games row; photos moved; submitted_at stamped
+DELETE /drafts/:id      → archived into deleted_items (photos left on disk)
 ```
 
 **A draft is not a game, structurally.** It lives in `game_drafts` /
@@ -1056,9 +1399,30 @@ lands in the payload. The gate is ownership, not schema.
   Any other top-level key, a `"0"` seat, or a `currentStep` → **403**
   (`opponentSeatPatch` returns null unless the patch is exactly that shape).
 
-So the opponent scores their own side while their screen *follows* the owner's
-round — they can't move the game on, and can't touch your numbers. 404 for a
-missing draft, 403 for a non-participant, 409 once submitted.
+So the opponent scores their own side — they can't move the game on, and can't
+touch your numbers. 404 for a missing draft, 403 for a non-participant, 409 once
+submitted.
+
+### Spectating, and who follows whose round
+
+`GET /drafts`, `GET /drafts/:id` and `GET /drafts/:id/images` are **public**, and
+`GET /drafts` returns *everyone's* in-progress games (yours first) with
+`owner_name`. A game nobody can find is a game nobody can watch. Writing is what's
+gated; reading matches games/stats/the war map.
+
+A viewer with no seat is a **spectator**: `viewerSeat: null`, `isSpectator` gates
+`canEditSeat()` so every control renders disabled, `touch()` early-returns so
+nothing is ever sent, and the footer becomes a `watchFooter()` with a "Watching"
+pill.
+
+Who moves when the owner hits Next:
+
+| Viewer | Behaviour |
+|---|---|
+| Owner | drives; `canNavigate` true |
+| Invited opponent | **is not dragged.** They may still be entering the round they just played, and having the screen yanked out mid-number is worse than being a round behind. They get a tappable `.lg-follow` chip in the header — `They're on Round 3 →` — and move when *they* choose |
+| Spectator | auto-follows (`adoptRemote` sets `step = ownerStep`) — there is nothing they could be mid-typing |
+| Admin | `canNavigate = isOwner \|\| isAdmin`, so the pips and the setup gear are live — enough to reach setup and delete someone's abandoned game. Admins still get **no** footer nav and no Submit; those check `isOwner` |
 
 **`validateGameInput` deliberately does NOT gate PATCH.** It demands
 `playedAt`, a truthy `pointsLimit` and two named players — a round-1 autosave
@@ -1092,7 +1456,7 @@ The full pipeline:
   → withTx(createGame(client, body, owner_user_id))
   → audit → broadcast('game.saved') → notifyGameLogged
   → relinkDraftImages(draftId, gameId)
-  → UPDATE game_drafts SET submitted_game_id = <gameId>
+  → UPDATE game_drafts SET submitted_at = NOW(), submitted_game_id = <gameId>
 ```
 
 `relinkDraftImages` `fs.rename`s each file from `UPLOAD_DIR/drafts/<draftId>/`
@@ -1101,15 +1465,28 @@ gets `is_thumbnail`, captions carried through). It is **best-effort per file**
 and wrapped so a missing byte can never fail an already-created game — a photo
 that doesn't move is a lost photo, not a lost game.
 
-The draft row is **kept** after submit, with `submitted_game_id` pointing at the
-result. The partial indexes are `WHERE submitted_game_id IS NULL`, so a retired
-draft costs nothing and drops out of `GET /drafts` automatically.
+The draft row is **kept** after submit: `submitted_at` is stamped and
+`submitted_game_id` points at the result. The partial indexes are
+`WHERE submitted_at IS NULL`, so a retired draft costs nothing and drops out of
+`GET /drafts` automatically.
 
-Sharp edge worth knowing: unlike PATCH/join/invite, submit reads the draft
-without `FOR UPDATE`, so two concurrent submits of the same draft could both
-pass the `submitted_game_id IS NULL` check. In practice only the owner can
-submit and the button disables itself, but don't add a second submit trigger
-without closing that window.
+**`submitted_at`, not `submitted_game_id`, is what "finished" means.** The
+pointer is `ON DELETE SET NULL`, so hard-deleting the resulting game nulled it
+and the draft *resurrected itself* in the live-games list weeks after it was
+played. The timestamp is the lifecycle flag; the id is navigation only.
+
+Submit is atomic: the whole check-then-insert runs inside `withTx` around a
+`SELECT … FOR UPDATE`, like PATCH/join/invite. It has to be — reading the row
+outside the transaction let two simultaneous taps both pass the
+already-submitted check and create two games. The button disabling itself is a
+UI convenience, not the guarantee. Pinned by an integration test that fires two
+concurrent submits and asserts exactly one 200, one 409, one `games` row.
+
+The other half of that story is the client: `flush()` resolves only once the
+server actually has everything typed so far. It used to bail out while a PATCH
+was in flight, so tapping Submit straight after typing raced its own autosave
+and submitted the *previous* payload — which is how a game with both names
+filled in came back `player 2 still needs a name`.
 
 ### Live co-editing over SSE
 
@@ -1131,7 +1508,8 @@ on `document` as **`live:draft.updated`**. Two constraints, both load-bearing
 
 When a remote change does arrive and a local save is still pending, `adoptRemote`
 merges only the *other* seat rather than replacing the payload — your in-flight
-edits survive. Non-owners additionally follow the owner's `current_step`.
+edits survive. **Only spectators** additionally adopt the owner's `current_step`;
+a seated opponent gets the follow chip instead (see "Spectating" above).
 
 ### Autosave and offline
 
@@ -1148,6 +1526,28 @@ edits survive. Non-owners additionally follow the owner's `current_step`.
   load means precisely "this device has edits the server never got" — that's the
   restore prompt's trigger, not a timestamp comparison.
 
+### "A game just started" email
+
+`notifyGameStarted(id)` in `routes/drafts.js` fires **once**, on the first PATCH
+that moves a draft off `'setup'` into a round — not when the row is created.
+Tapping "Start new game" makes a row immediately, and an email per abandoned tap
+is noise. The mail carries both sides (name — faction — detachments) and a
+`#/play/<id>` link, because the whole point is that someone can now follow along.
+
+The once-only guard is a **claim-by-UPDATE**, not a read-then-write, so two
+concurrent PATCHes can't both send:
+
+```sql
+UPDATE game_drafts SET started_notified_at = NOW()
+ WHERE id = $1 AND started_notified_at IS NULL
+RETURNING payload, owner_user_id
+```
+
+No row back means someone else already announced it. It's dispatched **after** the
+response and wrapped in its own try/catch — a mail hiccup must never delay an
+autosave. Like everything else in `lib/mail.js`, it no-ops without
+`MAILER_URL` + `MAILER_TOKEN`.
+
 ### UX decisions worth not re-litigating
 
 - **Secondaries are round-major here** (an in-hand list with Draw / Score /
@@ -1163,9 +1563,35 @@ edits survive. Non-owners additionally follow the owner's `current_step`.
   start stamp, so a crash costs at most one autosave interval. It writes per-round
   `time_seconds`, and `resolvePlayerTimes()` already makes the player total the
   sum, so the existing chess-clock display on game detail lights up for free.
-- **The 5 round pips in the sticky header are tap targets.** Jumping back to fix
-  a number typed into the wrong round was an explicit user request; don't turn
-  them back into a passive progress indicator.
+- **The 5 round pips in the sticky header are tap targets**, with a **settings
+  gear (`.lg-pip-setup`) at the head of the strip** that jumps back to Setup.
+  Jumping back to fix a number typed into the wrong round was an explicit user
+  request; don't turn them back into a passive progress indicator. Both are
+  disabled rather than hidden when `canNavigate` is false.
+- **A pip reads "played" from the recorded data**, not from `n < currentRound`.
+  `roundHasData(n)` asks whether either player has a primary score, a
+  `cpRemaining`, a clocked time, or a secondary drawn/scored in that round. The
+  round-number version marked rounds you skipped past as done, and blanked every
+  pip the moment you stepped back to Setup. From Setup, the forward button is
+  labelled from the same source — `Round 4 →` when round 4 is the last one with
+  data — so it returns you where you were rather than to round 1.
+- **Two photo buttons, not one: "📷 Take photo" and "🖼 Upload".** A single
+  `<input type="file">` can offer the camera **or** the library but never both —
+  `capture: 'environment'` hides the library outright — so there are two hidden
+  inputs and the library one is `multiple`. Don't "simplify" them back together.
+- **Round badges sit over the photo**, bottom-right, as
+  `<span class="photo-badge is-round">`, captioned `Round N` or `End of round N`
+  (the latter only from the between-rounds nudge). The same class renders on game
+  detail, so a submitted game keeps its round labels.
+- **The draw picker leads with "🎲 Draw at random"**, pinned above the card list —
+  tactical secondaries are drawn blind, so picking one off an alphabetical list is
+  the unusual case. The free-text "card not listed" entry was **removed** from the
+  picker: an unrecognised name no longer joins the shared pack (see "Security
+  posture"), so offering to type one here was offering a dead end. `/games/new`
+  still has "+ Card not listed" for logging an old game.
+- **The army-list textarea is 420px tall** (55dvh on phones), not the generic
+  80px box. A real 2000pt list is 30+ lines and the small box meant pasting into
+  a letterbox.
 - **Between-rounds "snap a photo?" prompt**, asked at most once per round,
   opt-out per account via `users.prompt_round_photo` (checkbox in
   `views/profile.js`). The round screen keeps its own upload control either way,
@@ -1178,8 +1604,10 @@ edits survive. Non-owners additionally follow the owner's `current_step`.
 `app/css/style.css` ends with a `.lg-*` block (~370 lines) — **the app's only
 touch-first surface**. 44px tap targets, **16px inputs** (the base is 14px,
 which makes iOS Safari zoom the viewport on focus), `env(safe-area-inset-bottom)`
-padding on the sticky footer, and one `@media (max-width: 760px)` breakpoint
-(every other query in the file is 700px — this one is the wizard's own).
+padding on the sticky footer, and a **700px** breakpoint — the same one every
+other width query in the file uses. It briefly had its own 760px query; a second
+breakpoint 60px away just creates a band where this block has collapsed and the
+shared `.form-row` rules have not.
 
 It uses **real class names**, deliberately *not* the
 `div[style*="grid-template-columns"]` attribute-selector hack the existing 700px
@@ -1387,11 +1815,15 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
   are independent, so one photo can be both. The games list's second thumbnail
   prefers this per-game photo and falls back to the picture attached to the
   `deployment_maps` row, which is shared by every game on that layout.
-- **Deleting a game** cascades `game_images` rows, but files need an explicit
-  unlink — `routes/admin.js` calls `removeGameImageFiles(id)` from
-  `routes/images.js`. If you add another game-deletion path, call it there too.
-  `DELETE /drafts/:id` is the same story for the draft folder: the
-  `game_draft_images` rows cascade, the directory is unlinked by hand.
+- **Deleting a game leaves its photo files exactly where they are.** Both
+  `DELETE /admin/games/:id` and `DELETE /drafts/:id` archive into `deleted_items`
+  and touch nothing on disk, because a restore that comes back with no pictures
+  isn't a restore. The `game_images` / `game_draft_images` **rows** are captured
+  into the archive payload and then cascade away with their parent. The one path
+  that unlinks bytes is `DELETE /admin/deleted/:id` → `removeArchivedFiles()`,
+  which calls `removeGameImageFiles(id)` (`routes/images.js`) for a game or `rm -r`s
+  `UPLOAD_DIR/drafts/<id>/` for a draft — and skips even that if the id has been
+  reused. See "Restorable deletes".
 - **Backups** — the nightly config tarball already archives `sites/sites`
   excluding `*/app`, so `uploads/` is captured. It's a *full* tarball every
   night, so if the photo library ever gets large, split it out into an
@@ -1414,6 +1846,100 @@ A private MMR-style system, `requireAdmin`; **players cannot see their own ratin
 - **Digital vs physical (TTS)** — every competitive query (rankings, war map, all of `stats.js`) gates on the shared `COUNTED_GAMES` fragment from `lib/game-filter.js` (drop-in where the games table is aliased `g`), instead of the bare `hidden_from_stats = FALSE`. It **includes** digital (Tabletop Simulator) games by default; set `INCLUDE_DIGITAL_IN_STATS=false` in `.env` + restart to exclude them from all those surfaces at once. With the flag on, `COUNTED_GAMES === 'g.hidden_from_stats = FALSE'` exactly (byte-identical SQL → zero behaviour change). The games **browser** (`/games` list) is never gated — you can still see/filter digital games (`?playMedium=`). Per-game medium lives in `games.play_medium`.
 
 To change behaviour, the tunables in `ratings.js` are the dial; the math in `glicko2.js` / `whr.js` should stay put (both have tests).
+
+---
+
+## Testing
+
+**278 tests in two suites.** Both are `node:test` — no framework, no assertion
+library, no mocking library. Run the unit suite before every deploy; run the
+integration suite before anything that touches `drafts.js`, `admin.js`,
+`archive.js` or the schema.
+
+```bash
+bash scripts/test-unit.sh                    # 156 tests, ~1.5s, no network, no DB
+bash scripts/test-live.sh                    # 122 tests, live API + real Postgres
+bash scripts/test-live.sh drafts-lifecycle   # one file
+```
+
+Both shell out to `docker run`, which is why they live in `scripts/` rather than
+as npm scripts. `npm test` inside `api/` runs the same unit glob on the host.
+
+### Unit suite (`scripts/test-unit.sh`) — 156 tests, 10 files
+
+`--network none`, no database, no containers. It mounts `app/` **read-only**,
+because several suites test *frontend* modules — they're dependency-free ES
+modules with no DOM access, so they're imported by relative path from `api/test/`
+rather than standing up a second runner.
+
+The three additions worth knowing about:
+
+- **`game-rules.test.js` (34)** runs a table of 11 payloads through *both*
+  `calcTotal()` (client) and `computeFinalScores()` (server) and asserts exact
+  equality. That mirror is hand-maintained and had already drifted: `calcTotal`
+  gated its card-detail branch on **secondaries alone** where the server gates on
+  **secondaries or challengers**, so a 10e game with a scored Secret Mission and
+  no secondary cards read **30 on screen and saved as 40** — the total jumped the
+  moment you hit Save. Fixed on the client; that exact case is now case 11.
+- **`army-list.test.js` (24)** builds its fixtures with an `encode()` copied
+  verbatim from yaab's `storage.js`, so every case is a real round-trip through
+  the wire format. It also carries a **format-drift canary**: given
+  `YAAB_SOURCE_DIR` (the runner mounts the sister repo at `/yaab`), it reads
+  yaab's own `storage.js` and asserts it still declares `EXPORT_PREFIX =
+  'YAAB1:'` and writes `v: 2`. It **skips** when the mount is absent — an
+  early-warning signal, not a hard dependency. The point is to find out from a
+  test run rather than from a user pasting a code that no longer expands.
+- **`nav-stack.test.js` (12)** installs a fake `History` / `window` / `document`
+  before importing the module, and tracks `url` specifically so it can assert
+  **the route never moves while a layer is open** — the failure this module
+  exists to prevent.
+
+### Integration suite (`scripts/test-live.sh`) — 122 tests, 4 files
+
+Joined to the `web` docker network, hitting `40k-api:3000` and `postgres:5432`
+directly — no Caddy, no NAT loopback (which doesn't work on this host anyway).
+It requires the repo's `.env` and refuses to run without one, so it only runs on
+the server. `--test-concurrency=1`: the files share one database.
+
+**It talks to the real database**, alongside real data. The safety property is
+naming, not isolation:
+
+- Every row belongs to a user whose username starts with **`zz_test_`**;
+  free-text reference rows it invents are prefixed **`ZZ `**.
+- `cleanup()` only deletes rows reachable from those users.
+- **`zz-residue.test.js` runs last** (the glob is alphabetical and the run is
+  serial) and **fails the build** if anything is left behind — including that the
+  11e pack still holds exactly its 18 seeded secondaries.
+
+That last check is not paranoia. Before it existed, fixtures leaked **8 invented
+secondary cards into the live 11e mission pack**, where they showed up in every
+user's draw picker with no way to remove them. (It's also why secondaries are
+match-only now — see "Security posture".) **If you add a table, add it to
+`cleanup()` in FK-safe order.**
+
+### Two harness gotchas (`api/test/integration/_harness.js`)
+
+Both cost an afternoon each; read the comments in that file before writing a new
+integration test.
+
+1. **`X-Forwarded-Proto: https` is mandatory on every request.** The session
+   cookie is `Secure` and the app runs `trust proxy`, so express-session silently
+   declines to set it unless `req.secure` is true. Caddy supplies the header in
+   production; talking to the container directly, the test must. Without it
+   **login returns 200 with no cookie** and the next call 401s for no visible
+   reason. (`X-Forwarded-For` is faked per-client too, because `/auth/login` is
+   rate-limited per IP and every test client shares one.)
+2. **`login()` must drain the response body.** express-session flushes the
+   headers and all but the *last byte*, holding that byte until the session store
+   write lands in Postgres. `fetch` resolves at the headers, so returning without
+   `await res.text()` hands back a cookie whose session row is still 100–300ms
+   from existing.
+
+### What isn't covered
+
+No browser-level tests — no DOM, no Chart.js, no canvas. The war map in
+particular has **zero** automated coverage, and its determinism guarantees
+(pitfall #7) are enforced by review only.
 
 ---
 
@@ -1443,9 +1969,11 @@ The system prompt's general rules apply. Project-specific reminders:
 
 - **No comments unless WHY is non-obvious.** Identifier names should carry the meaning. The only inline comment blocks in this codebase are above frozen invariants (`MAP_SEED`, `computeFinalScores` payload contract).
 - **No frameworks, no bundlers.** Use `el()` from `components.js`. Use ES modules (already configured — `<script type="module">`).
-- **Match existing patterns.** Every view is `export async function renderXxx(state, ...)`. Every route module is `export default Router()` with `requireAuth` at the top.
+- **Match existing patterns.** Every view is `export async function renderXxx(state, ...)`. Every route module is `export default Router()`, gated per route (or with `requireAdmin` at the top, for `admin.js` / `ratings.js` only — reads are public by default here).
 - **Idempotent SQL.** New `CREATE TABLE` → `IF NOT EXISTS`. New `INSERT INTO seed` → `ON CONFLICT DO NOTHING`. Schema changes to existing tables → guarded `ALTER TABLE` in a `DO $$ … END $$` block.
 - **Server-side enforcement is the source of truth.** Client gating is UX only.
+- **Run `scripts/test-unit.sh` before you deploy.** It's 1.5 seconds and needs nothing running. If you touch drafts, admin, `archive.js` or the schema, run `scripts/test-live.sh` too.
+- **Parse ids with `lib/params.js`, never `parseInt`; never audit a raw body.** See pitfall #12.
 
 ---
 
@@ -1455,6 +1983,7 @@ The system prompt's general rules apply. Project-specific reminders:
 - `DEPLOY.md` for infra + nightly backup setup
 - `api/lib/README.md` to find the right helper before writing a new one
 - `api/routes/README.md` for "where does this endpoint live"
-- `api/test/README.md` to add a new smoke test
+- `api/test/README.md` to add a test; `scripts/README.md` for the two runners
+- "Testing" above before you deploy — `scripts/test-unit.sh` costs 1.5 seconds
 - Git log for "when did this change" (`git log --oneline -- path/to/file`)
 - Live YAAB CSS for styling reference (`yetanotherarmybuilder` repo on the user's GitHub) — visit https://github.com/stopsign002/yetanotherarmybuilder

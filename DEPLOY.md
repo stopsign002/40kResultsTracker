@@ -8,7 +8,8 @@ the shared `web` Docker network with Caddy as the reverse proxy.
 
 **Exposure:** this site is on the public internet and its **reads are
 unauthenticated by design** — anyone with the URL can browse games, photos,
-stats and the war map. Only writes require a session, and `/admin/*` +
+stats, the war map, and watch a live game in progress. Only writes require a
+session, and `/admin/*` +
 `/ratings/*` require an admin. Nothing here is LAN-gated, and don't try to make
 it so with Caddy's `remote_ip private_ranges` — on this host that matcher does
 **not** block WAN traffic (see `~/sites/CLAUDE.md`). If this site ever needs to
@@ -55,11 +56,8 @@ chmod 600 .env
 # Once a user exists in the DB, this env var is ignored on future restarts.
 grep ADMIN_PASSWORD .env
 
-# 4) Install Caddy snippet
-#    NOTE: this includes a /uploads/* file_server block for photos (an older
-#    40k.caddy without it will 404 every image) AND a dedicated /api/events
-#    handler with `flush_interval -1` and no `encode`, without which the SSE
-#    live-update stream is buffered and never reaches the browser.
+# 4) Install Caddy snippet — but READ "Caddy config drift" below first.
+#    caddy.example is behind the live 40k.caddy in two ways that matter.
 cp caddy.example ~/sites/base/conf.d/40k.caddy
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile
 
@@ -86,6 +84,89 @@ git pull
 docker compose up -d --build
 ```
 
+## Caddy config drift ⚠
+
+The live `~/sites/base/conf.d/40k.caddy` has **two things `caddy.example` in this
+repo does not**. Copying the example over the live file silently regresses both,
+so treat the example as a starting skeleton, not a source of truth — or better,
+diff before you copy:
+
+```bash
+diff ~/sites/sites/40kResultsTracker/caddy.example ~/sites/base/conf.d/40k.caddy
+```
+
+**1. `Cache-Control: no-cache` on the app files.**
+
+```
+@nocache path / *.html *.js *.css *.webmanifest
+header @nocache Cache-Control "no-cache"
+```
+
+Inside the `handle { root * /srv/40kResultsTracker/app … }` block. Without it the
+app files carry only an ETag, so browsers apply **heuristic** freshness — a
+fraction of the file's age — and serve a stale copy **without revalidating**. This
+app is buildless and `index.html` has no `?v=` stamp on its script tags, so this
+header is the only thing keeping clients current after a deploy. It cost real
+debugging time: "the fix works in a private window but not in my normal browser,
+and a hard refresh doesn't help". Cost of the header is one 304 per file. Every
+other vhost on this box already had it; 40k was the only one missing it.
+
+**2. The `wb_session` cookie strip on *both* `reverse_proxy` blocks.**
+
+```
+header_up Cookie "(^|;\s*)wb_session=[^;]*" ""
+```
+
+The shared-login cookie is scoped `Domain=.thewheeliebois.com`, so the browser
+attaches it to every sibling subdomain — including this one, which is **not** in
+the SSO group. Without the strip, a live one-year session token for em/kids/todo/
+meds/play/home/fuel arrives in this app's request headers. There are two proxy
+blocks here (`/api/events` and `/api/*`); miss either and the token still leaks.
+See `~/sites/CLAUDE.md` § Adding a new site.
+
+The two things `caddy.example` **does** get right and are equally load-bearing:
+the `/uploads/*` `file_server` block (an older `40k.caddy` without it 404s every
+image) and the dedicated `/api/events` handler with `flush_interval -1` and no
+`encode`, without which the SSE live-update stream is buffered and never reaches
+the browser.
+
+## Tests
+
+Two runners, both in `scripts/`, both host-side because they shell out to
+`docker run`. Details in `scripts/README.md`.
+
+```bash
+# Pure unit tests — no network, no DB, no running containers.
+bash scripts/test-unit.sh
+
+# Integration tests against the LIVE API + real Postgres. Server only.
+bash scripts/test-live.sh                    # whole suite
+bash scripts/test-live.sh drafts-lifecycle   # one file
+```
+
+`test-unit.sh` runs `api/test/*.test.js` in a throwaway `node:22-alpine` on
+`--network none`. It mounts `app/` read-only, because several suites cover
+frontend modules that are dependency-free ES modules (`game-rules.js`,
+`army-list.js`, `nav-stack.js`), and mounts the sister `yetanotherarmybuilder`
+repo read-only when present so the YAAB share-code format-drift canary can run.
+Same command as `npm test` inside `api/`; the script just supplies the mounts.
+
+`test-live.sh` runs `api/test/integration/*.test.js` in a container on the `web`
+network, reaching `40k-api:3000` and `postgres:5432` directly — no Caddy, no NAT
+loopback. It needs this repo's `.env` and refuses to start without one.
+
+**`test-live.sh` talks to the real database.** It creates real users, games,
+drafts and photos in `40k_db` alongside your data. The safety property is naming,
+not isolation: every row belongs to a user whose username starts with `zz_test_`
+(free-text reference rows are prefixed `ZZ `), the harness only deletes rows
+reachable from those, and `zz-residue.test.js` runs last and asserts the database
+was left as it was found. It is safe to run on production, and it is not
+pretending to be sandboxed. Don't run it against a database you can't afford to
+have a test row in for a few seconds.
+
+Neither runner is in cron. Run them by hand before a deploy that touches scoring,
+drafts or auth.
+
 ## Photo / layout-picture storage
 
 Image bytes live **on disk, not in Postgres** — a nightly `pg_dumpall`
@@ -107,9 +188,14 @@ excluding `*/app`, so `uploads/` is captured with no extra setup. It's a *full*
 tarball every night, so if the photo library ever gets large, split it into an
 incremental `rclone sync` rather than letting the nightly upload grow.
 
-**Files vs rows:** deleting a game cascades `game_images` rows but **not** the
-files — `routes/admin.js` calls `removeGameImageFiles(id)` for that. Any new
-deletion path must do the same or it will leak files onto the volume.
+**Files vs rows:** deleting a game no longer unlinks its photos. `DELETE
+/admin/games/:id` archives the whole row-set into `deleted_items` and leaves the
+bytes **deliberately on disk**, so a restore comes back with its pictures.
+`DELETE /admin/deleted/:id` (Admin → Deleted Items → Delete forever) is the only
+path that unlinks them, via `removeArchivedFiles`. Consequence worth knowing for
+capacity: photos of a deleted game keep occupying the volume until someone empties
+the bin. Any new deletion path must either archive or unlink — a row-only delete
+leaks files.
 
 ## Migrations
 
@@ -161,6 +247,16 @@ Migrations included in this update path so far:
   player of a faction gets a spare anchor instead of fighting for the faction
   home. NULL falls back to the `FACTION_HOMES` table
 - `audit_log` table — append-only trail of every write action
+- `game_drafts` + `game_draft_images` tables (+ `game_drafts.submitted_at`,
+  `started_notified_at`) — the live tracker's in-progress games. Partial indexes
+  on owner / opponent `WHERE submitted_at IS NULL`
+- `users.prompt_round_photo` (BOOLEAN NOT NULL DEFAULT TRUE) — the live tracker's
+  between-rounds photo nudge, opt-out from My Profile
+- `users.last_login_at` (TIMESTAMPTZ, NULL = never) — shown in the admin user list
+- `deleted_items` table — the recycle bin behind Admin → Deleted Items. Deleting
+  a game or a live game serialises its whole row-set into `payload` (JSONB) and
+  hard-deletes the originals, so nothing that reads `games` has to learn about
+  deleted rows
 
 All run automatically; no manual psql intervention needed.
 
@@ -182,7 +278,10 @@ homes and colours), schema changes, new views, new endpoints.
 ├── docker-compose.yml
 ├── caddy.example
 ├── .env.example
-├── scripts/backup.sh     optional per-site pg_dump snapshot (see Backups)
+├── scripts/
+│   ├── backup.sh         optional per-site pg_dump snapshot (see Backups)
+│   ├── test-unit.sh      unit suite in a container, no network/DB
+│   └── test-live.sh      integration suite vs the live API + real Postgres
 ├── api/                  Node + Express backend
 │   ├── server.js         entry: initSchema → ensureBootstrapAdmin → listen
 │   ├── lib/
@@ -204,6 +303,7 @@ homes and colours), schema changes, new views, new endpoints.
 │   │   │                 writes call requireAuth inline. (HEAVY: contains
 │   │   │                 insertPlayerChildren + resolvePlayerIdentities +
 │   │   │                 recordBannerFirstSeen)
+│   │   ├── drafts.js     /drafts/* — the live game tracker's in-progress games
 │   │   ├── images.js     /games/:id/images + (as mapRouter) /maps/:id/image
 │   │   ├── stats.js      /stats/* — overview + 12 stat endpoints
 │   │   ├── warmap.js     /stats/warmap + /stats/warmap-timeline — banners feed
@@ -213,7 +313,9 @@ homes and colours), schema changes, new views, new endpoints.
 │   │   ├── events.js     /events — SSE stream (game.saved, season.changed)
 │   │   ├── seasons.js    /seasons — list (public) + start new (admin)
 │   │   └── ratings.js    /ratings/* — ADMIN-ONLY leaderboard + matchmaker
-│   ├── test/             node:test suite for the pure helpers (`npm test`)
+│   ├── test/             node:test suite — pure helpers plus the buildless
+│   │                     frontend modules (`scripts/test-unit.sh`)
+│   │   └── integration/  live API + real Postgres (`scripts/test-live.sh`)
 │   └── db/
 │       ├── schema.sql    tables, indexes, view, idempotent migrations
 │       └── seed.sql      29 factions + detachments + Pariah Nexus + Leviathan
@@ -225,12 +327,19 @@ homes and colours), schema changes, new views, new endpoints.
     └── js/
         ├── app.js        hash router, shell renderer, route table, nav links,
         │                 error boundary; per-route requireAuth / requireAdmin
-        ├── api.js        fetch wrapper; api / auth / reference / games /
-        │                 gameImages / mapImages / stats / admin / seasons /
-        │                 ratings export objects
+        ├── api.js        fetch wrapper; api / auth / seasons / reference /
+        │                 gameImages / mapImages / games / drafts / draftImages /
+        │                 stats / admin / ratings export objects
         ├── components.js el(), clear(), toast(), pill(), fmtDate(),
-        │                 selectOptions(), confirmModal(), promptModal()
-        ├── live.js       singleton EventSource → 'live:game.saved' event
+        │                 fmtDuration(), fmtScore(), selectOptions(),
+        │                 confirmModal(), promptModal()
+        ├── game-rules.js 40k constants + score maths shared by game-form and
+        │                 live-game (calcTotal mirrors the server)
+        ├── images.js     browser-side downscale for every upload path
+        ├── nav-stack.js  back-button layer stack for overlays + wizard steps
+        ├── army-list.js  YAAB share-code decoder (zero deps)
+        ├── live.js       singleton EventSource → 'live:game.saved' +
+        │                 'live:draft.updated' events
         ├── lightbox.js   full-screen photo viewer (FLIP zoom, cycle, swipe)
         ├── zip.js        dependency-free ZIP reader (Google Photos downloads)
         └── views/
@@ -239,13 +348,15 @@ homes and colours), schema changes, new views, new endpoints.
             ├── game-detail.js    single game view + photo upload + admin
             │                     Hide / Delete
             ├── game-form.js      ⚠ heaviest file: new + edit, per-round grid
+            ├── live-game.js      live tracker wizard (/play), 11e only
             ├── stats.js          KPIs + Chart.js charts, heatmaps, trends
             ├── warmap.js         ⚠ Theatre of War — frozen invariants (MAP_SEED,
             │                     FACTION_HOMES, VIRTUAL_W/H)
             ├── ratings.js        ⚠ ADMIN-ONLY /rankings
             ├── player.js         per-player profile
-            ├── profile.js        self-serve army name + password
-            └── admin.js          users, audit log, seasons, guest promotion
+            ├── profile.js        self-serve army name, password, photo prompt
+            └── admin.js          users, audit log, seasons, guest promotion,
+                                  deleted items
 ```
 
 ## Permissions model
@@ -257,8 +368,11 @@ homes and colours), schema changes, new views, new endpoints.
 | Upload photos / layout pictures | – | ✓ | ✓ |
 | Delete a photo | – | own uploads only | ✓ |
 | Set own army name / change own password | – | ✓ | ✓ |
+| Start / score a live game (`/play`) | – | ✓ (own seat) | ✓ |
+| Watch someone else's live game | ✓ | ✓ | ✓ |
 | Hide game from stats | – | – | ✓ |
-| Delete a game (hard, cascades + unlinks files) | – | – | ✓ |
+| Delete a game (archived into the recycle bin, restorable) | – | – | ✓ |
+| Restore / permanently purge a deleted item | – | – | ✓ |
 | Set / change *another* user's army name | – | – | ✓ |
 | Manage users (create / promote / deactivate / reset password) | – | – | ✓ |
 | Promote guests to accounts | – | – | ✓ |
@@ -289,9 +403,25 @@ days. If you do want it on a schedule:
 chmod +x ~/sites/sites/40kResultsTracker/scripts/backup.sh
 mkdir -p ~/sites/backups
 
-# nightly at 03:15 — adjust as preferred (don't collide with base/backup.sh)
-( crontab -l 2>/dev/null; echo "15 3 * * * bash ~/sites/sites/40kResultsTracker/scripts/backup.sh >> ~/sites/backups/40k.log 2>&1" ) | crontab -
+# NOT 03:15 — that is exactly when ~/sites/base/backup.sh runs.
+( crontab -l 2>/dev/null; echo "45 3 * * * bash ~/sites/sites/40kResultsTracker/scripts/backup.sh >> ~/sites/backups/40k.log 2>&1" ) | crontab -
 ```
+
+**Known warts in `scripts/backup.sh`** (flagged by a security audit; the script
+is deliberately left as-is, so know what you're getting):
+
+- **This document used to suggest `15 3 * * *`**, which is the *same minute* as
+  `~/sites/base/backup.sh` — two concurrent `pg_dump`s against one Postgres every
+  night. Corrected above; check `crontab -l` if you installed it from an older
+  copy of this file.
+- **No `umask` / `chmod`.** `~/sites/base/backup.sh` sets `umask 077` and
+  `chmod 600`s its output; this one doesn't, so its dumps land `0664` in the same
+  shared `~/sites/backups` as the 0600 ones. A full-database dump is as sensitive
+  as the database.
+- **The host pruner never sees these files.** `~/sites/base/backup.sh` prunes
+  `pg_all_*.sql.gz` and `config_*.tar.gz` only. A `40k_db_*.sql.gz` is cleaned up
+  **only** by a later run of this script, so a one-off manual snapshot sits in
+  `~/sites/backups` forever.
 
 Tunable env vars (set inline before the script if needed):
 - `BACKUP_DIR` — where snapshots land (default `~/sites/backups`)
@@ -314,7 +444,9 @@ gunzip -c ~/sites/backups/40k_db_<date>.sql.gz \
 
 ## Known limitations / future work
 
-- Mobile UX is functional but desktop-first by request
+- ~~Mobile UX is functional but desktop-first by request~~ — the live tracker
+  (`/play`) and the Stats page have both had full mobile passes; the rest of the
+  site is still desktop-first
 - No CSV/JSON export yet
 - ~~No photo uploads~~ — **added**: photos and terrain-layout pictures, stored on
   a bind-mounted volume and served by Caddy (see "Photo / layout-picture storage")
@@ -322,9 +454,13 @@ gunzip -c ~/sites/backups/40k_db_<date>.sql.gz \
   (`DELETE /admin/games/:id`). "Hide from stats" is still the normal move
 - ~~Faction matchup matrix / head-to-head have no UI~~ — **added**: matchup
   heatmap and a head-to-head player picker on the Stats page
-- ~~No automated tests~~ — `api/test/` covers the pure helpers (scoring, glicko2,
-  whr, ratings, game-filter) via `npm test`. Routes, SQL and views are still
-  verified by hand
+- ~~No automated tests~~ — there are two suites now, see "Tests" above.
+  `scripts/test-unit.sh` covers the pure helpers (scoring, drafts, glicko2, whr,
+  ratings, game-filter) **and** the buildless frontend modules (game-rules,
+  army-list, nav-stack). `scripts/test-live.sh` covers the draft lifecycle,
+  draft permissions and deleted-items restore end-to-end against the live API and
+  real Postgres. Still verified by hand: SQL migrations against an empty
+  database, the war-map canvas, and every DOM-bearing view
 - `/games` reads are public, and so are the photo files under `/uploads/*`. Don't
   put anything in a game note or a photo you wouldn't post publicly
 - Same display name across two registered users would cause `resolvePlayerIdentities`

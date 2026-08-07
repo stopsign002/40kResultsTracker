@@ -21,6 +21,37 @@ Vanilla HTML/CSS/JS. **No build step**, no framework, no bundler. Caddy serves t
 
 There is no service worker, no IndexedDB, no router library. localStorage holds exactly two things, and they must stay distinct or the "Restore unsaved game?" prompt cross-contaminates: `tg40k:newGameDraft` (`views/game-form.js`, one in-flight new game, written only on a structural rerender) and `tg40k:liveDraft:<id>` (`views/live-game.js`, written on every mutation as the offline backstop, and cleared as soon as the server has the change — so its presence on load means this device holds edits the server never got).
 
+**Overlays are appended to `<body>`, not to `#app`** — modals, the photo viewer, the live-game draw picker. A route re-render therefore doesn't remove them, which is why `js/nav-stack.js` both drives the back button and sweeps orphans on a hash change. Anything you add in that shape needs a layer; see `js/README.md` "The back button".
+
+## No build step, and what that costs
+
+Nothing here is bundled, minified or hashed — `index.html` carries plain
+`<script type="module" src="/js/…">` tags with **no `?v=` stamp**. That is the
+whole point (edit a file, `git pull`, done), but it means the browser has nothing
+to tell it a file changed. Without an explicit header the app files carry only an
+ETag, so browsers apply **heuristic** freshness and serve a stale copy *without
+revalidating* — a deploy can go unseen for hours.
+
+The Caddy vhost therefore sets `Cache-Control: no-cache` on `/`, `*.html`,
+`*.js`, `*.css`, `*.webmanifest`. Cost is one 304 per file. If you ever see "my
+fix isn't live but it works in a private window", check that header first — see
+`DEPLOY.md`. (`/uploads/*` is the opposite case: UUID filenames, so it's served
+`immutable` for a year.)
+
+## Tests
+
+`scripts/test-unit.sh` mounts `app/` read-only into a container and runs the unit
+suite, which includes the frontend modules that are dependency-free enough to
+import in plain Node: `js/game-rules.js`, `js/army-list.js`, `js/nav-stack.js`
+and `js/components.js`. Nothing that touches the DOM is covered — views are still
+verified by hand. `scripts/test-live.sh` is the API integration suite and doesn't
+exercise this directory.
+
+Practical consequence when writing a shared module: **no side effects at module
+scope that assume a browser.** A bare `window.addEventListener` at the top level
+throws in Node before a single assertion runs, which is why `nav-stack.js` guards
+on `hasDom`.
+
 ## Conventions
 
 - **DOM via `el()` / `clear()`** from `js/components.js`. Don't introduce React, Vue, lit-html, htm, or template-literal HTML — the project is consciously framework-free.
@@ -28,6 +59,7 @@ There is no service worker, no IndexedDB, no router library. localStorage holds 
 - **Modal dialogs**: `confirmModal()` / `promptModal()` from `components.js`. Don't use native `confirm()` / `prompt()`.
 - **Toasts**: `toast(message, kind?)` from `components.js`. `kind: 'error'` styles red.
 - **Routing**: hash-based. `#/foo` → `routes` array in `app.js`. Update both the regex and `navItems` when you add a route.
+- **Anything that *opens* rather than *navigates*** — an overlay, a picker, a wizard step — registers a layer with `pushLayer()` from `js/nav-stack.js`, so the back button closes it instead of leaving the site.
 
 ## Theme
 
