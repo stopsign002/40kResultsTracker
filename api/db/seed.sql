@@ -788,3 +788,25 @@ UPDATE game_drafts
 SET submitted_at = updated_at
 WHERE submitted_game_id IS NOT NULL
   AND submitted_at IS NULL;
+
+-- ── Backfill the detachment library ────────────────────────────
+-- Every detachment ever typed into a game joins its faction's library. From
+-- now on that promotion happens at save time (promoteDetachments in
+-- lib/game-write.js); this catches everything recorded before it existed, so
+-- Admin → Detachments opens on a complete list rather than only the seeded
+-- rows. Matching is case-insensitive because UNIQUE (faction_id, name) is not.
+-- Idempotent: finds zero rows on the second run.
+INSERT INTO detachments (faction_id, name)
+SELECT DISTINCT ON (gp.faction_id, LOWER(TRIM(pd.detachment_name)))
+       gp.faction_id, TRIM(pd.detachment_name)
+  FROM player_detachments pd
+  JOIN game_players gp ON gp.id = pd.game_player_id
+ WHERE gp.faction_id IS NOT NULL
+   AND TRIM(pd.detachment_name) <> ''
+   AND NOT EXISTS (
+     SELECT 1 FROM detachments d
+      WHERE d.faction_id = gp.faction_id
+        AND LOWER(d.name) = LOWER(TRIM(pd.detachment_name))
+   )
+ ORDER BY gp.faction_id, LOWER(TRIM(pd.detachment_name)), pd.id
+    ON CONFLICT DO NOTHING;

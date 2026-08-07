@@ -38,7 +38,9 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   ├── README.md           per-script doc
 │   ├── backup.sh           nightly pg_dump → ~/sites/backups/, 30-day retention
 │   ├── test-unit.sh        the unit suite — no network, no DB, no container
-│   └── test-live.sh        the integration suite — needs the API + real Postgres up
+│   ├── test-live.sh        the integration suite — needs the API + real Postgres up
+│   └── build-mission-cards.py  rebuilds app/data/mission-cards-11e.json from the
+│                           Game Datacards mission dump; --check fails on drift
 ├── api/
 │   ├── README.md           service overview + npm scripts (start, test, typecheck)
 │   ├── Dockerfile          node:22-alpine; npm install --omit=dev; runs server.js
@@ -108,7 +110,7 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
 │   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
-│   └── test/                see "Testing" — 156 unit + 122 integration
+│   └── test/                see "Testing" — 175 unit + 132 integration
 │       ├── README.md       how to run + what's covered
 │       ├── game-scoring.test.js  38 cases pinning the camelCase payload contract
 │       ├── game-rules.test.js    34 — the client mirror, cross-checked payload-by-payload
@@ -127,13 +129,19 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │       └── integration/          ⚠ runs against the LIVE API and the REAL database
 │           ├── _harness.js               login/fixtures/cleanup — read its comments first
 │           ├── drafts-permissions.test.js 70 — every seat × every route
-│           ├── drafts-lifecycle.test.js   30 — create → autosave → submit → photos
+│           ├── drafts-lifecycle.test.js   32 — create → autosave → submit → photos,
+│           │                             and the running score on the live-games list
 │           ├── deleted-items.test.js      19 — archive / restore / purge, incl. the FK scrub
+│           ├── detachments-admin.test.js  8 — library promotion on save; rename/merge
+│           │                              across the library AND recorded games; 409 in_use
 │           └── zz-residue.test.js         3 — runs LAST; fails the build on leaked test data
 └── app/                    SERVED BY CADDY at /srv/40kResultsTracker/app
     ├── README.md           frontend overview
     ├── index.html          script tags for every JS module (no bundler)
     ├── css/style.css       YAAB-matched dark Warhammer theme — see "Critical invariants"
+    ├── data/               committed static data the app fetches at runtime
+    │   └── mission-cards-11e.json  the 11e mission deck as rules text; GENERATED
+    │                       by scripts/build-mission-cards.py — don't hand-edit
     └── js/
         ├── README.md       module roles
         ├── app.js          hash router, shell renderer, route table, nav links, error boundary
@@ -156,6 +164,10 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
         │                   'live:draft.updated' CustomEvents on document
         ├── lightbox.js     full-screen photo viewer; FLIP zoom + cycle + swipe
         ├── zip.js          dependency-free ZIP reader (Google Photos multi-download)
+        ├── mission-cards.js  the 11e deck as readable rules text — lazy-loads
+        │                   app/data/mission-cards-11e.json, matches cards by
+        │                   name, and renders one card or the whole deck in a
+        │                   modal. See "Mission card rules text"
         └── views/
             ├── README.md          view convention + how-to recipes
             ├── login.js           public login screen
@@ -663,7 +675,8 @@ export const stats     = { overview, factionWinRates, playerWinRates, factionMis
                             detachmentWinRates, trends, player, calendar };
 export const admin     = { users, createUser, updateUser, setVisibility, deleteGame, audit,
                             guestsPreview, promoteGuests,
-                            deleted, restoreDeleted, purgeDeleted };   // the recycle bin
+                            deleted, restoreDeleted, purgeDeleted,     // the recycle bin
+                            detachments, addDetachment, renameDetachment, deleteDetachment };
 export const seasons   = { list, start };
 export const ratings   = { leaderboard, suggest, history };   // admin-only
 ```
@@ -704,7 +717,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only. Responds **201**. Server-side caps: `MAX_IMAGE_BYTES` 8MB **decoded** (413), `MAX_PER_GAME` 40 photos (409), MIME must be jpeg/png/webp (415) |
 | PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string, isMap?: boolean }` — each flag is clear-then-set, because the partial unique index rejects a second winner while the old one is still flagged |
 | DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
-| GET | `/drafts` | **public** | **every** in-progress game, not just yours — `submitted_at IS NULL`, yours sorted first, then newest `updated_at`. A game nobody can find is a game nobody can watch. Each row carries enough to render a list card: `isOwner`, `viewerSeat`, `playedAt`, `pointsLimit`, `playerNames[]`, `playerFactionIds[]` |
+| GET | `/drafts` | **public** | **every** in-progress game, not just yours — `submitted_at IS NULL`, yours sorted first, then newest `updated_at`. A game nobody can find is a game nobody can watch. Each row carries enough to render a list card: `isOwner`, `viewerSeat`, `playedAt`, `pointsLimit`, `playerNames[]`, `playerFactionIds[]`, `scores[]` (the running total per seat, from the real `computeFinalScores` — `[null, null]` until both seats exist) |
 | POST | `/drafts` | auth | body **is** the initial payload, stored verbatim as JSONB → `{ id, shareToken, rev }`. Responds **201** |
 | GET | `/drafts/:id` | **public** | the full draft + `images[]`, plus computed `viewerSeat` (1 = owner, 2 = opponent, `null` = spectator) and `isOwner`. `share_token` is returned to the **owner only** — it is the join credential. Reads are public like games/stats/the war map; writing is what's gated |
 | PATCH | `/drafts/:id` | auth, **seat-scoped** | the autosave endpoint. `{ baseRev, clientId, patch, currentStep }` → `{ rev, stale }`. Read-merge-write under `SELECT … FOR UPDATE` in `withTx`. 403 if an invited opponent tries to write anything but their own seat; 409 once submitted. Broadcasts `draft.updated`. See "Live game tracker" |
@@ -743,6 +756,10 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/admin/deleted` | admin | the recycle bin, newest first: `[{ id, kind, original_id, label, deleted_by_name, deleted_at, canRestore }]`. `canRestore` is false when the original id is occupied in the live table again — the re-insert would collide on the primary key |
 | POST | `/admin/deleted/:id/restore` | admin | re-insert the archived row-set → `{ ok, kind, restoredId, repaired }`. `repaired` lists what the FK scrub had to change (see "Restorable deletes"). Broadcasts `game.saved` or `draft.updated` |
 | DELETE | `/admin/deleted/:id` | admin | **permanent.** Drops the bin row and unlinks the photo bytes — the only path that touches the files |
+| GET | `/admin/detachments?factionId=N` | admin | the faction's detachment library: `[{ id, name, games, inLibrary }]`. A FULL OUTER JOIN of the `detachments` rows against the names actually used in games, so a name recorded before promotion existed still shows (with `id: null`, `inLibrary: false`) |
+| POST | `/admin/detachments` | admin | `{ factionId, name }` → adds to the library. 409 if it's already there (case-insensitively) |
+| PATCH | `/admin/detachments` | admin | `{ factionId, from, to }` — rename across the library **and every game that used the old name**. Renaming onto a name that already exists is a **merge**; a seat that held both spellings is de-duplicated and its derived `game_players.detachment_name` recomputed. Returns `{ ok, seatsUpdated, merged }` |
+| DELETE | `/admin/detachments?factionId=N&name=…` | admin | drop a library entry. **409 `in_use`** while any recorded game still uses the name — rename/merge it instead, or the autocomplete UNION would just resurrect it |
 | GET | `/admin/audit[?limit=100]` | admin | recent audit_log rows DESC by created_at; `limit` is capped at 500 |
 | GET | `/admin/guests/preview` | admin | read-only: which guests a promotion run would `create` vs `link` |
 | POST | `/admin/promote-guests` | admin | promote all unlinked guests to inactive accounts (idempotent, war-map-safe) |
@@ -751,7 +768,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
 | GET | `/events` | public | Server-Sent Events stream; emits `game.saved`, `season.changed`, `draft.updated`. Comment heartbeat every 25s. The subscriber records `req.session?.userId` when there is one, but a session is **not** required — anonymous viewers get live updates too, which is exactly why `draft.updated` carries **no draft content**, only `{ id, rev, by }` |
 
-**Total: 66 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
+**Total: 70 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
 
 ```bash
 grep -hE "(router|mapRouter)\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
@@ -1254,7 +1271,7 @@ backfilled to **10** (see the invariant table).
 | Detachments | one per player | **many** per player (`player_detachments`) |
 | Secondaries | 2 slots per round; drawn and scored in the same round | cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored) |
 | Challenger cards | yes | **none** — `serializeDraft()` drops them and `computeFinalScores` ignores them |
-| Score ceiling | `min(100, primary + secondary + challengers)` | `min(45, primary) + min(45, secondary)` — two independent halves, no cross-subsidy |
+| Score ceiling | `min(100, primary + secondary + challengers)` | `min(45, primary) + min(45, secondary)` — two independent halves, no cross-subsidy — **plus 15 per half per battle round**, enforced as an input ceiling in the live tracker (see below), not as a clamp in the scoring maths |
 | Deployment map / mission rule | game-level | game-level (unchanged) |
 
 - **Scoring** lives in `lib/game-scoring.js`: `computeFinalScores(players, edition)`.
@@ -1557,6 +1574,59 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   `round_number` = the round it left the hand, `score` 0, `was_discarded`, so
   game detail still reads back chronologically. A discarded card can be drawn
   again (nothing enforces uniqueness); a card in hand or already scored can't.
+- **Remove (✕) is not Discard, and both have to exist.** Discard is a real game
+  event and stays on the record — it writes the round the card left the hand.
+  Remove splices the entry out of `p.secondaries` entirely, for the mis-tap in
+  the draw picker: that card never happened. Recording a fat-fingered draw as a
+  discard would put a card the player never held into the game's history, and
+  the picker's `taken` set (which excludes discards, since a discarded card
+  genuinely returns to the deck) would keep offering the *right* card as if it
+  were still available. It sits on both in-hand and settled rows, behind a
+  confirm — this is a phone during a game. `game-form.js` already had the
+  equivalent: clearing a deck row's three inputs prunes the entry.
+- **`/games/new` needed no delete affordance** for the same reason — its 11e
+  layout is card-major, so "remove" is just emptying the row. The live tracker
+  is the only surface where a card is a discrete object you added.
+- **The 15-per-round caps are enforced where a number is ENTERED, not in the
+  scoring maths.** 11e caps each half at 15 VP per battle round as well as 45
+  per game. The primary stepper's ceiling is `E11_PRIMARY_ROUND_CAP` (it was an
+  arbitrary 20), and scoring a secondary is offered only the headroom the round
+  has left — `15 − sumSecondaryForRound(p, n)` — refusing outright at 0 and
+  clamping with a toast rather than silently truncating. Both numbers come from
+  the mission pack (`limits.primaryRound` / `limits.secondaryRound` in
+  `app/data/mission-cards-11e.json`) and a unit test asserts they still match.
+  **Do not "finish the job" by clamping per round inside `calcTotal` /
+  `computeFinalScores`.** Those run on every save, including `PUT /games/:id`,
+  so a per-round clamp there would silently rewrite the total of any
+  already-recorded game the next time someone opened and saved it — the same
+  hazard that shaped the score-detail ladder. A test pins the current
+  behaviour: a game breaching 15 in one round still reports its raw total on
+  both sides.
+  **`/games/new` enforces the same two ceilings**, for 11e only. Its rounds
+  table clamps primary and (in `rounds` mode) secondary on blur; its card-major
+  11e deck is the harder case, because there the ceiling spans ROWS — two cards
+  that both scored in round 3 share it, so a per-input `max` is necessary and
+  nowhere near sufficient. Both surfaces therefore call the one shared
+  `secondaryRoundHeadroom(p, roundNumber, exclude)` in `game-rules.js`. The
+  `exclude` argument is load-bearing: without it, re-saving a card at its own
+  current number would ratchet the value down a little every time. The form also
+  re-clamps when a card's **scored round** moves, since dragging a card from
+  round 2 to round 3 can breach round 3 without its own score changing at all.
+  **10e is left on its old ceilings on purpose** — its packs score differently,
+  and `/games/new` is the only path for a 10e game, so a wrong cap there would
+  block a legitimate historical write-up with no way around it.
+- **The live-games list shows a running score**, because the point of `#/play`
+  as a tab is glancing at games in flight. `GET /drafts` computes it with the
+  real `computeFinalScores` on a throwaway deep copy (it mutates), rather than a
+  lighter sum written for the endpoint: a third scoring implementation is a
+  third thing that can disagree, and the list disagreeing with the wizard is
+  precisely the confusion this removes. An integration test asserts the listed
+  score equals what submitting that draft files. The row **hides** the score
+  while a game is in `setup` — `0 – 0` there reads as "losing badly" rather than
+  "not started" — and the list follows `live:draft.updated` so the numbers move
+  without a reload. No `by`/`clientId` filtering is needed here (unlike the
+  wizard): nothing on this view is being typed into, so a re-read can't clobber
+  anything.
 - **`game_rounds.cp_remaining` had no UI anywhere** before this — it was plumbed
   server-side and never written. The wizard's ± stepper is its first consumer.
 - **The chess clock banks seconds as they elapse** rather than computing from a
@@ -1579,6 +1649,8 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   `<input type="file">` can offer the camera **or** the library but never both —
   `capture: 'environment'` hides the library outright — so there are two hidden
   inputs and the library one is `multiple`. Don't "simplify" them back together.
+  The same constraint is why the between-rounds nudge is a three-way choice
+  rather than a confirm — see below.
 - **Round badges sit over the photo**, bottom-right, as
   `<span class="photo-badge is-round">`, captioned `Round N` or `End of round N`
   (the latter only from the between-rounds nudge). The same class renders on game
@@ -1594,8 +1666,16 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   a letterbox.
 - **Between-rounds "snap a photo?" prompt**, asked at most once per round,
   opt-out per account via `users.prompt_round_photo` (checkbox in
-  `views/profile.js`). The round screen keeps its own upload control either way,
-  so turning the nudge off never removes the capability.
+  `views/profile.js`). The round screen keeps its own controls either way, so
+  turning the nudge off never removes the capability. It offers **both** ways in
+  — Take photo and Upload — for the reason in the next bullet: the camera-vs-
+  library choice has to be made before the picker opens, so a binary
+  `confirmModal` could only ever offer one of them, and a shot already sitting on
+  the phone couldn't answer the nudge. That's what `choiceModal` in
+  `components.js` exists for; it resolves to the chosen value or `null`, keeping
+  the same "back means never mind" contract as the other two modals. Either
+  choice stays on the round screen rather than advancing — the picker has to
+  close first.
 - **Full-bleed layout** via the `live-game-mode` body class — see pitfall #9 for
   the teardown requirement.
 
@@ -1661,6 +1741,33 @@ player total; `game_rounds.time_seconds` is the optional per-round breakdown.
   banks seconds into the current round as they elapse, so a tracked game arrives
   fully clocked and the derived total falls out of the existing rule — no new
   code on the display side.
+- **A physical chess clock on "time up" is entered as a READING, not a
+  duration.** Such a clock is never reset between rounds — it keeps counting
+  while that player takes their turn — so what it shows at the end of round N is
+  the player's *cumulative* time. The tracker's "Chess clock reading" field
+  therefore takes the number off the device and derives the round as the
+  difference against everything banked before it
+  (`roundTimeFromClock(p, n, seconds)` in `game-rules.js`; the running total is
+  `cumulativeTimeThrough(p, n - 1)`).
+  **Nothing downstream learns about clock readings** — the subtraction happens
+  at the point of entry and what gets stored is still `game_rounds.time_seconds`
+  per round. That also gives a free consistency property, pinned by a test:
+  because `resolvePlayerTimes` makes the player total the sum of the rounds, the
+  final clock reading and `game_players.time_seconds` are the same number.
+  Two details that are not incidental:
+  - **The field displays the reading, not the round.** You are copying a number
+    off a device sitting in front of you, and being able to compare the two at a
+    glance is the whole point. The derived round duration shows underneath.
+  - **A reading that goes backwards is refused, not stored.** A count-up clock
+    cannot read less than it did last round, so that is a typo;
+    `roundTimeFromClock` returns `null` and the field says what the clock stood
+    at, rather than recording a negative round or silently zeroing it. Reading
+    *exactly* the previous total is allowed — that's a 0-second round, which is
+    a real thing when someone passes.
+  - An **unclocked round counts as zero** rather than breaking the chain, so
+    forgetting to note round 2 doesn't make round 3 unenterable.
+  The app's own stopwatch is unchanged and still there; both write the same
+  field, because people time games both ways.
 - **Entry format** (`parseDuration()` in `app/js/game-rules.js`): `m:ss`, `h:mm:ss`, or
   a bare number meaning **minutes** (`90` → 1:30:00, `7.5` → 7:30). Rejects
   `12:99` and other nonsense rather than coercing. `fmtDuration()` in
@@ -1691,6 +1798,103 @@ entry order.
 - **Back-compat**: a payload with no `detachments` array falls back to the
   legacy `detachmentName` string, so an old client still saves correctly.
   `seed.sql` backfills one child row per historical `detachment_name`.
+
+### The library is a real table now, and admin-editable
+
+A detachment typed into a game is **promoted into `detachments`** on save —
+`promoteDetachments(client, factionId, names)` in `lib/game-write.js`, called
+from `insertPlayerChildren`, so all three write paths (`POST /games`,
+`PUT /games/:id`, draft submit) get it. Matching is case-insensitive, because
+`UNIQUE (faction_id, name)` is not: without the `LOWER()` guard "gladius task
+force" would sit next to "Gladius Task Force" as a separate library row.
+
+Before this, a typed detachment existed **only** as free text in
+`player_detachments`, and the suggestion list was inferred by UNIONing those
+names into `/reference/factions/:id/detachments`. That mostly worked, but the
+library was a side effect of game history rather than a thing anyone owned:
+deleting the game deleted the suggestion, and a typo was permanent and
+uncorrectable except by editing every game that carried it.
+
+- **The UNION in `reference.js` stays.** It is what still surfaces names
+  recorded before promotion existed, on installs that haven't run the backfill.
+- **`seed.sql` backfills** every historical name into the library, idempotently
+  (it found 6 on this box; 170 → 176 rows).
+- **Admin → Detachments** (`/admin/detachments*`, `buildDetachmentsPanel` in
+  `views/admin.js`) is where a mistake gets fixed. Rename rewrites the library
+  **and** every `player_detachments` row for that faction, de-duplicates a seat
+  that ended up holding both spellings, and recomputes the derived
+  `game_players.detachment_name`. Renaming onto an existing name is therefore a
+  merge — that's the intended tool for two spellings of one detachment.
+  Delete refuses (409 `in_use`) while games still reference the name, because
+  deleting the library row alone would leave the UNION resurrecting it.
+
+**Why this is allowed here when secondary cards are match-only.** "Security
+posture" records the opposite decision for `secondary_cards`: an unrecognised
+card name auto-inserted into a *shared mission pack*, where one person's typo
+reached everyone's draw picker with **no way to remove it**. The difference is
+the last clause. Detachments were already shared through the UNION, so
+promotion changes durability rather than exposure — and it ships with the
+admin UI that the card case lacked. Don't read this as licence to re-open
+auto-insert for cards.
+
+**The trap it re-armed.** The integration fixtures save games carrying
+`ZZ `-prefixed detachment names, so promotion put three of them into a real
+faction's shared library on the first run — with the suite green, because
+`cleanup()` and `assertNoResidue()` only knew about the mission-pack tables.
+Both now sweep and assert `detachments` too. **Any new table the server writes
+on a user's behalf needs the same two lines**; see "Testing".
+
+---
+
+## Mission card rules text (`app/js/mission-cards.js`)
+
+The 11e deck as readable prose, so a game can be played off the app when the
+physical cards aren't on the table. Tap a secondary's name anywhere it appears —
+the live tracker's hand, the draw picker, `/games/new`'s deck rows, game
+detail — and its card opens. Same for a player's primary mission. The live
+tracker's header also carries a 📖 button that opens the **whole deck**, and
+that one is available to spectators too: reading is not an edit.
+
+### Where the data comes from
+
+`app/data/mission-cards-11e.json` — a **committed static asset**, not a DB
+table and not a runtime fetch from anyone else's server. Built by
+`scripts/build-mission-cards.py` from
+`game-datacards/datasources` → `11th/gdc/missions/chapter_approved_2026_2027.json`,
+which is the **same repo and the same GW-app APK extraction** the sister yaab
+site already trusts for faction datasheets — just a different file. Upstream is
+~500KB because every string carries eight translations; the script keeps English
+only and drops the app-runtime plumbing (uuids, input widget types,
+scorable-period lists, layout presets), landing at ~51KB.
+
+- `python3 scripts/build-mission-cards.py` rewrites the asset.
+  `--check` rebuilds into memory and exits non-zero if the committed file has
+  drifted from upstream, without writing. `--from-file` skips the download.
+- It **refuses to write** unless it sees exactly 25 primaries and 18
+  secondaries, each with at least one scoring objective — a silently truncated
+  scrape is the failure mode worth catching, not a crash.
+- Verified at build time against this box's data: all 18 seeded secondary names
+  and all 25 primary names resolve, and the client's `PRIMARY_MATRIX` agrees
+  with GDC's 25 disposition pairings cell for cell.
+
+### Two things not to "fix"
+
+- **Lookup is by name, case- and punctuation-insensitively** (`foldName`). GDC
+  title-cases every word ("Bring It Down", "Burden Of Trust", "Engage On All
+  Fronts") where `seed.sql` follows GW's own casing ("Bring it Down"). Don't
+  rename either side to make an exact match work — `seed.sql` carries a guarded
+  rename *to* GW casing specifically so existing `card_id`s survive, and the
+  denormalised `player_secondaries.card_name` on recorded games goes with it.
+- **Card prose is rendered as DOM nodes, never `innerHTML`.** The source marks
+  keywords with `**…**`; `richText()` splits on the marker and emits real text
+  nodes and `<strong>` elements, so card text cannot inject markup.
+
+The asset is fetched **lazily on first tap** and cached in module scope —
+nobody browsing the games list needs 51KB of mission prose. Caddy's `@nocache`
+matcher covers `*.html *.js *.css`, not `.json`, so the fetch passes
+`cache: 'no-cache'` itself to force revalidation. 10e cards are deliberately
+**not** linked in game detail: the 11e deck can't answer for Pariah Nexus, and
+an affordance that can only say "no rules text on file" is worse than none.
 
 ---
 
@@ -1851,21 +2055,21 @@ To change behaviour, the tunables in `ratings.js` are the dial; the math in `gli
 
 ## Testing
 
-**278 tests in two suites.** Both are `node:test` — no framework, no assertion
+**307 tests in two suites.** Both are `node:test` — no framework, no assertion
 library, no mocking library. Run the unit suite before every deploy; run the
 integration suite before anything that touches `drafts.js`, `admin.js`,
 `archive.js` or the schema.
 
 ```bash
-bash scripts/test-unit.sh                    # 156 tests, ~1.5s, no network, no DB
-bash scripts/test-live.sh                    # 122 tests, live API + real Postgres
+bash scripts/test-unit.sh                    # 175 tests, ~1.5s, no network, no DB
+bash scripts/test-live.sh                    # 132 tests, live API + real Postgres
 bash scripts/test-live.sh drafts-lifecycle   # one file
 ```
 
 Both shell out to `docker run`, which is why they live in `scripts/` rather than
 as npm scripts. `npm test` inside `api/` runs the same unit glob on the host.
 
-### Unit suite (`scripts/test-unit.sh`) — 156 tests, 10 files
+### Unit suite (`scripts/test-unit.sh`) — 175 tests, 10 files
 
 `--network none`, no database, no containers. It mounts `app/` **read-only**,
 because several suites test *frontend* modules — they're dependency-free ES
@@ -1894,7 +2098,7 @@ The three additions worth knowing about:
   **the route never moves while a layer is open** — the failure this module
   exists to prevent.
 
-### Integration suite (`scripts/test-live.sh`) — 122 tests, 4 files
+### Integration suite (`scripts/test-live.sh`) — 132 tests, 5 files
 
 Joined to the `web` docker network, hitting `40k-api:3000` and `postgres:5432`
 directly — no Caddy, no NAT loopback (which doesn't work on this host anyway).
@@ -1916,6 +2120,15 @@ secondary cards into the live 11e mission pack**, where they showed up in every
 user's draw picker with no way to remove them. (It's also why secondaries are
 match-only now — see "Security posture".) **If you add a table, add it to
 `cleanup()` in FK-safe order.**
+
+It happened a **second** time, exactly as predicted by that sentence, when
+`promoteDetachments` started writing to `detachments`: three `ZZ ` detachments
+landed in a real faction's shared library and the suite still went green,
+because the sweep and the assertion both enumerated only the mission-pack
+tables. `cleanup()` and `assertNoResidue()` now cover `detachments` as well.
+The generalisation worth carrying forward: **the residue guard has to grow
+whenever the server gains a new "write this on the user's behalf" table**, and
+a passing run is not evidence that it did.
 
 ### Two harness gotchas (`api/test/integration/_harness.js`)
 

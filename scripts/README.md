@@ -1,8 +1,9 @@
 # `scripts/` — host-side scripts
 
-Small bash utilities run on the production host, not inside the container. Two
-kinds live here: the backup snapshot, and the two test runners (which shell out
-to `docker run`, which is why they're host-side rather than `npm` scripts).
+Small utilities run on the production host, not inside the container. Three
+kinds live here: the backup snapshot, the two test runners (which shell out to
+`docker run`, which is why they're host-side rather than `npm` scripts), and the
+mission-card data build.
 
 ## `test-unit.sh` — pure unit tests
 
@@ -60,8 +61,11 @@ That last check exists because it already went wrong once: `resolveGameLookups`
 auto-inserts a reference row for any free-text card/mission name a submitted game
 carries (it's what powers "+ Card not listed"), so a test that submitted an
 invented secondary permanently added that card to the real pack and it showed up
-in every user's draw picker. If you add a table, add it to `cleanup()` in FK-safe
-order.
+in every user's draw picker. **If you add a table, add it to `cleanup()` in
+FK-safe order** — this bit twice: promoting typed detachments into a faction's
+shared library leaked three `ZZ ` fixtures with the suite still green, because
+both the sweep and the residue assertion enumerated only the mission-pack
+tables. Both now cover `detachments` too.
 
 ### Note for both runners
 
@@ -72,6 +76,37 @@ bare directory argument.
 
 Both also fall back to `sg docker -c` when plain `docker ps` fails, for a shell
 that hasn't picked up the `docker` group yet (see `~/sites/CLAUDE.md`).
+
+## `build-mission-cards.py` — the 11e mission deck
+
+```bash
+python3 ~/sites/sites/40kResultsTracker/scripts/build-mission-cards.py           # rewrite the asset
+python3 ~/sites/sites/40kResultsTracker/scripts/build-mission-cards.py --check   # fail on drift, write nothing
+python3 ~/sites/sites/40kResultsTracker/scripts/build-mission-cards.py --from-file dump.json
+```
+
+Rebuilds `app/data/mission-cards-11e.json` — the rules text behind every mission
+name you can tap in the app — from `game-datacards/datasources`,
+`11th/gdc/missions/chapter_approved_2026_2027.json`. That is the **same repo and
+the same GW-app APK extraction** the sister yaab site already trusts for faction
+datasheets, just a different file.
+
+Python rather than bash because it is a JSON transform, and it runs on the host
+directly (there is no `node` on this box outside containers).
+
+- Upstream is ~500KB because every string carries eight translations. The script
+  keeps **English only** and drops the app-runtime plumbing — uuids, input widget
+  types, scorable-period lists, recommended layout presets — landing at ~51KB.
+- It **refuses to write** unless it sees exactly **25 primaries and 18
+  secondaries**, each with at least one scoring objective. A silently truncated
+  upstream is the failure mode worth catching; a hard crash is not.
+- `--check` rebuilds into memory and exits non-zero if the committed file has
+  drifted, without touching it. Safe for a cron or a pre-deploy sanity run.
+
+**The output is committed**, and deliberately not fetched at runtime — the app
+serves it as a static asset off disk and never talks to GitHub. Re-run this when
+GW publishes a new mission pack; nothing is scheduled, because the deck changes
+about once a year.
 
 ## `backup.sh`
 

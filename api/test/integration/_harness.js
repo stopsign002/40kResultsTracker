@@ -233,6 +233,12 @@ export async function cleanup() {
   for (const table of ['primary_missions', 'deployment_maps', 'mission_rules', 'challenger_cards']) {
     await pool.query(`DELETE FROM ${table} WHERE name LIKE 'ZZ %'`).catch(() => {});
   }
+  // Same trap, second door: promoteDetachments (lib/game-write.js) puts every
+  // detachment a saved game carries into that faction's shared library, so a
+  // fixture named "ZZ Gladius Task Force" turns up in everyone's autocomplete.
+  // It leaked three of them the first time this ran, with the suite green —
+  // the sweep above only knew about mission-pack tables.
+  await pool.query(`DELETE FROM detachments WHERE name LIKE 'ZZ %'`).catch(() => {});
 
   // Archived items are invisible to the sweeps above: archiving DELETES the
   // games/game_drafts row (which is how cleanup finds the photo folder) while
@@ -272,6 +278,7 @@ export async function assertNoResidue() {
        (SELECT count(*) FROM primary_missions WHERE name LIKE 'ZZ %') AS missions,
        (SELECT count(*) FROM deployment_maps WHERE name LIKE 'ZZ %') AS maps,
        (SELECT count(*) FROM mission_rules WHERE name LIKE 'ZZ %') AS rules,
+       (SELECT count(*) FROM detachments WHERE name LIKE 'ZZ %') AS detachments,
        (SELECT count(*) FROM deleted_items WHERE deleted_by_name LIKE $1) AS archived`,
     [TEST_PREFIX + '%']
   );
@@ -284,6 +291,7 @@ export async function assertNoResidue() {
   assert.equal(Number(r.cards), 0, 'test secondary cards leaked into a real mission pack');
   assert.equal(Number(r.missions), 0, 'test primary missions leaked into a real mission pack');
   assert.equal(Number(r.maps), 0, 'test deployment maps leaked into a real mission pack');
+  assert.equal(Number(r.detachments), 0, "test detachments leaked into a faction's shared library");
   assert.equal(Number(r.rules), 0, 'test mission rules leaked into a real mission pack');
   assert.equal(Number(r.archived), 0, 'test items left behind in the deleted-items archive');
 }

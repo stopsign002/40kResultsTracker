@@ -1556,10 +1556,18 @@ body.lb-lock { overflow: hidden; }
 .lg-card-btn.is-score { border-color: var(--success); color: var(--success); }
 .lg-card-btn.is-score:active { background: var(--success); color: var(--bg); }
 .lg-card-btn.is-discard { border-color: var(--border-light); color: var(--text-dim); }
+.lg-card-btn.is-remove {
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  border-color: var(--border);
+  color: var(--text-dim);
+}
 .lg-card-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (hover: hover) and (pointer: fine) {
   .lg-card-btn.is-score:hover { background: var(--success); color: var(--bg); }
   .lg-card-btn.is-discard:hover { border-color: var(--danger); color: var(--danger); }
+  .lg-card-btn.is-remove:hover { border-color: var(--danger); color: var(--danger); }
 }
 .lg-card.is-scored { border-color: var(--success); opacity: 0.75; }
 .lg-card.is-discarded { opacity: 0.45; }
@@ -1759,4 +1767,209 @@ body.lb-lock { overflow: hidden; }
     padding: 10px max(14px, env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom, 0px)) max(14px, env(safe-area-inset-left));
   }
   .lg > .lg-seat-tabs { padding: 10px 14px 0; }
+}
+
+/* ── Mission cards: rules text from the 11e deck ─────────────── */
+/* Reading a card is a wall of prose next to a numeric prompt, so the dialog
+   holding one is allowed to be wider and to scroll inside itself rather than
+   growing the page. */
+.modal-dialog:has(.mc-card), .modal-dialog:has(.mc-browser) { max-width: 620px; }
+.modal-dialog .modal-body:has(.mc-card),
+.modal-dialog .modal-body:has(.mc-browser) { max-height: 70dvh; overflow-y: auto; }
+
+.mc-dispositions {
+  font-family: var(--font-display);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.mc-lore {
+  font-style: italic;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.mc-description {
+  background: var(--panel-alt);
+  border-left: 2px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.mc-objective, .mc-action {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.mc-objective:first-child, .mc-action:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+.mc-objective-name {
+  font-family: var(--font-display);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+.mc-when, .mc-action-line { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.mc-when-label, .mc-action-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.mc-score { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; }
+.mc-vp {
+  flex-shrink: 0;
+  min-width: 44px;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--success);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  line-height: 1.1;
+}
+.mc-vp-unit { display: block; font-size: 9px; letter-spacing: 0.1em; color: var(--text-dim); }
+.mc-score-text { flex: 1; min-width: 0; font-size: 13px; line-height: 1.5; }
+.mc-score-tags { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.mc-mode, .mc-cap {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1px 5px;
+  color: var(--text-dim);
+}
+.mc-mode.is-tactical { border-color: var(--info); color: var(--info); }
+.mc-mode.is-fixed { border-color: var(--warning); color: var(--warning); }
+
+.mc-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.mc-tab {
+  flex: 1;
+  min-height: 40px;
+  font-family: var(--font-display);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--card-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.mc-tab.is-active { border-color: var(--accent); color: var(--text); }
+.mc-list { display: flex; flex-direction: column; gap: 4px; max-height: 34dvh; overflow-y: auto; }
+.mc-list-item {
+  text-align: left;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  min-height: 44px;
+  color: var(--text);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.mc-list-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mc-list-name { font-size: 14px; }
+.mc-list-meta {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.mc-detail { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+.mc-detail-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.mc-detail-empty { color: var(--text-dim); font-size: 13px; }
+
+/* The affordance on a card name that has rules text behind it. */
+.mc-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px dotted var(--border-light);
+}
+.mc-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .mc-open:hover { border-bottom-color: var(--accent); }
+  .mc-list-item:hover { background: var(--card-hover); }
+}
+
+/* Draw picker rows carry a reader alongside the pick target, so you can check
+   what a card does without committing to drawing it. */
+.lg-picker-row { display: flex; gap: 6px; align-items: stretch; }
+.lg-picker-row .lg-picker-item { flex: 1; min-width: 0; }
+.lg-picker-info {
+  flex: 0 0 48px;
+  min-height: 48px;
+  font-size: 15px;
+  background: var(--card-bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.lg-picker-info:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lg-picker-info:active { transform: translateY(1px); }
+@media (hover: hover) and (pointer: fine) {
+  .lg-picker-info:hover { color: var(--text); border-color: var(--border-light); }
+}
+
+/* Per-battle-round ceiling shown on the label it constrains. 11e caps each half
+   at 15 VP per round as well as 45 per game, and the round one is the easy one
+   to breach by accident. */
+.lg-field > label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.lg-cap {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  text-transform: none;
+  flex-shrink: 0;
+}
+.lg-cap.is-full { color: var(--warning); }
+
+/* Running score on a live-games list row, so the tab reads at a glance. */
+.lg-list-score {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 10px;
+}
+.lg-list-score .lg-list-score-sep { color: var(--text-dim); margin: 0 3px; }
+
+/* Chess-clock entry: you type what the physical clock reads (cumulative, it is
+   never reset between rounds) and the round's own duration falls out. */
+.lg-clock { display: flex; flex-direction: column; gap: 4px; }
+.lg-clock input { font-size: 16px; min-height: 44px; font-variant-numeric: tabular-nums; }
+.lg-clock-derived {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  min-height: 14px;
 }

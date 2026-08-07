@@ -37,8 +37,8 @@ test('the 11e mission pack still holds exactly its 18 seeded secondaries', async
   }
 });
 
-test('no mission pack has grown a card, mission, layout or rule named like a test fixture', async () => {
-  for (const table of ['secondary_cards', 'primary_missions', 'deployment_maps', 'mission_rules', 'challenger_cards']) {
+test('no mission pack or faction has grown a card, mission, layout, rule or detachment named like a test fixture', async () => {
+  for (const table of ['secondary_cards', 'primary_missions', 'deployment_maps', 'mission_rules', 'challenger_cards', 'detachments']) {
     const { rows } = await pool.query(`SELECT name FROM ${table} WHERE name LIKE 'ZZ %'`);
     assert.equal(rows.length, 0,
       `${table} still holds test fixtures: ${rows.map((r) => r.name).join(', ')}`);

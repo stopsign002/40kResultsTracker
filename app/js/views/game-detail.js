@@ -3,6 +3,7 @@ import { openLightbox } from '../lightbox.js';
 import { extractImagesFromZip, isZipFile } from '../zip.js';
 import { shrink } from '../images.js';
 import { el, fmtDate, pill, toast, confirmModal, fmtDuration } from '../components.js';
+import { missionLink } from '../mission-cards.js';
 
 export async function renderGameDetail(state, gameId) {
   const root = el('div', { class: 'fade-in' });
@@ -485,7 +486,9 @@ function buildPlayerCard(p, g) {
         el('th', { style: { textAlign: 'right' } }, 'Score'),
       ].filter(Boolean))),
       el('tbody', {}, orderedSecondaries.map(s => el('tr', {}, [
-        el('td', {}, s.card_name),
+        // 10e decks aren't in the 11e card data, so don't offer a link that
+        // could only ever answer "no rules text on file".
+        el('td', {}, (is11 && missionLink('secondary', s.card_name)) || s.card_name),
         is11 ? el('td', { class: 'muted' }, s.drawn_round ? `R${s.drawn_round}` : '—') : null,
         el('td', { class: 'muted' },
           s.round_number ? `R${s.round_number}` : (is11 ? 'Never' : 'Fixed')),
@@ -543,8 +546,10 @@ function buildPlayerCard(p, g) {
         (p.detachments && p.detachments.length ? p.detachments.join(', ') : p.detachment_name),
       ].filter(Boolean).join(' — ') || 'Faction unknown',
     ]),
-    is11 ? el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } },
-      `${p.force_disposition ? p.force_disposition + ' · ' : ''}Primary: ${p.primary_mission_name || p.primary_mission_ref || '—'}`) : null,
+    is11 ? el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, [
+      `${p.force_disposition ? p.force_disposition + ' · ' : ''}Primary: `,
+      missionLink('primary', p.primary_mission_name || p.primary_mission_ref) || '—',
+    ]) : null,
     hasRoundDetail ? el('h3', {}, 'Rounds') : null,
     hasRoundDetail ? el('div', {}, roundRows) : null,
     hasRoundDetail ? null : el('div', { class: 'muted', style: { fontSize: '13px' } },

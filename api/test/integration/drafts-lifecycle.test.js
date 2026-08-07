@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
-  pool, createUser, login, reference, TINY_JPEG, playablePayload,
+  pool, createUser, login, anon, reference, TINY_JPEG, playablePayload,
   dirExists, draftDir, gameDir, cleanup, closePool, uniq,
 } from './_harness.js';
 
@@ -202,6 +202,52 @@ test('submitting a draft makes it appear in the games list', async () => {
   assert.deepEqual(found.data.map((g) => g.id), [gameId]);
   assert.ok(JSON.stringify(found.data).includes(p1));
   assert.ok(JSON.stringify(found.data).includes(p2));
+});
+
+/* ── The live-games list shows running scores ──────────────────── */
+
+// GET /drafts carries `scores` so #/play reads at a glance. It is computed with
+// the REAL computeFinalScores on a throwaway copy, so the list can never
+// disagree with the wizard's own readout or with what the game finally files as.
+test('the live-games list reports a running score computed the same way the game will be filed', async () => {
+  const draftId = await newDraft(ownerC, payload([
+    seat(guest('list_a'), {
+      rounds: primaryRounds([4, 8, 11, 8, 15]),
+      secondaries: [
+        { cardName: 'ZZ List Card One', drawnRound: 1, roundNumber: 2, score: 12 },
+        { cardName: 'ZZ List Card Two', drawnRound: 2, roundNumber: 3, score: 10 },
+        { cardName: 'ZZ List Card Three', drawnRound: 4, roundNumber: 5, score: 10 },
+      ],
+    }),
+    seat(guest('list_b'), {
+      rounds: primaryRounds([5, 5, 5, 5, 5]),
+      secondaries: [{ cardName: 'ZZ List Card Four', drawnRound: 1, roundNumber: 1, score: 10 }],
+    }),
+  ]));
+  // Past setup, or the client hides the score rather than showing 0 – 0.
+  await ownerC.patch(`/drafts/${draftId}`, { baseRev: 0, clientId: 'zz-list', patch: {}, currentStep: 'round5' });
+
+  const listed = await anon().get('/drafts');
+  assert.equal(listed.status, 200);
+  const row = listed.data.find((d) => d.id === draftId);
+  assert.ok(row, 'the in-progress game should be listed');
+
+  // Exactly the pinned reference game, so the list agrees with the 77/35 that
+  // submitting it produces.
+  assert.deepEqual(row.scores, [77, 35]);
+
+  const gameId = await submitOk(ownerC, draftId);
+  const [a, b] = await gamePlayers(gameId);
+  assert.equal(a.final_score, row.scores[0], 'the filed score must match what the list showed');
+  assert.equal(b.final_score, row.scores[1]);
+});
+
+test('a draft still in setup scores zero rather than throwing', async () => {
+  const draftId = await newDraft(ownerC, { playedAt: '2026-08-07', pointsLimit: 2000, players: [] });
+  const row = (await anon().get('/drafts')).data.find((d) => d.id === draftId);
+  assert.ok(row);
+  assert.deepEqual(row.scores, [null, null], 'no two seats yet, so there is nothing to score');
+  assert.equal(row.current_step, 'setup');
 });
 
 /* ── Submit correctness: 11e scoring ───────────────────────────── */

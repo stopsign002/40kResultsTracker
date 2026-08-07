@@ -11,7 +11,8 @@
 // entries live over SSE.
 
 import { drafts, draftImages, reference } from '../api.js';
-import { el, clear, toast, confirmModal, promptModal, fmtDuration, selectOptions } from '../components.js';
+import { el, clear, toast, confirmModal, choiceModal, promptModal, fmtDuration, selectOptions } from '../components.js';
+import { missionLink, openMissionCard, openMissionBrowser } from '../mission-cards.js';
 import { shrink } from '../images.js';
 import { pushLayer } from '../nav-stack.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
@@ -20,6 +21,13 @@ import {
   MATCHED_PLAY_LAYOUTS,
   E11_PRIMARY_CAP,
   E11_SECONDARY_CAP,
+  E11_PRIMARY_ROUND_CAP,
+  E11_SECONDARY_ROUND_CAP,
+  sumSecondaryForRound,
+  secondaryRoundHeadroom,
+  cumulativeTimeThrough,
+  roundTimeFromClock,
+  parseDuration,
   FORCE_DISPOSITIONS,
   PRIMARY_MATRIX,
   calcTotal,
@@ -80,6 +88,20 @@ async function renderDraftList(state) {
 
   await refresh();
 
+  // The scores on this list are only worth glancing at if they move. Every
+  // accepted PATCH broadcasts draft.updated, so follow it — self-removing once
+  // the view's root is gone, per the pattern in views/games-list.js. No `by`
+  // filtering needed: unlike the wizard, this view has nothing being typed into
+  // it that a re-read could clobber.
+  const liveHandler = () => {
+    if (!document.body.contains(root)) {
+      document.removeEventListener('live:draft.updated', liveHandler);
+      return;
+    }
+    refresh().catch(() => {});
+  };
+  document.addEventListener('live:draft.updated', liveHandler);
+
   root.appendChild(el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, [
       el('h2', {}, 'Live games'),
@@ -136,11 +158,23 @@ function draftRow(r, state, refresh) {
     });
   }
 
+  // A game still in setup has nothing to show but 0 – 0, which reads as "they
+  // are losing badly" rather than "they haven't started".
+  const [a, b] = r.scores || [];
+  const score = r.current_step !== 'setup' && Number.isFinite(a) && Number.isFinite(b)
+    ? el('div', {
+      class: 'lg-list-score',
+      'aria-label': `Score ${a} to ${b}`,
+      title: 'Running score',
+    }, [String(a), el('span', { class: 'lg-list-score-sep' }, '–'), String(b)])
+    : null;
+
   const item = el('div', { class: 'card lg-list-item', role: 'button', tabindex: '0' }, [
     el('div', { class: 'lg-list-main' }, [
       el('div', { class: 'lg-list-title' }, title),
       el('div', { class: 'lg-list-meta' }, meta),
     ]),
+    score,
     el('span', { class: 'pill' }, stepShort(r.current_step)),
     del,
   ].filter(Boolean));
@@ -572,13 +606,23 @@ async function renderWizard(state, draftId) {
   async function advance(next, fromRound) {
     if (fromRound && !prompted.has(fromRound) && state.user?.promptRoundPhoto !== false) {
       prompted.add(fromRound);
-      const take = await confirmModal({
+      // Both ways in, same as the round screen's own pair of buttons: one
+      // <input type="file"> can offer the camera OR the library but never both
+      // (`capture` hides the library outright), so the choice has to be made
+      // before the picker opens. Offering only the camera meant a shot already
+      // taken on the phone couldn't answer the nudge.
+      const source = await choiceModal({
         title: 'Snap a photo?',
         body: `Grab a shot of the board at the end of round ${fromRound} — it goes into the game report. Easy to forget later.`,
-        confirmLabel: 'Take photo',
+        choices: [
+          { label: '\u{1F4F7} Take photo', value: 'camera' },
+          { label: '\u{1F5BC} Upload', value: 'library' },
+        ],
         cancelLabel: 'Skip',
       });
-      if (take) { pickPhoto(fromRound, { endOfRound: true }); return; }
+      // Either picker has to close before anything else happens, so both stay
+      // on the round screen rather than advancing.
+      if (source) { pickPhoto(fromRound, { endOfRound: true, source }); return; }
     }
     goStep(next);
   }
@@ -673,12 +717,22 @@ async function renderWizard(state, draftId) {
     if (canNavigate) setupBtn.addEventListener('click', () => goStep('setup'));
     else setupBtn.disabled = true;
 
+    // The whole deck, readable by anyone watching — the point is to be able to
+    // play off the app when the physical cards aren't on the table.
+    const deckBtn = el('button', {
+      class: 'lg-pip-setup',
+      type: 'button',
+      title: 'Mission cards',
+      'aria-label': 'Read the mission cards',
+      onClick: () => openMissionBrowser({ onMissing: (m) => toast(m, 'error') }),
+    }, '\u{1F4D6}');
+
     return el('div', { class: 'lg-topbar' }, [
       el('div', { class: 'lg-topline' }, [
         el('h1', { class: 'lg-step-title' }, title),
         el('div', { class: 'lg-scoreline' }, [scores[0], el('span', { class: 'lg-sc-sep' }, '–'), scores[1]]),
       ]),
-      el('div', { class: 'lg-progress' }, [setupBtn, ...pips]),
+      el('div', { class: 'lg-progress' }, [setupBtn, ...pips, deckBtn]),
       el('div', { class: 'lg-statusline' }, [
         isSpectator
           ? el('span', { class: 'hint', style: { marginTop: '0' } }, 'Updates live as they play')
@@ -907,8 +961,11 @@ async function renderWizard(state, draftId) {
       rerender();
     });
 
+    const primaryName = primaryNameFor(p);
     const primary = el('div', { class: 'muted', style: { fontSize: '13px', minHeight: '18px' } },
-      primaryNameFor(p) || 'Set both dispositions to fill this in.');
+      primaryName
+        ? missionLink('primary', primaryName)
+        : 'Set both dispositions to fill this in.');
 
     const firstBtn = el('button', {
       class: `btn ${p.wentFirst ? 'primary' : ''}`.trim(),
@@ -1195,15 +1252,27 @@ async function renderWizard(state, draftId) {
       ]),
     ]));
 
+    const primaryName = primaryNameFor(p);
     seat.appendChild(el('div', { class: 'lg-field' }, [
-      el('label', {}, `Primary VP · round ${n}`),
+      el('label', {}, [
+        `Primary VP · round ${n}`,
+        el('span', { class: 'lg-cap' }, `max ${E11_PRIMARY_ROUND_CAP}`),
+      ]),
+      // The primary is decided at setup and then never shown again, which is
+      // exactly backwards when you're mid-round trying to remember what scores.
+      primaryName
+        ? el('div', { class: 'lg-card-meta', style: { marginBottom: '6px' } }, missionLink('primary', primaryName))
+        : null,
       stepper({
         get: () => r.primaryScore || 0,
         set: (v) => { r.primaryScore = v; },
-        min: 0, max: 20, editable,
+        // 15 per battle round, not just 45 per game. The stepper clamps on
+        // commit, so this is a real ceiling and not merely an <input max> hint
+        // a phone keyboard would ignore.
+        min: 0, max: E11_PRIMARY_ROUND_CAP, editable,
         label: `primary VP, round ${n}, ${seatName(p, i)}`,
       }),
-    ]));
+    ].filter(Boolean)));
 
     seat.appendChild(el('div', { class: 'lg-field' }, [
       el('label', {}, 'CP remaining'),
@@ -1220,6 +1289,17 @@ async function renderWizard(state, draftId) {
     seat.appendChild(el('div', { class: 'lg-field' }, [
       el('label', {}, 'Round clock'),
       buildTimer(p, i, n, editable),
+    ]));
+
+    // Two ways to the same `timeSeconds`, because people time games two ways.
+    // The app's own stopwatch banks seconds as they elapse; this is for a
+    // physical clock you read off at the end of the round.
+    seat.appendChild(el('div', { class: 'lg-field' }, [
+      el('label', {}, [
+        'Chess clock reading',
+        el('span', { class: 'lg-cap' }, 'counts up all game'),
+      ]),
+      buildClockEntry(p, i, n, editable),
     ]));
 
     return seat;
@@ -1286,15 +1366,28 @@ async function renderWizard(state, draftId) {
     for (const s of hand) {
       const actions = el('div', { class: 'lg-card-actions' }, [
         cardBtn('Score', 'is-score', async () => {
+          // The 15 is a ceiling on the ROUND, not on the card, so what's left
+          // depends on what has already scored this round. No `exclude` needed:
+          // a card in hand has no roundNumber yet, so it isn't in the sum.
+          const headroom = secondaryRoundHeadroom(p, n);
+          if (headroom <= 0) {
+            toast(`Round ${n} is already at the ${E11_SECONDARY_ROUND_CAP} VP secondary cap`, 'error');
+            return;
+          }
           const vp = await promptModal({
             title: s.cardName,
-            label: 'Victory points scored',
-            defaultValue: '5',
+            label: `Victory points scored — ${headroom} of ${E11_SECONDARY_ROUND_CAP} left this round`,
+            defaultValue: String(Math.min(5, headroom)),
             type: 'number',
           });
           if (vp == null) return;
+          const asked = Math.max(0, parseInt(vp, 10) || 0);
+          const scored = Math.min(asked, headroom);
+          if (scored < asked) {
+            toast(`Capped at ${scored} — round ${n} only had ${headroom} secondary VP left`);
+          }
           s.roundNumber = n;
-          s.score = Math.max(0, parseInt(vp, 10) || 0);
+          s.score = scored;
           s.wasDiscarded = false;
           touch();
           rerender();
@@ -1308,10 +1401,11 @@ async function renderWizard(state, draftId) {
           touch();
           rerender();
         }),
+        removeBtn(p, s),
       ]);
       rows.push(el('div', { class: 'lg-card' }, [
         el('div', { class: 'lg-card-main' }, [
-          el('div', { class: 'lg-card-name' }, s.cardName),
+          el('div', { class: 'lg-card-name' }, missionLink('secondary', s.cardName) || s.cardName),
           el('div', { class: 'lg-card-meta' }, s.drawnRound === n ? 'drawn this round' : `held since R${s.drawnRound}`),
         ]),
         editable ? actions : null,
@@ -1328,11 +1422,11 @@ async function renderWizard(state, draftId) {
       });
       rows.push(el('div', { class: `lg-card ${s.wasDiscarded ? 'is-discarded' : 'is-scored'}` }, [
         el('div', { class: 'lg-card-main' }, [
-          el('div', { class: 'lg-card-name' }, s.cardName),
+          el('div', { class: 'lg-card-name' }, missionLink('secondary', s.cardName) || s.cardName),
           el('div', { class: 'lg-card-meta' }, s.wasDiscarded ? 'discarded' : `scored · drawn R${s.drawnRound ?? '?'}`),
         ]),
         s.wasDiscarded ? null : el('div', { class: 'lg-card-vp' }, String(s.score || 0)),
-        editable ? el('div', { class: 'lg-card-actions' }, undo) : null,
+        editable ? el('div', { class: 'lg-card-actions' }, [undo, removeBtn(p, s)]) : null,
       ].filter(Boolean)));
     }
 
@@ -1343,8 +1437,14 @@ async function renderWizard(state, draftId) {
     const draw = el('button', { class: 'btn lg-draw', type: 'button' }, '+ Draw a card');
     draw.addEventListener('click', () => openDrawPicker(p, n));
 
+    const scoredThisRound = sumSecondaryForRound(p, n);
     return el('div', { class: 'lg-field' }, [
-      el('label', {}, 'Secondary missions'),
+      el('label', {}, [
+        'Secondary missions',
+        el('span', {
+          class: `lg-cap ${scoredThisRound >= E11_SECONDARY_ROUND_CAP ? 'is-full' : ''}`.trim(),
+        }, `${scoredThisRound} / ${E11_SECONDARY_ROUND_CAP} this round`),
+      ]),
       el('div', { class: 'lg-cards' }, rows),
       editable ? draw : null,
     ].filter(Boolean));
@@ -1366,11 +1466,38 @@ async function renderWizard(state, draftId) {
     if (announce) toast(`Drew ${card.name}`);
   }
 
-  function cardBtn(label, cls, onClick) {
-    const b = el('button', { class: `lg-card-btn ${cls}`, type: 'button' }, label);
+  function cardBtn(label, cls, onClick, attrs = {}) {
+    const b = el('button', { class: `lg-card-btn ${cls}`, type: 'button', ...attrs }, label);
     b.addEventListener('click', onClick);
     return b;
   }
+
+  // Distinct from Discard: a discard is a real game event and stays on the
+  // record, this is "that card never happened" for a mis-tap in the picker.
+  function removeBtn(p, s) {
+    return cardBtn('✕', 'is-remove', () => removeCard(p, s), {
+      'aria-label': `Remove ${s.cardName}`,
+      title: 'Remove — drawn by mistake',
+    });
+  }
+
+  async function removeCard(p, s) {
+    const ok = await confirmModal({
+      title: 'Remove this card?',
+      body: `"${s.cardName}" comes off the record entirely, as if it was never drawn. `
+        + 'If it really was drawn and then thrown away, use Discard instead so the game reads back right.',
+      danger: true,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
+    const list = p.secondaries || [];
+    const i = list.indexOf(s);
+    if (i < 0) return;
+    list.splice(i, 1);
+    touch();
+    rerender();
+  }
+
 
   function openDrawPicker(p, n) {
     // Discarded cards go back to the deck and can genuinely come up again, so
@@ -1403,10 +1530,22 @@ async function renderWizard(state, draftId) {
     closePicker = close;
     const esc = (e) => { if (e.key === 'Escape') close(); };
 
-    const items = deck.map((c) => {
-      const b = el('button', { class: 'lg-picker-item', type: 'button' }, c.name);
-      b.addEventListener('click', () => { drawCard(p, n, c); close(); });
-      return b;
+    // `items` stays the list of *pick* buttons — the focus target below and the
+    // "is the deck empty" test both key off it — while each row also carries a
+    // reader, so you can check what a card does without committing to it.
+    const items = [];
+    const rows = deck.map((c) => {
+      const pick = el('button', { class: 'lg-picker-item', type: 'button' }, c.name);
+      pick.addEventListener('click', () => { drawCard(p, n, c); close(); });
+      items.push(pick);
+      const info = el('button', {
+        class: 'lg-picker-info',
+        type: 'button',
+        title: `Read the rules for ${c.name}`,
+        'aria-label': `Read the rules for ${c.name}`,
+        onClick: () => openMissionCard({ kind: 'secondary', name: c.name, onMissing: (m) => toast(m, 'error') }),
+      }, '\u{2139}');
+      return el('div', { class: 'lg-picker-row' }, [pick, info]);
     });
 
     // Top of the list, where your thumb already is when the picker opens.
@@ -1426,7 +1565,7 @@ async function renderWizard(state, draftId) {
     overlay.appendChild(el('div', { class: 'modal-dialog', role: 'dialog' }, [
       el('div', { class: 'modal-header' }, el('h2', {}, `Draw · round ${n}`)),
       el('div', { class: 'modal-body' }, items.length
-        ? el('div', { class: 'lg-picker' }, [rando, ...items])
+        ? el('div', { class: 'lg-picker' }, [rando, ...rows])
         : el('div', { class: 'lg-empty' }, 'Every card in the pack has been drawn.')),
       el('div', { class: 'modal-footer' },
         el('div', { class: 'btn-group', style: { justifyContent: 'flex-end', width: '100%' } }, cancel)),
@@ -1452,6 +1591,64 @@ async function renderWizard(state, draftId) {
     btn.disabled = !editable;
     btn.addEventListener('click', () => { toggleTimer(i, n); rerender(); });
     return el('div', { class: `lg-timer ${running ? 'is-running' : ''}`.trim() }, [val, btn]);
+  }
+
+  // For a physical chess clock left counting up all game. You read the number
+  // off the device and type it in; the round's own duration is the difference
+  // against what the clock stood at when the previous round was banked.
+  //
+  // The field shows the READING, not the round, because that is what you are
+  // copying — matching it against the clock in front of you is the whole point.
+  function buildClockEntry(p, i, n, editable) {
+    const r = roundRec(p, n);
+    const prior = cumulativeTimeThrough(p, n - 1);
+    const reading = Number.isFinite(r.timeSeconds) ? prior + r.timeSeconds : null;
+
+    const derived = el('div', { class: 'lg-clock-derived' },
+      Number.isFinite(r.timeSeconds)
+        ? `Round ${n} took ${fmtDuration(r.timeSeconds)}${prior ? ` · ${fmtDuration(prior)} banked before it` : ''}`
+        : (prior ? `Clock stood at ${fmtDuration(prior)} after round ${n - 1}` : 'Enter what the clock reads now.'));
+
+    const input = el('input', {
+      // The placeholder is the floor the reading has to clear, which for round 1
+      // is nothing — so show the format there instead of a meaningless 0:00.
+      type: 'text', inputmode: 'numeric', placeholder: prior ? `> ${fmtDuration(prior)}` : 'm:ss',
+      value: fmtDuration(reading) ?? '',
+      'aria-label': `Chess clock reading after round ${n}, ${seatName(p, i)}`,
+      style: { textAlign: 'center' },
+    });
+    input.disabled = !editable;
+
+    input.addEventListener('change', () => {
+      const raw = input.value.trim();
+      if (!raw) {
+        r.timeSeconds = null;
+        touch();
+        rerender();
+        return;
+      }
+      // parseDuration takes m:ss, h:mm:ss, or a bare number as MINUTES, and
+      // rejects nonsense like 12:99 rather than coercing it.
+      const seconds = parseDuration(raw);
+      if (seconds == null) {
+        toast('Enter the clock as m:ss or h:mm:ss', 'error');
+        input.value = fmtDuration(reading) ?? '';
+        return;
+      }
+      const round = roundTimeFromClock(p, n, seconds);
+      if (round == null) {
+        // A count-up clock cannot go backwards, so this is a typo — say so
+        // instead of recording a negative round or silently zeroing it.
+        toast(`The clock read ${fmtDuration(prior)} after round ${n - 1}, so it can't read ${fmtDuration(seconds)} now`, 'error');
+        input.value = fmtDuration(reading) ?? '';
+        return;
+      }
+      r.timeSeconds = round;
+      touch();
+      rerender();
+    });
+
+    return el('div', { class: 'lg-clock' }, [input, derived]);
   }
 
   function buildPhotoPanel(n) {

@@ -1,0 +1,1714 @@
+{
+ "pack": "Chapter Approved 2026-2027",
+ "source": "40k-11e",
+ "sourceUrl": "https://raw.githubusercontent.com/game-datacards/datasources/main/11th/gdc/missions/chapter_approved_2026_2027.json",
+ "compatibleDataVersion": 925,
+ "updated": "2026-08-05T10:09:40.870Z",
+ "limits": {
+  "primaryGame": 45,
+  "primaryRound": 15,
+  "secondaryGame": 45,
+  "secondaryRound": 15,
+  "fixedSecondaryCap": 20
+ },
+ "forceDispositions": [
+  "Take and Hold",
+  "Disruption",
+  "Priority Assets",
+  "Purge the Foe",
+  "Reconnaissance"
+ ],
+ "primaryMissions": [
+  {
+   "name": "Battlefield Dominance",
+   "lore": "This battlefield holds great significance for the wider war effort. You must seize control of it. Let nothing stand in your way.",
+   "objectives": [
+    {
+     "name": "FIRST AND SECOND BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each **objective** you control."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "For each of those **objectives** (excluding your **home objective**) if you control your **home objective**.",
+       "cumulative": true
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Take and Hold",
+     "theirs": "Take and Hold"
+    }
+   ]
+  },
+  {
+   "name": "Consecrate",
+   "lore": "Whether in the name of grand ideals or simply to satisfy the thirst of their terrible gods, your warriors must consecrate this battlefield with the blood of their foes.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or two **objectives** are **consecrated**."
+      },
+      {
+       "victoryPoints": 6,
+       "criteria": "Three or more **objectives** are **consecrated**.",
+       "exclusive": true
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "Your opponent’s **home objective** is **consecrated**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Purge the Foe",
+     "theirs": "Reconnaissance"
+    }
+   ]
+  },
+  {
+   "name": "Death Trap",
+   "lore": "Even the most potent enemy force can be undone with sufficient preparation. Lay minefields, dig trenches and draw the enemy into pre‑prepared killing zones.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each **terrain area trapped** this turn."
+      },
+      {
+       "victoryPoints": 3,
+       "criteria": "For each of those **terrain areas** that is an **objective**.",
+       "cumulative": true
+      }
+     ]
+    },
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units that started the turn within a **terrain area** were **destroyed**, if that **terrain area** is **trapped**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "BOOBY TRAP",
+     "starts": "Your Shooting phase.",
+     "completes": "Immediately.",
+     "units": "One friendly unit within range of one **objective** (excluding your **home objective**) or within one **terrain area** that is not within your deployment zone, that you have not yet **trapped** (see below).",
+     "effect": "That **terrain area** is **trapped**: place one of your **operation markers** within that **terrain area**.",
+     "useLimit": "Unlimited. Each unit that starts this **action** this phase must be within a different **terrain area**."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Disruption",
+     "theirs": "Take and Hold"
+    }
+   ]
+  },
+  {
+   "name": "Delaying Action",
+   "lore": "Your enemies are on the march. Commit your warriors to battle and make the foe pay a bloody price for every foot of ground.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each enemy unit **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding **home objectives**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **central objectives** and one or more **expansion objectives**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Disruption",
+     "theirs": "Purge the Foe"
+    }
+   ]
+  },
+  {
+   "name": "Destroyer's Wrath",
+   "lore": "Victory here shall not be measured in ground taken or plunder seized, but in the mangled corpses of your foes and the grisly trophies hewn from their bodies.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units were **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home** **objective**)."
+      },
+      {
+       "victoryPoints": 6,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "More enemy units were **destroyed** this turn than friendly units were **destroyed** in the previous turn."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Purge the Foe",
+     "theirs": "Priority Assets"
+    }
+   ]
+  },
+  {
+   "name": "Determined Acquisition",
+   "lore": "The resistance arrayed against you is formidable indeed, yet your orders are clear; take and hold the ground ahead, heedless of the cost.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each **objective** you control that you did not control at the start of the turn (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each **objective** you control."
+      },
+      {
+       "victoryPoints": 3,
+       "criteria": "For each of those **objectives** that is within your opponent’s territory.",
+       "cumulative": true
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Take and Hold",
+     "theirs": "Disruption"
+    }
+   ]
+  },
+  {
+   "name": "Extract Relic",
+   "lore": "A priceless relic saturated with eldritch power lies somewhere on the field of battle. Secure the sensor array at the heart of the battlefield and direct its energies to locating the prize.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "A friendly unit **performed a sensor sweep** this turn."
+      },
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units that started the turn within range of one or more **objectives** are **destroyed**."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "Only one of your opponent’s **operation markers** is on the battlefield, if one or more of your units are within the same **terrain area** as that **operation marker**, and no enemy units are within that **terrain area**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "Only one of your opponent’s **operation markers** is on the battlefield, if one or more of your units are within the same **terrain area** as that **operation marker**, and no enemy units are within that **terrain area**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "SENSOR SWEEP",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **central objective**.",
+     "effect": "Your unit **performs a sensor sweep**: remove one **operation marker** from the battlefield.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Priority Assets",
+     "theirs": "Disruption"
+    }
+   ]
+  },
+  {
+   "name": "Gather Intel",
+   "lore": "The nature and motivation of the foe remains unclear. Test their mettle and seize pertinent intelligence from the field of battle.",
+   "objectives": [
+    {
+     "name": "FIRST BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 6,
+       "criteria": "You control one or more **central objectives**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 7,
+       "criteria": "For each friendly unit that completed the **Extract Intelligence action** this turn."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "Three or more of your **operation markers** are on the battlefield."
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "One of your **operation markers** is within range of your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "EXTRACT INTELLIGENCE",
+     "starts": "Your Shooting phase, from the second battle round onwards.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One unit within range of one **objective** (excluding your **home objective**) that does not have any of your **operation markers** within range of it.",
+     "effect": "Place one of your **operation markers** within range of that **objective**.",
+     "useLimit": "Unlimited. Each unit that starts this action this phase must be within range of a different **objective**."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Reconnaissance",
+     "theirs": "Reconnaissance"
+    }
+   ]
+  },
+  {
+   "name": "Immovable Object",
+   "lore": "Obstinance is often the key to victory. Weather everything the enemy throws at you. If your opponent is to take any ground, they will have to wade through their own dead to do so.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **central objectives**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND TO FOURTH BATTLE ROUND",
+     "when": "End of your Command phase",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "FIFTH BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Take and Hold",
+     "theirs": "Purge the Foe"
+    }
+   ]
+  },
+  {
+   "name": "Inescapable Dominion",
+   "lore": "Your first priority must be to dominate the battlefield. Seize strongpoints and dig in. Only then may you turn your full attention to slaughtering the foe.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control three or more **objectives**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control two or more **objectives**."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Take and Hold",
+     "theirs": "Priority Assets"
+    }
+   ]
+  },
+  {
+   "name": "Locate and Deny",
+   "lore": "The enemy is searching for an asset of value. By cunning or by force of arms, prevent its retrieval.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "One or more enemy units that started the turn within range of one or more **objectives** are **destroyed**."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "Only one of your **operation markers** is on the battlefield, if one or more of your units are within the same **terrain area** as that **marker**, and no enemy units are within that **terrain area**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "Only one of your **operation markers** is on the battlefield, if one or more of your units are within the same **terrain area** as that **marker**, and no enemy units are within that **terrain area**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "SENSOR SWEEP",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **central objective**.",
+     "effect": "Your unit **performs a sensor sweep**: remove one **operation marker** from the battlefield.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Disruption",
+     "theirs": "Priority Assets"
+    }
+   ]
+  },
+  {
+   "name": "Meatgrinder",
+   "lore": "Vicious and without relent, this battle has descended into base savagery. Only one path to victory remains: kill more of the enemy than they can kill of you.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units were **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "More enemy units were **destroyed** this turn than friendly units were **destroyed** in the previous turn."
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Purge the Foe",
+     "theirs": "Purge the Foe"
+    }
+   ]
+  },
+  {
+   "name": "Outmanoeuvre",
+   "lore": "Speed and positioning are key in any battle. Outflank the enemy, seize high ground and routes of resupply. Choke them to death.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 10,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    },
+    {
+     "name": "FIRST BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND AND THIRD BATTLE ROUND",
+     "when": "End of your Command phase.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "FOURTH BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 6,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Disruption",
+     "theirs": "Disruption"
+    }
+   ]
+  },
+  {
+   "name": "Punishment",
+   "lore": "Those who resist must be punished. Make a bloody example of them, and leave none in doubt as to your mastery.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "One or more **condemned** enemy units left the battlefield this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your home **objective**)."
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 8,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Purge the Foe",
+     "theirs": "Disruption"
+    }
+   ]
+  },
+  {
+   "name": "Purge and Secure",
+   "lore": "Enemy pickets and reconnaissance have engaged your vanguard. Move forward, seize defensive positions and repel the assault at all costs.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units were **destroyed** this turn by a friendly unit that was within range of one or more **objectives**."
+      },
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units that started the turn within range of one or more **objectives** were **destroyed** this turn.",
+       "exclusive": true
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **objectives** you did not control at the start of the turn (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Take and Hold",
+     "theirs": "Reconnaissance"
+    }
+   ]
+  },
+  {
+   "name": "Reconnaissance Sweep",
+   "lore": "Enemy movements have aroused suspicion. Disperse your forces, probe their lines and decipher their intentions.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "Three or more friendly units are wholly within three different table quarters and not within 6\" of the centre of the battlefield."
+      },
+      {
+       "victoryPoints": 6,
+       "criteria": "Four or more friendly units are wholly within four different table quarters and not within 6\" of the centre of the battlefield.",
+       "exclusive": true
+      }
+     ]
+    },
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 1,
+       "criteria": "For each enemy unit **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Reconnaissance",
+     "theirs": "Take and Hold"
+    }
+   ]
+  },
+  {
+   "name": "Sabotage",
+   "lore": "Strike deep behind enemy lines, sabotage supply routes, fortifications and heavy weapons. By doing so you may lay the groundwork for future offensives.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each friendly unit that **committed sabotage** this turn."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "For each of those units that is within range of one or more **objectives** in your opponent’s territory.",
+       "cumulative": true
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "SABOTAGE",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if that unit controls that **objective**.",
+     "units": "One unit within range of one **objective** (excluding your **home objective**).",
+     "effect": "Your unit **commits sabotage**.",
+     "useLimit": "Unlimited. Each unit that starts this **action** this phase must be within range of a different **objective**."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Priority Assets",
+     "theirs": "Priority Assets"
+    }
+   ]
+  },
+  {
+   "name": "Search and Scour",
+   "lore": "Forward elements report enemy movement in this sector. Move out, locate the foes and halt their operation before it gathers momentum.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **central objectives**."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "One or more enemy units that started the turn within a **terrain area** are **destroyed**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "No enemy units are wholly within your territory."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Reconnaissance",
+     "theirs": "Priority Assets"
+    }
+   ]
+  },
+  {
+   "name": "Secure Asset",
+   "lore": "A vital asset has been lost amidst the chaos of battle. You must secure the item at all costs.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "A friendly unit **secured the asset** this turn."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "One or more enemy units that started the turn within range of one or more **central objectives** are **destroyed**."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "You control three or more **objectives**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "SECURE ASSET",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **objective** (excluding your **home objective**).",
+     "effect": "Your unit **secures the asset**.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Priority Assets",
+     "theirs": "Take and Hold"
+    }
+   ]
+  },
+  {
+   "name": "Smoke and Mirrors",
+   "lore": "Cunning is as potent a weapon as overwhelming force. Outnumbered or outgunned, you must make use of subterfuge and misdirection to pick the enemy apart.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each **objective** that is **decoyed**."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "For each of those **objectives** that is within your opponent’s territory.",
+       "cumulative": true
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 10,
+       "criteria": "Four or more **objectives** are **decoyed**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "DECOY",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **objective** (excluding your **home objective**) that is not **decoyed** (see below).",
+     "effect": "That **objective** is **decoyed**: place one of your **operation markers** within range of that **objective**.",
+     "useLimit": "Unlimited. Each unit that starts this **action** this phase must be within range of a different **objective**."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Disruption",
+     "theirs": "Reconnaissance"
+    }
+   ]
+  },
+  {
+   "name": "Surveil the Foe",
+   "lore": "Information is power. Evaluate the strengths and weaknesses of the enemy and feed this crucial information back to your superiors.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "One or more enemy units were **surveilled** this turn, unless each of those units is within range of one or more **objectives** that have one or more **operation markers** within range of them."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "You control more **objectives** than your opponent."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "None of your opponent’s **operation markers** are on the battlefield."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "SURVEIL THE FOE",
+     "starts": "Your Shooting phase.",
+     "completes": "Immediately.",
+     "units": "One friendly unit.",
+     "effect": "Select one enemy unit within 18\" of and visible to your unit that has not been **surveilled** this turn: until the end of the turn, that enemy unit is **surveilled**.",
+     "useLimit": "Unlimited."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Reconnaissance",
+     "theirs": "Disruption"
+    }
+   ]
+  },
+  {
+   "name": "Triangulation",
+   "lore": "By acquiring and transmitting precise coordinates, your forces will be able to summon reinforcements, saturate the battlefield with artillery fire or call in other means of support.",
+   "objectives": [
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One **objective** is **triangulated**."
+      },
+      {
+       "victoryPoints": 6,
+       "criteria": "Two **objectives** are **triangulated.**",
+       "exclusive": true
+      },
+      {
+       "victoryPoints": 10,
+       "criteria": "Three or more **objectives** are **triangulated**.",
+       "exclusive": true
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 10,
+       "criteria": "You control four or more **objectives**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "TRIANGULATE",
+     "starts": "Your Shooting phase, from the second battle round onwards.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **objective** (excluding your **home objective**).",
+     "effect": "That **objective** is **triangulated**: place one of your **operation markers** within range of that **objective**.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Reconnaissance",
+     "theirs": "Purge the Foe"
+    }
+   ]
+  },
+  {
+   "name": "Unstoppable Force",
+   "lore": "The enemy are arrayed before you in number, and well prepared for the coming assault. Smash through their defences. Grind them to dust.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more enemy units were **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each **objective** you control (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control one or more **objectives** you did not control at the start of the turn (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control one or more **central objectives**."
+      }
+     ]
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Purge the Foe",
+     "theirs": "Take and Hold"
+    }
+   ]
+  },
+  {
+   "name": "Vanguard Operation",
+   "lore": "Striking deep beyond the front lines, your forces must employ speed and cunning to secure their objectives before the enemy responds.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "A friendly unit **performed a vanguard operation** this turn."
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "One or more enemy units were **destroyed** this turn."
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 10,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "VANGUARD OPERATION",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if no enemy units are within that **terrain area**.",
+     "units": "One friendly unit within one terrain area that is within your **opponent’s territory**.",
+     "effect": "Your unit **performs a vanguard operation**.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Priority Assets",
+     "theirs": "Reconnaissance"
+    }
+   ]
+  },
+  {
+   "name": "Vital Link",
+   "lore": "A key communications node is located in the midst of this battlefield. Control of this node is crucial to the continued success of your armies. Ensure it does not fall into enemy hands.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "You control one or more **central objectives**."
+      },
+      {
+       "victoryPoints": 1,
+       "criteria": "For each of your **operation markers** within range of one of those **objectives**.",
+       "cumulative": true
+      }
+     ]
+    },
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your Command phase (or the end of your turn in the fifth battle round).",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "You control one or more **objectives** (excluding your **home objective**)."
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "One or more of those **objectives** is a **central objective**.",
+       "cumulative": true
+      }
+     ]
+    },
+    {
+     "name": "END OF THE BATTLE",
+     "when": null,
+     "scoring": [
+      {
+       "victoryPoints": 10,
+       "criteria": "You control your opponent’s **home objective**."
+      }
+     ]
+    }
+   ],
+   "actions": [
+    {
+     "name": "MAINTAIN CONTROL",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if your unit controls that **objective**.",
+     "units": "One friendly unit within range of one **central objective**.",
+     "effect": "Place one of your **operation markers** within range of that **objective**.",
+     "useLimit": "Once per turn."
+    }
+   ],
+   "dispositions": [
+    {
+     "yours": "Priority Assets",
+     "theirs": "Purge the Foe"
+    }
+   ]
+  }
+ ],
+ "secondaryMissions": [
+  {
+   "name": "A Grievous Blow",
+   "lore": "Target and eliminate the most numerous and potent of enemy infantry to shatter their battle line.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each enemy unit with a **starting strength** of 13+ **destroyed** this turn.",
+       "mode": "fixed"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "For each enemy unit with a **starting strength** of 13+ **destroyed** this turn.",
+       "cap": 5,
+       "mode": "tactical"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If there are no enemy units with a **starting strength** of 13+ on the battlefield, you can discard this card and draw one new **Secondary Mission** card."
+  },
+  {
+   "name": "A Tempting Target",
+   "lore": "An opportunity to seize a valuable asset has been identified, but the enemy are likely to use it as bait in a trap. Move to secure the site, but be wary of enemy ambushes.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control your **tempting target**.",
+       "mode": "standard"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** Your opponent selects one **objective** (excluding **home objectives**) within No Man’s Land to be your **tempting target**."
+  },
+  {
+   "name": "Assassination",
+   "lore": "The enemy looks to their champions for courage. Identify and eliminate them with extreme prejudice.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each enemy **CHARACTER** model destroyed this turn.",
+       "mode": "fixed"
+      },
+      {
+       "victoryPoints": 1,
+       "criteria": "For each of those models with a **W** of 4 or more.",
+       "mode": "fixed",
+       "cumulative": true
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "One or more enemy **CHARACTER** models were destroyed this turn, or all enemy **CHARACTER** models have been destroyed during the battle.",
+       "mode": "tactical"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Beacon",
+   "lore": "Bold and defiant, your chosen champions taunt the foe, drawing them on. Should they hold fast in the face of the inevitable response, the enemy’s momentum will surely falter.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your opponent’s turn or the end of the fifth battle round (whichever comes first).",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "Your **beacon** unit is on the battlefield and not within your deployment zone.",
+       "mode": "standard"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "Your **beacon** unit is on the battlefield and not within your territory.",
+       "mode": "standard",
+       "exclusive": true
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** Select one friendly unit on the battlefield or embarked within a **TRANSPORT** on the battlefield to be your **beacon** unit."
+  },
+  {
+   "name": "Behind Enemy Lines",
+   "lore": "Your orders are clear: break through the enemy and cut off their escape routes.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each friendly unit (excluding **AIRCRAFT** and **battle‑shocked** units) wholly within your opponent’s deployment zone.",
+       "cap": 5,
+       "mode": "standard"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If it is the first battle round, you can draw one new **Secondary Mission** card and shuffle this card back into your **Secondary** **Mission** deck."
+  },
+  {
+   "name": "Bring It Down",
+   "lore": "Prioritise the destruction of heavily armoured assets. Bring them down at all costs.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 4,
+       "criteria": "For each enemy model with a **W** of 10 or more **destroyed** this turn.",
+       "mode": "fixed"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "For each enemy model with a **W** of 10 or more **destroyed** this turn.",
+       "cap": 5,
+       "mode": "tactical"
+      }
+     ]
+    }
+   ],
+   "description": "WHEN DRAWN: If there are no enemy models with a **W** of 10 or more on the battlefield, you can discard this card and draw one new **Secondary Mission** card."
+  },
+  {
+   "name": "Burden Of Trust",
+   "lore": "The strategic prizes in this region must be guarded at all costs – a duty that falls upon a chosen few.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your opponent’s turn or the end of the fifth battle round (whichever comes first).",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each **objective guarded** by your army.",
+       "cap": 5,
+       "mode": "standard"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN/START OF YOUR TURN:** For each **objective**, you can select one friendly unit on the battlefield to **guard** that **objective**. Until the start of your next turn, while that unit is within range of that **objective** and while you control that **objective**, that **objective** is **guarded** by your army."
+  },
+  {
+   "name": "Centre Ground",
+   "lore": "The heart of the battlefield is key to victory. Dominate the centre ground, and you shall be one step closer to achieving your goals.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are within 3\" of the centre of the battlefield, and no enemy units are within 3\" of the centre of the battlefield.",
+       "mode": "standard"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "One or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are within 3\" of the centre of the battlefield, and no enemy units are within 6\" of the centre of the battlefield.",
+       "mode": "standard",
+       "exclusive": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Cleanse",
+   "lore": "Your forces have identified a series of tainted objectives in this area. Purify these locations.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "One **objective** was **cleansed** by your army this turn.",
+       "mode": "standard"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "Two or more **objectives** were **cleansed** by your army this turn.",
+       "mode": "standard",
+       "exclusive": true
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If the Plunder **Secondary Mission** is active for you, you can draw one new **Secondary Mission** card and shuffle this card back into your **Secondary Mission** deck.",
+   "actions": [
+    {
+     "name": "CLEANSE",
+     "starts": "Your Shooting phase.",
+     "completes": "End of your turn, if that unit is controlling that **objective**.",
+     "units": "One friendly unit within range of one **objective** (excluding your **home objective**).",
+     "effect": "That **objective** is **cleansed** by your army.",
+     "useLimit": "Unlimited. Each unit that starts this **action** this phase must be within range of a different **objective**."
+    }
+   ]
+  },
+  {
+   "name": "Defend Stronghold",
+   "lore": "You are charged with the defence of a critical objective. It must not be permitted to fall into enemy hands.",
+   "objectives": [
+    {
+     "name": "SECOND BATTLE ROUND ONWARDS",
+     "when": "End of your opponent’s turn or the end of the fifth battle round (whichever comes first).",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "You control your **home objective**.",
+       "mode": "standard"
+      },
+      {
+       "victoryPoints": 2,
+       "criteria": "No enemy units are within your deployment zone.",
+       "mode": "standard",
+       "cumulative": true
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If it is the first battle round, draw one new **Secondary Mission** card and shuffle this card back into your **Secondary Mission** deck."
+  },
+  {
+   "name": "Display of Might",
+   "lore": "Intimidation is a potent weapon. Demonstrate your battlefield supremacy with a brutal show of force and erode what remains of the enemy’s morale.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "There are more friendly units than enemy units (excluding **AIRCRAFT** and **battle‑shocked** units) wholly within No Man’s Land.",
+       "mode": "standard"
+      }
+     ]
+    },
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your opponent’s turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "There are more friendly units than enemy units (excluding **AIRCRAFT** and **battle‑shocked** units) wholly within No Man’s Land.",
+       "mode": "standard"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Engage On All Fronts",
+   "lore": "Probe their lines and engage any resistance. Stretch the foe to breaking point.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "You have a **presence** in three table quarters.",
+       "mode": "fixed"
+      },
+      {
+       "victoryPoints": 3,
+       "criteria": "You have a **presence** in three table quarters.",
+       "mode": "tactical"
+      },
+      {
+       "victoryPoints": 4,
+       "criteria": "You have a **presence** in four table quarters.",
+       "mode": "fixed",
+       "exclusive": true
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "You have a **presence** in four table quarters.",
+       "mode": "tactical",
+       "exclusive": true
+      }
+     ]
+    }
+   ],
+   "description": "If one or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are wholly within a table quarter, and those units are not within 6\" of the centre of the battlefield, you have a **presence** in that table quarter."
+  },
+  {
+   "name": "Forward Position",
+   "lore": "You must break the enemy line and establish a forward position to launch fresh assaults.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control your opponent’s **home objective** and/or each **expansion objective**.",
+       "mode": "standard"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If it is the first battle round, you can draw one new **Secondary Mission** card and shuffle this card back into your **Secondary** **Mission** deck."
+  },
+  {
+   "name": "No Prisoners",
+   "lore": "Show no mercy. Exterminate your enemies.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 2,
+       "criteria": "For each enemy unit **destroyed** this turn.",
+       "cap": 5,
+       "mode": "standard"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Outflank",
+   "lore": "Exploit the flanks; use your speed and momentum to surround the foe and catch them in the jaws of a trap.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "One or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are within 6\" of one or more battlefield edges and not within your territory.",
+       "mode": "standard"
+      },
+      {
+       "victoryPoints": 5,
+       "criteria": "Two or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are within 6\" of opposite battlefield edges and one or more of those units is not within your territory.",
+       "mode": "standard",
+       "exclusive": true
+      }
+     ]
+    }
+   ],
+   "description": "**Designer’s Note:** Opposite battlefield edges are those parallel to each other."
+  },
+  {
+   "name": "Overwhelming Force",
+   "lore": "The enemy holds your assigned objectives. Commit your forces in full and sweep them from these locations post‑haste.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of a turn.",
+     "scoring": [
+      {
+       "victoryPoints": 3,
+       "criteria": "For each enemy unit that started the turn within range of one or more **objectives** and is **destroyed**.",
+       "cap": 5,
+       "mode": "standard"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "Plunder",
+   "lore": "Unguarded prizes lie strewn across the field of battle. Secure them and deny them to the enemy.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "A **terrain area** was **plundered** this turn.",
+       "mode": "standard"
+      }
+     ]
+    }
+   ],
+   "description": "**WHEN DRAWN:** If the Cleanse **Secondary Mission** is active for you, you can draw one new **Secondary Mission** card and shuffle this card back into your **Secondary Mission** deck.",
+   "actions": [
+    {
+     "name": "PLUNDER",
+     "starts": "Your Shooting phase.",
+     "completes": "Immediately.",
+     "units": "One unit within a **terrain area** that is not within your territory.",
+     "effect": "That **terrain area** is **plundered**.",
+     "useLimit": "Once per turn."
+    }
+   ]
+  },
+  {
+   "name": "Secure No Man's Land",
+   "lore": "You must advance swiftly into no man’s land and seize it before the enemy can, lest they take control of the battlefield.",
+   "objectives": [
+    {
+     "name": "ANY BATTLE ROUND",
+     "when": "End of your turn.",
+     "scoring": [
+      {
+       "victoryPoints": 5,
+       "criteria": "You control two or more **objectives** within No Man’s Land (excluding your **home objective**).",
+       "mode": "standard"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

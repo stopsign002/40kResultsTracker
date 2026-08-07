@@ -1,8 +1,10 @@
 import { games, reference } from '../api.js';
 import { el, clear, toast, selectOptions, confirmModal, fmtDuration } from '../components.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
+import { missionLink } from '../mission-cards.js';
 import {
   ROUNDS, DEFAULT_EDITION, MATCHED_PLAY_LAYOUTS, E11_PRIMARY_CAP, E11_SECONDARY_CAP,
+  E11_PRIMARY_ROUND_CAP, E11_SECONDARY_ROUND_CAP, secondaryRoundHeadroom,
   FORCE_DISPOSITIONS, PRIMARY_MATRIX, parseDuration,
   sumPrimary, sumSecondaries, sumSecondaryPoints, capLabel, calcTotal,
 } from '../game-rules.js';
@@ -422,10 +424,12 @@ export async function renderGameForm(state, gameId) {
               comboField(missionDetails.primaryMissions, p.primaryMissionId, p.primaryMissionName,
                 (id, name) => { p.primaryMissionId = id; p.primaryMissionName = id ? null : name; },
                 { placeholder: draft.missionPackId ? 'Pick or type' : 'Choose a mission pack first' }),
-              el('div', { class: 'dim', style: { fontSize: '11px', marginTop: '4px' } },
+              el('div', { class: 'dim', style: { fontSize: '11px', marginTop: '4px' } }, [
                 bothDispositionsSet()
                   ? 'Set from the disposition pairing — override if needed.'
-                  : 'Set both players\' dispositions to fill this in automatically.'),
+                  : 'Set both players\' dispositions to fill this in automatically.',
+                ...(primaryNameFor(p) ? [' ', missionLink('primary', primaryNameFor(p))] : []),
+              ]),
             ]),
           ])
         : null,
@@ -511,6 +515,13 @@ export async function renderGameForm(state, gameId) {
 
   const bothDispositionsSet = () =>
     draft.players.every(pl => !!pl.forceDisposition);
+
+  // A player's primary, whether it resolved to a seeded row or was typed.
+  const primaryNameFor = (p) => {
+    if (p.primaryMissionName) return p.primaryMissionName;
+    const m = (missionDetails.primaryMissions || []).find(x => x.id === p.primaryMissionId);
+    return m ? m.name : null;
+  };
 
   // 11e allows more than one detachment per player, so this is a list of
   // inputs rather than one field. Always renders at least one row; empties are
@@ -651,9 +662,24 @@ export async function renderGameForm(state, gameId) {
     const rows = ROUNDS.map(rn => {
       const r = p.rounds.find(x => x.roundNumber === rn) || { roundNumber: rn, primaryScore: 0, secondaryScore: 0 };
       if (!p.rounds.find(x => x.roundNumber === rn)) p.rounds.push(r);
-      const primary = el('input', { type: 'number', min: '0', max: '20', value: r.primaryScore });
+      // 11e caps each half at 15 VP per battle round on top of the 45 per game.
+      // 10e is left on its old ceiling deliberately — its packs score
+      // differently and these are historical games being written up, so a wrong
+      // cap here would block a legitimate entry with no way around it.
+      const primaryMax = is11() ? E11_PRIMARY_ROUND_CAP : 20;
+      const primary = el('input', {
+        type: 'number', min: '0', max: String(primaryMax), step: '1', inputmode: 'numeric',
+        value: r.primaryScore,
+      });
       primary.addEventListener('change', () => {
-        r.primaryScore = parseInt(primary.value, 10) || 0;
+        // Clamped rather than merely `max`-hinted: a number input's max is
+        // advisory on typed input, and every phone keyboard ignores it.
+        const asked = parseInt(primary.value, 10) || 0;
+        r.primaryScore = Math.max(0, Math.min(primaryMax, asked));
+        if (r.primaryScore !== asked) {
+          toast(`Round ${rn} primary capped at ${primaryMax}`);
+        }
+        primary.value = String(r.primaryScore);
         refreshTotals();
       });
       const cells = [
@@ -661,12 +687,24 @@ export async function renderGameForm(state, gameId) {
         el('td', {}, primary),
       ];
       if (roundTotals) {
+        const secMax = is11() ? E11_SECONDARY_ROUND_CAP : 45;
         const sec = el('input', {
-          type: 'number', min: '0', max: '45', step: '1', inputmode: 'numeric',
+          type: 'number', min: '0', max: String(secMax), step: '1', inputmode: 'numeric',
           value: r.secondaryScore || 0,
         });
+        // Lenient on `input` so typing "1" on the way to "12" isn't fought,
+        // clamped on `change` (blur) like every other field in this form.
         sec.addEventListener('input', () => {
           r.secondaryScore = parseInt(sec.value, 10) || 0;
+          refreshTotals();
+        });
+        sec.addEventListener('change', () => {
+          const asked = parseInt(sec.value, 10) || 0;
+          r.secondaryScore = Math.max(0, Math.min(secMax, asked));
+          if (r.secondaryScore !== asked) {
+            toast(`Round ${rn} secondary capped at ${secMax}`);
+          }
+          sec.value = String(r.secondaryScore);
           refreshTotals();
         });
         cells.push(el('td', {}, sec));
@@ -787,6 +825,28 @@ export async function renderGameForm(state, gameId) {
     };
     const normalise = (inp, value) => { inp.value = value == null ? '' : String(value); };
 
+    // 11e caps secondaries at 15 VP per battle round, and in this card-major
+    // layout that ceiling spans ROWS — two cards that both scored in round 3
+    // share it. So a per-input `max` is necessary and nowhere near sufficient;
+    // the clamp has to look at every other card claiming the same scored round.
+    // (buildHeldSecondaries only runs for 11e, so no edition check is needed.)
+    const roundHeadroom = (entry) => secondaryRoundHeadroom(p, entry.roundNumber, entry);
+
+    // Applied on blur, and again whenever the SCORED ROUND moves: dragging a
+    // card from round 2 to round 3 can breach round 3's ceiling without its own
+    // score being touched at all.
+    const clampScore = (entry, inp) => {
+      const asked = Math.max(0, entry.score || 0);
+      const kept = Math.min(asked, roundHeadroom(entry));
+      if (kept !== asked) {
+        toast(entry.roundNumber == null
+          ? `Capped at ${kept} — ${E11_SECONDARY_ROUND_CAP} is the most one card can score`
+          : `Round ${entry.roundNumber} is capped at ${E11_SECONDARY_ROUND_CAP} secondary VP — kept ${kept} here`);
+      }
+      entry.score = kept;
+      if (inp) inp.value = String(kept);
+    };
+
     // A deck row: fixed card name, three inputs. Dimmed until it has data, so
     // the cards that actually came up stand out from the full list.
     const deckRow = (card) => {
@@ -794,7 +854,7 @@ export async function renderGameForm(state, gameId) {
       const drawn = roundInput(existing?.drawnRound);
       const scored = roundInput(existing?.roundNumber);
       const scoreInp = el('input', {
-        type: 'number', min: '0', max: '20', step: '1', inputmode: 'numeric',
+        type: 'number', min: '0', max: String(E11_SECONDARY_ROUND_CAP), step: '1', inputmode: 'numeric',
         value: existing?.score ?? 0,
         style: { width: '100%', textAlign: 'center' },
       });
@@ -802,7 +862,9 @@ export async function renderGameForm(state, gameId) {
       const row = el('div', {
         style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '4px', alignItems: 'center' },
       }, [
-        el('div', { style: { fontSize: '13px' } }, card.name),
+        // buildHeldSecondaries only runs for 11e, so every name here is a card
+        // the mission data covers.
+        el('div', { style: { fontSize: '13px' } }, missionLink('secondary', card.name) || card.name),
         drawn, scored, scoreInp, el('div', {}),
       ]);
 
@@ -823,9 +885,17 @@ export async function renderGameForm(state, gameId) {
       drawn.addEventListener('input', () => commit(e => { e.drawnRound = readRound(drawn); }));
       drawn.addEventListener('change', () => normalise(drawn, readRound(drawn)));
       scored.addEventListener('input', () => commit(e => { e.roundNumber = readRound(scored); }));
-      scored.addEventListener('change', () => normalise(scored, readRound(scored)));
+      scored.addEventListener('change', () => {
+        normalise(scored, readRound(scored));
+        const e = findEntry(card);
+        if (e) { clampScore(e, scoreInp); prune(e); paint(); refreshTotals(); }
+      });
       scoreInp.addEventListener('input', () =>
         commit(e => { e.score = parseInt(scoreInp.value, 10) || 0; }));
+      scoreInp.addEventListener('change', () => {
+        const e = findEntry(card);
+        if (e) { clampScore(e, scoreInp); prune(e); paint(); refreshTotals(); }
+      });
 
       return row;
     };
@@ -850,14 +920,22 @@ export async function renderGameForm(state, gameId) {
         entry.roundNumber = readRound(scored);
         refreshTotals();
       });
-      scored.addEventListener('change', () => normalise(scored, entry.roundNumber));
       const scoreInp = el('input', {
-        type: 'number', min: '0', max: '20', step: '1', inputmode: 'numeric',
+        type: 'number', min: '0', max: String(E11_SECONDARY_ROUND_CAP), step: '1', inputmode: 'numeric',
         value: entry.score ?? 0,
         style: { width: '100%', textAlign: 'center' },
       });
+      scored.addEventListener('change', () => {
+        normalise(scored, entry.roundNumber);
+        clampScore(entry, scoreInp);
+        refreshTotals();
+      });
       scoreInp.addEventListener('input', () => {
         entry.score = parseInt(scoreInp.value, 10) || 0;
+        refreshTotals();
+      });
+      scoreInp.addEventListener('change', () => {
+        clampScore(entry, scoreInp);
         refreshTotals();
       });
       const remove = el('button', { class: 'btn small', type: 'button', title: 'Remove card' }, '×');

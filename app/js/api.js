@@ -152,6 +152,15 @@ export const admin = {
   deleted:      () => api.get('/admin/deleted'),
   restoreDeleted:(id) => api.post(`/admin/deleted/${id}/restore`),
   purgeDeleted: (id) => api.del(`/admin/deleted/${id}`),
+  // Detachment library. Keyed by name, not id — the listing includes names that
+  // only exist in historical games and so have no library row.
+  detachments:  (factionId) => api.get(`/admin/detachments?factionId=${factionId}`),
+  addDetachment:(factionId, name) => api.post('/admin/detachments', { factionId, name }),
+  // Renaming onto an existing name merges the two, across the library and every
+  // game that used the old spelling.
+  renameDetachment: (factionId, from, to) => api.patch('/admin/detachments', { factionId, from, to }),
+  deleteDetachment: (factionId, name) =>
+    api.del(`/admin/detachments?factionId=${factionId}&name=${encodeURIComponent(name)}`),
 };
 
 // Admin-only player ranking + balanced matchmaking. model = 'glicko' | 'whr'.

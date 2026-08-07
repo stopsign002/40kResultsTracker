@@ -22,6 +22,76 @@ export const MATCHED_PLAY_LAYOUTS = ['Layout A', 'Layout B', 'Layout C'];
 export const E11_PRIMARY_CAP = 45;
 export const E11_SECONDARY_CAP = 45;
 
+// 11e also caps each half at 15 VP **per battle round**, not just 45 per game.
+// Both figures come from the mission pack itself — `primaryMissionScoreBattleRoundLimit`
+// and `secondaryMissionScoreBattleRoundLimit` in app/data/mission-cards-11e.json,
+// alongside the 45s these sit next to.
+//
+// These are INPUT ceilings, enforced where a number is entered (the live
+// tracker), NOT a clamp inside calcTotal/computeFinalScores. Clamping in the
+// scoring maths would silently rewrite the total of any already-recorded game
+// the next time it was saved — the same "an edit round-trip must not change a
+// game underneath you" rule that shaped the score-detail ladder.
+export const E11_PRIMARY_ROUND_CAP = 15;
+export const E11_SECONDARY_ROUND_CAP = 15;
+
+// Secondary VP landing in ONE battle round. A card's `roundNumber` is the round
+// it scored (null if it never did), so this — not the draw round — is the figure
+// the 15-per-round ceiling applies to.
+export function sumSecondaryForRound(p, roundNumber) {
+  return (p.secondaries || [])
+    .filter((s) => s.roundNumber === roundNumber)
+    .reduce((sum, s) => sum + (s.score || 0), 0);
+}
+
+/* ── Chess clocks that count UP ──────────────────────────────────
+ * A clock on "time up" is never reset between rounds — it just keeps running
+ * while that player takes their turn. So what it reads at the end of round N is
+ * the player's CUMULATIVE time, not the round's.
+ *
+ * What the app stores is unchanged: `game_rounds.time_seconds` per round, with
+ * the player total derived as their sum by resolvePlayerTimes(). Only the entry
+ * is cumulative — the difference is taken here, at the point of entry, so
+ * nothing downstream has to learn about clock readings.
+ */
+
+// What the clock stood at once round `roundNumber` was banked. Rounds with no
+// time recorded count as zero rather than breaking the chain: a player who
+// forgot to note round 2 still gets a sane round 3.
+export function cumulativeTimeThrough(p, roundNumber) {
+  return (p.rounds || [])
+    .filter((r) => r.roundNumber <= roundNumber && Number.isFinite(r.timeSeconds))
+    .reduce((sum, r) => sum + Math.max(0, r.timeSeconds), 0);
+}
+
+// The round's own duration, given what the clock reads now.
+//
+// Returns null when the reading is EARLIER than where the clock already stood —
+// that's a mistyped reading, and the honest answer is "that can't be right"
+// rather than a negative round or a silent zero.
+export function roundTimeFromClock(p, roundNumber, clockSeconds) {
+  if (clockSeconds == null || !Number.isFinite(clockSeconds) || clockSeconds < 0) return null;
+  const delta = clockSeconds - cumulativeTimeThrough(p, roundNumber - 1);
+  return delta < 0 ? null : delta;
+}
+
+// Secondary VP still available in a battle round. `exclude` is the entry being
+// edited — its own current score must not count against itself, or re-saving a
+// card at the same number would ratchet it down every time.
+//
+// Both entry surfaces need this, and neither can use a plain per-input `max`:
+// the ceiling is on the ROUND, so it spans cards. The live tracker asks for the
+// headroom before offering a number; /games/new clamps on blur, and again when
+// a card's scored round moves (which can breach the new round without the
+// card's own score changing at all).
+export function secondaryRoundHeadroom(p, roundNumber, exclude = null) {
+  if (roundNumber == null) return E11_SECONDARY_ROUND_CAP;
+  const used = (p.secondaries || [])
+    .filter((s) => s !== exclude && s.roundNumber === roundNumber)
+    .reduce((sum, s) => sum + (s.score || 0), 0);
+  return Math.max(0, E11_SECONDARY_ROUND_CAP - used);
+}
+
 // 11e Force Dispositions. Each player picks one (every detachment is associated
 // with one); cross-referencing yours against your opponent's is what decides
 // the named primary mission EACH of you plays — hence PRIMARY_MATRIX below,

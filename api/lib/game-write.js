@@ -238,6 +238,40 @@ export function joinDetachments(p) {
 }
 
 /**
+ * A detachment typed into a game joins that faction's library for good, so the
+ * next person gets it as a suggestion even after the game it came from is
+ * deleted or edited. Before this it was only ever inferred by UNIONing
+ * player_detachments into the autocomplete query, which made the suggestion
+ * list a side effect of game history rather than a thing anyone owned.
+ *
+ * Matching is case-insensitive so "gladius task force" doesn't become a second
+ * library row next to "Gladius Task Force". The UNIQUE (faction_id, name) index
+ * is case-SENSITIVE, so this guard is doing real work, not duplicating it.
+ *
+ * Unlike secondary cards — which are match-only, because a typo there polluted
+ * a shared mission pack with no way to clean it up (see CLAUDE.md "Security
+ * posture") — a typo here is fixable: Admin → Detachments renames or merges it
+ * across the library and every game that used it.
+ *
+ * @param {import('pg').PoolClient} client
+ * @param {number|null|undefined} factionId
+ * @param {string[]} names
+ */
+export async function promoteDetachments(client, factionId, names) {
+  if (!factionId) return;
+  for (const name of names) {
+    await client.query(
+      `INSERT INTO detachments (faction_id, name)
+       SELECT $1::int, $2::text
+       WHERE NOT EXISTS (
+         SELECT 1 FROM detachments WHERE faction_id = $1::int AND LOWER(name) = LOWER($2::text)
+       )`,
+      [factionId, name]
+    );
+  }
+}
+
+/**
  * @param {import('pg').PoolClient} client
  * @param {number} gamePlayerId
  * @param {PlayerPayload} p
@@ -251,6 +285,7 @@ export async function insertPlayerChildren(client, gamePlayerId, p) {
       [gamePlayerId, detachments[i], i]
     );
   }
+  await promoteDetachments(client, p.factionId, detachments);
   for (const r of p.rounds || []) {
     await client.query(
       `INSERT INTO game_rounds (game_player_id, round_number, primary_score, secondary_score, cp_remaining, time_seconds)

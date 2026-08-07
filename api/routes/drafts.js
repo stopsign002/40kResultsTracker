@@ -57,6 +57,32 @@ function playerFactionIds(payload) {
   return [0, 1].map((i) => players[i]?.factionId ?? null);
 }
 
+// Running totals for the live-games list, so the tab reads at a glance without
+// opening each game.
+//
+// Deliberately the REAL scoring function rather than a lighter sum written for
+// this endpoint: computeFinalScores is what a draft will eventually be filed
+// with, and the client's calcTotal is already pinned to it by the mirror tests.
+// A third implementation here is a third thing that can disagree with the other
+// two, and the list disagreeing with the wizard is exactly the confusion this
+// feature is meant to remove.
+//
+// It MUTATES what it is given — it writes finalScore/result and rewrites each
+// round's secondaryScore from the cards — so it gets a throwaway deep copy. A
+// draft still in setup has no rounds and no cards, which lands on the
+// final-score-only rung and scores 0 rather than throwing.
+function liveScores(payload) {
+  const players = Array.isArray(payload?.players) ? payload.players : [];
+  if (players.length !== 2) return [null, null];
+  try {
+    const copy = structuredClone(players);
+    computeFinalScores(copy, '11');
+    return copy.map((p) => (Number.isFinite(p.finalScore) ? p.finalScore : 0));
+  } catch {
+    return [null, null];
+  }
+}
+
 function viewerSeatOf(row, userId) {
   if (userId && row.owner_user_id === userId) return 1;
   if (userId && row.opponent_user_id === userId) return 2;
@@ -173,6 +199,7 @@ router.get('/', async (req, res, next) => {
       pointsLimit: r.payload?.pointsLimit ?? null,
       playerNames: playerNames(r.payload),
       playerFactionIds: playerFactionIds(r.payload),
+      scores: liveScores(r.payload),
     })));
   } catch (e) { next(e); }
 });

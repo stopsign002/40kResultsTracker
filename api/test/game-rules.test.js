@@ -19,6 +19,12 @@ import {
   PRIMARY_MATRIX,
   E11_PRIMARY_CAP,
   E11_SECONDARY_CAP,
+  E11_PRIMARY_ROUND_CAP,
+  E11_SECONDARY_ROUND_CAP,
+  sumSecondaryForRound,
+  secondaryRoundHeadroom,
+  cumulativeTimeThrough,
+  roundTimeFromClock,
   parseDuration,
   sumPrimary,
   sumSecondaries,
@@ -321,4 +327,159 @@ test('calcTotal and computeFinalScores agree on every case in the mirror table a
     }
   }
   assert.deepEqual(disagreements, []);
+});
+
+/* ── Per-battle-round caps ─────────────────────────────────────────
+ * 11e caps each half at 15 VP per round as well as 45 per game. These are
+ * INPUT ceilings enforced by the live tracker, deliberately NOT a clamp inside
+ * calcTotal / computeFinalScores — clamping the maths would rewrite the total
+ * of an already-recorded game the next time it was saved. The last test here is
+ * what pins that decision.
+ */
+
+test('the per-round caps match the mission pack the app ships', async () => {
+  const fs = await import('node:fs/promises');
+  const url = new URL('../../app/data/mission-cards-11e.json', import.meta.url);
+  const pack = JSON.parse(await fs.readFile(url, 'utf8'));
+  assert.equal(E11_PRIMARY_ROUND_CAP, pack.limits.primaryRound);
+  assert.equal(E11_SECONDARY_ROUND_CAP, pack.limits.secondaryRound);
+  // ...and the game-level ones we already had, so a pack update that moved
+  // either number can't slip past unnoticed.
+  assert.equal(E11_PRIMARY_CAP, pack.limits.primaryGame);
+  assert.equal(E11_SECONDARY_CAP, pack.limits.secondaryGame);
+});
+
+test('sumSecondaryForRound totals the cards that SCORED in a round, not the ones drawn in it', () => {
+  const p = {
+    secondaries: [
+      { cardName: 'drawn r1, scored r2', drawnRound: 1, roundNumber: 2, score: 5 },
+      { cardName: 'drawn r2, scored r2', drawnRound: 2, roundNumber: 2, score: 4 },
+      { cardName: 'drawn r1, scored r3', drawnRound: 1, roundNumber: 3, score: 7 },
+      { cardName: 'still in hand',       drawnRound: 2, roundNumber: null, score: 0 },
+      { cardName: 'discarded in r2',     drawnRound: 1, roundNumber: 2, score: 0, wasDiscarded: true },
+    ],
+  };
+  assert.equal(sumSecondaryForRound(p, 1), 0, 'nothing SCORED in round 1');
+  assert.equal(sumSecondaryForRound(p, 2), 9);
+  assert.equal(sumSecondaryForRound(p, 3), 7);
+  assert.equal(sumSecondaryForRound(p, 4), 0);
+  assert.equal(sumSecondaryForRound({}, 1), 0, 'a player with no cards is 0, not a throw');
+});
+
+test('the round caps are input ceilings — the scoring maths must NOT clamp per round', () => {
+  // A game that breaches 15 in a round but stays under 45 overall. Both sides
+  // must still report the raw total: the tracker stops you entering this, but
+  // anything already recorded has to read back exactly as it was saved.
+  const player = {
+    rounds: [
+      { roundNumber: 1, primaryScore: 20, secondaryScore: 0 },
+      { roundNumber: 2, primaryScore: 5, secondaryScore: 0 },
+    ],
+    secondaries: [
+      { cardName: 'over the round cap', drawnRound: 1, roundNumber: 1, score: 18 },
+    ],
+  };
+  const forServer = [structuredClone(player)];
+  computeFinalScores(forServer, '11');
+  assert.equal(forServer[0].finalScore, 43, '25 primary + 18 secondary, neither game cap reached');
+  assert.equal(calcTotal(structuredClone(player), '11'), forServer[0].finalScore);
+});
+
+test('secondaryRoundHeadroom spans cards, because the 15 is a ceiling on the ROUND', () => {
+  const p = {
+    secondaries: [
+      { cardName: 'a', roundNumber: 2, score: 6 },
+      { cardName: 'b', roundNumber: 2, score: 4 },
+      { cardName: 'c', roundNumber: 3, score: 15 },
+      { cardName: 'hand', roundNumber: null, score: 0 },
+    ],
+  };
+  assert.equal(secondaryRoundHeadroom(p, 1), E11_SECONDARY_ROUND_CAP, 'an untouched round is wide open');
+  assert.equal(secondaryRoundHeadroom(p, 2), 5, '15 - (6 + 4)');
+  assert.equal(secondaryRoundHeadroom(p, 3), 0, 'a full round offers nothing');
+  assert.equal(secondaryRoundHeadroom(p, null), E11_SECONDARY_ROUND_CAP,
+    'a card with no scored round yet is not constrained by any round');
+});
+
+test('secondaryRoundHeadroom excludes the entry being edited, so re-saving cannot ratchet it down', () => {
+  const entry = { cardName: 'a', roundNumber: 2, score: 6 };
+  const p = { secondaries: [entry, { cardName: 'b', roundNumber: 2, score: 4 }] };
+  // Without the exclusion this would be 5, and re-entering 6 would clamp to 5,
+  // then 4 the next time, and so on.
+  assert.equal(secondaryRoundHeadroom(p, 2, entry), 11, '15 - 4, the OTHER card only');
+  assert.equal(Math.min(entry.score, secondaryRoundHeadroom(p, 2, entry)), 6,
+    're-clamping an unchanged entry must leave it alone');
+});
+
+test('secondaryRoundHeadroom never goes negative on data that already breaches the cap', () => {
+  // Reachable from a game recorded before the caps existed. The clamp must
+  // offer 0, not a negative number that would flip a score to below zero.
+  const p = { secondaries: [{ cardName: 'legacy', roundNumber: 4, score: 22 }] };
+  assert.equal(secondaryRoundHeadroom(p, 4), 0);
+  assert.equal(secondaryRoundHeadroom({}, 4), E11_SECONDARY_ROUND_CAP, 'no cards is not a throw');
+});
+
+/* ── Count-up chess clock ──────────────────────────────────────────
+ * The clock is never reset between rounds, so a reading is CUMULATIVE. What
+ * gets stored is still the per-round figure; the subtraction happens at entry.
+ */
+
+const clocked = (...perRound) => ({
+  rounds: perRound.map((timeSeconds, i) => ({ roundNumber: i + 1, timeSeconds })),
+});
+
+test('cumulativeTimeThrough adds up everything banked to the end of a round', () => {
+  const p = clocked(300, 240, 420);           // 5:00, 4:00, 7:00
+  assert.equal(cumulativeTimeThrough(p, 0), 0, 'nothing is banked before round 1');
+  assert.equal(cumulativeTimeThrough(p, 1), 300);
+  assert.equal(cumulativeTimeThrough(p, 2), 540);
+  assert.equal(cumulativeTimeThrough(p, 3), 960);
+  assert.equal(cumulativeTimeThrough(p, 5), 960, 'rounds that were never played add nothing');
+  assert.equal(cumulativeTimeThrough({}, 3), 0, 'a player with no rounds is 0, not a throw');
+});
+
+test('an unclocked round counts as zero rather than breaking the chain', () => {
+  // Forgetting to note round 2 must not make round 3 unenterable.
+  const p = clocked(300, null, null);
+  assert.equal(cumulativeTimeThrough(p, 2), 300);
+  assert.equal(roundTimeFromClock(p, 3, 900), 600, '15:00 on the clock, 5:00 banked → 10:00');
+});
+
+test('roundTimeFromClock subtracts what the clock already stood at', () => {
+  const p = clocked(300, 240, null);
+  // Clock reads 14:30 at the end of round 3; 9:00 was banked over rounds 1-2.
+  assert.equal(roundTimeFromClock(p, 3, 870), 330);
+  // The very first round is the reading itself — nothing precedes it.
+  assert.equal(roundTimeFromClock(clocked(), 1, 420), 420);
+});
+
+test('a reading that goes backwards is rejected, not stored as a negative round', () => {
+  const p = clocked(300, 240, null);          // 9:00 banked
+  assert.equal(roundTimeFromClock(p, 3, 500), null, 'a count-up clock cannot read less than before');
+  assert.equal(roundTimeFromClock(p, 3, 540), 0, 'reading exactly the prior total is a 0-second round, not an error');
+});
+
+test('roundTimeFromClock rejects junk instead of coercing it', () => {
+  const p = clocked(300);
+  for (const bad of [null, undefined, NaN, Infinity, -60, 'abc']) {
+    assert.equal(roundTimeFromClock(p, 2, bad), null, `${String(bad)} should not parse as a clock reading`);
+  }
+});
+
+test('a full clocked game round-trips: readings in, per-round out, player total is the sum', () => {
+  // What a real clock would show at the end of each round.
+  const readings = [412, 903, 1500, 2010, 2415];
+  const p = { rounds: ROUNDS.map((n) => ({ roundNumber: n, timeSeconds: null })) };
+  for (const [i, reading] of readings.entries()) {
+    const n = i + 1;
+    const secs = roundTimeFromClock(p, n, reading);
+    assert.notEqual(secs, null, `round ${n} should accept ${reading}`);
+    p.rounds.find((r) => r.roundNumber === n).timeSeconds = secs;
+  }
+  assert.deepEqual(p.rounds.map((r) => r.timeSeconds), [412, 491, 597, 510, 405]);
+  // resolvePlayerTimes makes the player total the sum of the rounds, so the
+  // final clock reading and the recorded total have to be the same number.
+  const total = p.rounds.reduce((s, r) => s + r.timeSeconds, 0);
+  assert.equal(total, readings[readings.length - 1]);
+  assert.equal(fmtDuration(total), '40:15');
 });

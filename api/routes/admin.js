@@ -182,6 +182,183 @@ router.post('/promote-guests', async (req, res) => {
   res.json(result);
 });
 
+/* ── Detachment library ───────────────────────────────────────────────────
+ * A detachment typed into a game is promoted into `detachments` on save (see
+ * promoteDetachments in lib/game-write.js), so the library is a real, editable
+ * table rather than something inferred from game history. These routes are how
+ * a typo gets fixed once instead of game by game.
+ *
+ * Names are the key, not ids: the listing also surfaces names that only exist
+ * in historical games (rows written before promotion existed), and those have
+ * no library row to point an id at.
+ */
+
+// Recompute the derived game_players.detachment_name display string from the
+// authoritative child rows, for one faction. Cheap, and it means a rename never
+// has to reason about which games it touched.
+const RESYNC_DISPLAY = `
+  UPDATE game_players gp
+  SET detachment_name = sub.joined
+  FROM (
+    SELECT pd.game_player_id, STRING_AGG(pd.detachment_name, ', ' ORDER BY pd.sort_order, pd.id) AS joined
+    FROM player_detachments pd
+    GROUP BY pd.game_player_id
+  ) sub
+  WHERE gp.id = sub.game_player_id
+    AND gp.faction_id = $1
+    AND gp.detachment_name IS DISTINCT FROM sub.joined
+`;
+
+function detachmentName(value) {
+  const name = typeof value === 'string' ? value.trim() : '';
+  return name && name.length <= 120 ? name : null;
+}
+
+// Every distinct detachment for a faction: the library rows, plus any name that
+// only ever appeared in a game, each with how many player-seats used it.
+router.get('/detachments', async (req, res) => {
+  const factionId = idParam(req.query.factionId);
+  if (!factionId) return res.status(400).json({ error: 'factionId required' });
+  const { rows } = await pool.query(`
+    WITH lib AS (
+      SELECT id, name FROM detachments WHERE faction_id = $1
+    ), used AS (
+      SELECT TRIM(pd.detachment_name) AS name, COUNT(*)::int AS games
+      FROM player_detachments pd
+      JOIN game_players gp ON gp.id = pd.game_player_id
+      WHERE gp.faction_id = $1 AND TRIM(pd.detachment_name) <> ''
+      GROUP BY TRIM(pd.detachment_name)
+    )
+    SELECT COALESCE(lib.name, used.name) AS name,
+           lib.id,
+           COALESCE(used.games, 0) AS games,
+           (lib.id IS NOT NULL) AS in_library
+    FROM lib
+    FULL OUTER JOIN used ON LOWER(lib.name) = LOWER(used.name)
+    ORDER BY COALESCE(lib.name, used.name)
+  `, [factionId]);
+  res.json(rows.map((r) => ({
+    id: r.id, name: r.name, games: r.games, inLibrary: r.in_library,
+  })));
+});
+
+router.post('/detachments', async (req, res) => {
+  const factionId = idParam(req.body?.factionId);
+  const name = detachmentName(req.body?.name);
+  if (!factionId) return res.status(400).json({ error: 'factionId required' });
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const { rows } = await pool.query(
+    `INSERT INTO detachments (faction_id, name)
+     SELECT $1::int, $2::text
+     WHERE NOT EXISTS (
+       SELECT 1 FROM detachments WHERE faction_id = $1::int AND LOWER(name) = LOWER($2::text)
+     )
+     RETURNING id, name`,
+    [factionId, name]
+  );
+  if (!rows.length) return res.status(409).json({ error: 'that detachment is already in the library' });
+  await audit(req, 'detachment.create', { type: 'detachment', id: rows[0].id, payload: { factionId, name } });
+  res.status(201).json(rows[0]);
+});
+
+// Rename across the library AND every game that used the old name. Renaming
+// onto a name that already exists is a merge — that's the point, it's how two
+// spellings of one detachment get reconciled.
+router.patch('/detachments', async (req, res) => {
+  const factionId = idParam(req.body?.factionId);
+  const from = detachmentName(req.body?.from);
+  const to = detachmentName(req.body?.to);
+  if (!factionId) return res.status(400).json({ error: 'factionId required' });
+  if (!from || !to) return res.status(400).json({ error: 'from and to are required' });
+  if (from.toLowerCase() === to.toLowerCase() && from === to) {
+    return res.status(400).json({ error: 'that is already the name' });
+  }
+
+  const result = await withTx(async (client) => {
+    const games = await client.query(
+      `UPDATE player_detachments pd
+       SET detachment_name = $3
+       FROM game_players gp
+       WHERE gp.id = pd.game_player_id
+         AND gp.faction_id = $1
+         AND LOWER(TRIM(pd.detachment_name)) = LOWER($2)`,
+      [factionId, from, to]
+    );
+
+    // A player who fielded both spellings now has the same name twice; keep the
+    // earliest row so the joined display string doesn't read "Gladius, Gladius".
+    await client.query(
+      `DELETE FROM player_detachments pd
+       USING player_detachments keep, game_players gp
+       WHERE gp.id = pd.game_player_id
+         AND gp.faction_id = $1
+         AND keep.game_player_id = pd.game_player_id
+         AND LOWER(TRIM(keep.detachment_name)) = LOWER(TRIM(pd.detachment_name))
+         AND (keep.sort_order, keep.id) < (pd.sort_order, pd.id)`,
+      [factionId]
+    );
+
+    await client.query(RESYNC_DISPLAY, [factionId]);
+
+    // The library side: if `to` already has a row, the `from` row is redundant.
+    const target = await client.query(
+      `SELECT id FROM detachments WHERE faction_id = $1 AND LOWER(name) = LOWER($2)`,
+      [factionId, to]
+    );
+    const source = await client.query(
+      `SELECT id FROM detachments WHERE faction_id = $1 AND LOWER(name) = LOWER($2)`,
+      [factionId, from]
+    );
+    let merged = false;
+    if (target.rows.length && source.rows.length && target.rows[0].id !== source.rows[0].id) {
+      await client.query('DELETE FROM detachments WHERE id = $1', [source.rows[0].id]);
+      merged = true;
+    } else if (source.rows.length) {
+      await client.query('UPDATE detachments SET name = $2 WHERE id = $1', [source.rows[0].id, to]);
+    } else if (!target.rows.length) {
+      await client.query('INSERT INTO detachments (faction_id, name) VALUES ($1, $2)', [factionId, to]);
+    }
+    return { seatsUpdated: games.rowCount, merged };
+  });
+
+  await audit(req, 'detachment.rename', {
+    type: 'detachment', id: null,
+    payload: { factionId, from, to, seatsUpdated: result.seatsUpdated, merged: result.merged },
+  });
+  if (result.seatsUpdated) broadcast('game.saved', { action: 'detachment-rename' });
+  res.json({ ok: true, ...result });
+});
+
+// Drop a library entry. Refuses while games still use the name — deleting it
+// there would either rewrite history or leave the name resurrecting itself
+// through the autocomplete UNION. Rename/merge it first.
+router.delete('/detachments', async (req, res) => {
+  const factionId = idParam(req.query.factionId);
+  const name = detachmentName(req.query.name);
+  if (!factionId) return res.status(400).json({ error: 'factionId required' });
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const used = await pool.query(
+    `SELECT COUNT(*)::int AS n
+     FROM player_detachments pd
+     JOIN game_players gp ON gp.id = pd.game_player_id
+     WHERE gp.faction_id = $1 AND LOWER(TRIM(pd.detachment_name)) = LOWER($2)`,
+    [factionId, name]
+  );
+  if (used.rows[0].n > 0) {
+    return res.status(409).json({
+      error: `${used.rows[0].n} recorded game${used.rows[0].n === 1 ? '' : 's'} still use this detachment — rename it into the correct one instead`,
+      code: 'in_use',
+    });
+  }
+  const { rowCount } = await pool.query(
+    'DELETE FROM detachments WHERE faction_id = $1 AND LOWER(name) = LOWER($2)',
+    [factionId, name]
+  );
+  if (!rowCount) return res.status(404).json({ error: 'not in the library' });
+  await audit(req, 'detachment.delete', { type: 'detachment', id: null, payload: { factionId, name } });
+  res.json({ ok: true });
+});
+
 // Recent audit-log entries — admin viewer.
 router.get('/audit', async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);

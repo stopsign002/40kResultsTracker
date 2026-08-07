@@ -14,7 +14,7 @@ to a read module silently takes the site private.
 | File | Mounted at | Auth gate | What it serves |
 |---|---|---|---|
 | `auth.js` | `/auth` | **per-route** (login/logout/`GET /me` reachable while logged out; `GET /me` self-checks the session and 401s) | login, logout, me, PATCH me (self-serve `army_name` + `promptRoundPhoto`), change-password |
-| `admin.js` | `/admin` | `requireAdmin` (**top-level**) | user CRUD, game visibility toggle, game delete (**archives**), the **recycle bin** (`/deleted*`), audit log viewer, guest-account preview + promotion |
+| `admin.js` | `/admin` | `requireAdmin` (**top-level**) | user CRUD, game visibility toggle, game delete (**archives**), the **recycle bin** (`/deleted*`), the **detachment library** (`/detachments`, see below), audit log viewer, guest-account preview + promotion |
 | `games.js` | `/games` | **none top-level** — `GET /`, `GET /:id` public; `POST /`, `PUT /:id` inline `requireAuth` | list (with filters + free-text `q`), get, create, update. The write helpers live in `lib/game-write.js`; this file keeps the filter SQL and `PUT`'s delete-then-reinsert body. Still has **no DELETE** — hard delete is the admin escape hatch |
 | `images.js` | `/games` (mounted **before** `games.js`) + `/maps` via the named `mapRouter` export | per-route: `GET /:gameId/images` public, writes `requireAuth` | game photos (list/upload/flag/delete) and terrain-layout pictures. Bytes go to `UPLOAD_DIR` on disk and are served **by Caddy**, not by Node. Also exports `removeGameImageFiles(gameId)` — now called from `lib/archive.js#removeArchivedFiles`, i.e. only on a **permanent** delete |
 | `stats.js` | `/stats` | **none — every route is public** | overview, faction/player win rates, mission/deployment breakdowns, matchups, head-to-head, first-turn impact, secondary averages, detachment win rates, trends, calendar, per-player profile |
@@ -59,6 +59,28 @@ Note the mount order in `server.js`: `/reference` sits **between** the two
   the transaction let two simultaneous taps both pass the already-submitted check
   and create two games. Pinned by an integration test that fires two concurrent
   submits and asserts one 200, one 409, one `games` row.
+
+### `admin.js` — the detachment library
+
+Four routes keyed by **name, not id** — the listing is a FULL OUTER JOIN of the
+`detachments` rows against the names actually used in games, so a name recorded
+before promotion existed still appears (`id: null`, `inLibrary: false`) and has
+no id to point at.
+
+- `GET /detachments?factionId=N` → `[{ id, name, games, inLibrary }]`.
+- `POST /detachments` adds one; 409 on a case-insensitive duplicate.
+- `PATCH /detachments` `{ factionId, from, to }` is the one that does real work:
+  inside `withTx` it rewrites every `player_detachments` row for that faction,
+  **de-duplicates a seat that ended up holding both spellings** (or the derived
+  display string reads "Gladius, Gladius"), resyncs
+  `game_players.detachment_name` from the child rows, and then reconciles the
+  library row — renaming it, or deleting it when the target already exists.
+  Renaming onto an existing name is therefore a **merge**, which is the intended
+  tool for two spellings of one detachment. Returns `{ ok, seatsUpdated, merged }`.
+- `DELETE /detachments?factionId=N&name=…` refuses with **409 `in_use`** while
+  any recorded game references the name. Deleting the library row alone would
+  not remove the name from the autocomplete — `/reference/factions/:id/detachments`
+  still UNIONs names out of game history — so it would simply reappear.
 
 ### `admin.js` — the recycle bin
 

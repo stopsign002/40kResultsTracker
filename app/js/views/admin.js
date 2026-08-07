@@ -1,5 +1,5 @@
-import { admin, auth, seasons } from '../api.js';
-import { el, clear, toast, pill, promptModal, confirmModal } from '../components.js';
+import { admin, auth, seasons, reference } from '../api.js';
+import { el, clear, toast, pill, promptModal, confirmModal, selectOptions } from '../components.js';
 
 export async function renderAdmin(state) {
   if (state.user?.role !== 'admin') {
@@ -245,9 +245,12 @@ export async function renderAdmin(state) {
     seasonsBody,
   ]);
 
+  const detachmentsPanel = await buildDetachmentsPanel();
+
   root.appendChild(createPanel);
   root.appendChild(usersPanel);
   root.appendChild(guestsPanel);
+  root.appendChild(detachmentsPanel);
   root.appendChild(seasonsPanel);
   root.appendChild(deletedPanel);
   root.appendChild(auditPanel);
@@ -259,6 +262,135 @@ export async function renderAdmin(state) {
   await refreshDeleted();
   await refreshAudit();
   return root;
+}
+
+/* ── Detachment library ─────────────────────────────────────────
+ * A detachment typed into a game is promoted into its faction's library on
+ * save, so this panel is where a typo gets corrected once — renaming rewrites
+ * the library AND every game that used the old spelling, and renaming onto an
+ * existing name merges the two.
+ */
+async function buildDetachmentsPanel() {
+  const factions = await reference.factions().catch(() => []);
+  const factionSel = el('select', {}, selectOptions(factions, 'id', 'name', true, '— Faction —'));
+  const body = el('div', { class: 'panel-body' },
+    el('div', { class: 'muted' }, 'Pick a faction to see its detachments.'));
+
+  const addName = el('input', { type: 'text', placeholder: 'new detachment name' });
+  const addBtn = el('button', { class: 'btn' }, 'Add');
+
+  const factionId = () => (factionSel.value ? parseInt(factionSel.value, 10) : null);
+
+  async function refresh() {
+    const id = factionId();
+    clear(body);
+    if (!id) {
+      body.appendChild(el('div', { class: 'muted' }, 'Pick a faction to see its detachments.'));
+      return;
+    }
+    body.appendChild(el('div', { class: 'muted' }, 'Loading…'));
+    let rows;
+    try {
+      rows = await admin.detachments(id);
+    } catch (e) {
+      clear(body);
+      body.appendChild(el('div', { class: 'error-text' }, e.message));
+      return;
+    }
+    clear(body);
+    if (!rows.length) {
+      body.appendChild(el('div', { class: 'muted' }, 'No detachments for this faction yet.'));
+      return;
+    }
+    body.appendChild(el('table', {}, [
+      el('thead', {}, el('tr', {}, [
+        el('th', {}, 'Detachment'),
+        el('th', {}, 'Games'),
+        el('th', {}, 'Source'),
+        el('th', { style: { textAlign: 'right' } }, 'Actions'),
+      ])),
+      el('tbody', {}, rows.map((r) => buildDetachmentRow(id, r, refresh))),
+    ]));
+  }
+
+  factionSel.addEventListener('change', refresh);
+
+  addBtn.addEventListener('click', async () => {
+    const id = factionId();
+    const name = addName.value.trim();
+    if (!id) return toast('Pick a faction first', 'error');
+    if (!name) return toast('Type a name first', 'error');
+    try {
+      await admin.addDetachment(id, name);
+      addName.value = '';
+      toast(`Added ${name}`);
+      await refresh();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  return el('div', { class: 'panel' }, [
+    el('div', { class: 'panel-header' }, [el('h2', {}, 'Detachments'), factionSel]),
+    el('div', { class: 'panel-body', style: { paddingBottom: '0' } }, [
+      el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } },
+        'Detachments typed into a game join this list automatically. Renaming one rewrites every game that used the old name; renaming onto a name already here merges the two.'),
+      el('div', { class: 'btn-group' }, [addName, addBtn]),
+    ]),
+    body,
+  ]);
+}
+
+function buildDetachmentRow(factionId, r, refresh) {
+  const rename = el('button', { class: 'btn small' }, 'Rename');
+  rename.addEventListener('click', async () => {
+    const to = await promptModal({
+      title: `Rename "${r.name}"`,
+      label: r.games
+        ? `This also rewrites ${r.games} recorded game seat${r.games === 1 ? '' : 's'}. Renaming onto a name already in the list merges them.`
+        : 'Renaming onto a name already in the list merges them.',
+      defaultValue: r.name,
+      confirmLabel: 'Rename',
+    });
+    if (to == null) return;
+    const next = to.trim();
+    if (!next || next === r.name) return;
+    try {
+      const out = await admin.renameDetachment(factionId, r.name, next);
+      toast(out.merged
+        ? `Merged into ${next} — ${out.seatsUpdated} game seat${out.seatsUpdated === 1 ? '' : 's'} updated`
+        : `Renamed to ${next}${out.seatsUpdated ? ` — ${out.seatsUpdated} game seat${out.seatsUpdated === 1 ? '' : 's'} updated` : ''}`);
+      await refresh();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+
+  const del = el('button', { class: 'btn small danger' }, 'Delete');
+  del.addEventListener('click', async () => {
+    const ok = await confirmModal({
+      title: `Delete "${r.name}"?`,
+      body: 'Removes it from the suggestion list. Recorded games are not touched.',
+      danger: true,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
+    try {
+      await admin.deleteDetachment(factionId, r.name);
+      toast(`Deleted ${r.name}`);
+      await refresh();
+    } catch (e) { toast(e.message, 'error'); }
+  });
+  // The server refuses while games still use the name, but saying so up front
+  // beats offering a button that can only fail.
+  del.disabled = r.games > 0;
+  if (r.games > 0) del.title = 'Used by recorded games — rename it into the correct one instead';
+
+  return el('tr', {}, [
+    el('td', {}, r.name),
+    el('td', { class: 'tabular' }, String(r.games)),
+    el('td', {}, r.inLibrary
+      ? pill('In list')
+      : pill('From games only', 'hidden')),
+    el('td', { style: { textAlign: 'right' } },
+      el('div', { class: 'btn-group', style: { justifyContent: 'flex-end' } }, [rename, del])),
+  ]);
 }
 
 function buildSeasonsTable(rows) {

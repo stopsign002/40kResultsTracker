@@ -79,7 +79,7 @@ export function selectOptions(items, valueKey = 'id', labelKey = 'name', include
 //   await confirmModal({ title, body, danger: true })
 //   await promptModal({ title, label, defaultValue, placeholder })
 
-function buildModal({ title, body, footer, onClose }) {
+export function buildModal({ title, body, footer, onClose }) {
   const overlay = el('div', { class: 'modal-overlay' });
   const dialog = el('div', { class: 'modal-dialog', role: 'dialog' }, [
     el('div', { class: 'modal-header' }, el('h2', {}, title)),
@@ -124,6 +124,30 @@ export function confirmModal({ title = 'Confirm', body = '', danger = false, con
       onClose: () => { modal.close(); resolve(false); },
     });
     setTimeout(() => confirmBtn.focus(), 100);
+  });
+}
+
+// confirmModal with more than one way to say yes. Resolves to the chosen
+// `value`, or `null` for cancel / backdrop / Esc / back — the same "back means
+// never mind" contract the other two modals keep.
+export function choiceModal({ title = 'Choose', body = '', choices = [], cancelLabel = 'Cancel' } = {}) {
+  return new Promise((resolve) => {
+    let modal;
+    const cancelBtn = el('button', { class: 'btn', type: 'button', onClick: () => { modal.close(); resolve(null); } }, cancelLabel);
+    const buttons = choices.map((c, i) => el('button', {
+      class: `btn ${c.primary || i === 0 ? 'primary' : ''}`.trim(),
+      type: 'button',
+      onClick: () => { modal.close(); resolve(c.value); },
+    }, c.label));
+    modal = buildModal({
+      title,
+      body: el('div', {}, body),
+      // Wraps, because three buttons plus a cancel is wider than a phone.
+      footer: el('div', { class: 'btn-group', style: { justifyContent: 'flex-end', width: '100%', flexWrap: 'wrap' } },
+        [cancelBtn, ...buttons]),
+      onClose: () => { modal.close(); resolve(null); },
+    });
+    setTimeout(() => (buttons[0] || cancelBtn).focus(), 100);
   });
 }
 
