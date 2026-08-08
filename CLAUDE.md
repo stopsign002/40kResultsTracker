@@ -83,7 +83,7 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   ├── game-filter.js  COUNTED_GAMES — the shared "counts toward stats" gate (digital on/off)
 │   │   ├── faction-anchors.js  server-side mirror of FACTION_HOMES + SPARE_ANCHORS /
 │   │   │                   chooseSpareAnchor() for the 2nd+ player of a faction
-│   │   └── mail.js         notify(subject, text) → the shared mailer container;
+│   │   └── mail.js         notify(subject, text) + isFixtureActor() → the shared mailer;
 │   │                       no-ops unless MAILER_URL + MAILER_TOKEN are set
 │   ├── routes/             each file: `export default Router()` mounted in server.js
 │   │   ├── auth.js         /auth/*  — login, logout, me, PATCH me, change-password
@@ -110,7 +110,7 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
 │   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
-│   └── test/                see "Testing" — 175 unit + 132 integration
+│   └── test/                see "Testing" — 178 unit + 133 integration
 │       ├── README.md       how to run + what's covered
 │       ├── game-scoring.test.js  38 cases pinning the camelCase payload contract
 │       ├── game-rules.test.js    34 — the client mirror, cross-checked payload-by-payload
@@ -129,7 +129,7 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │       └── integration/          ⚠ runs against the LIVE API and the REAL database
 │           ├── _harness.js               login/fixtures/cleanup — read its comments first
 │           ├── drafts-permissions.test.js 70 — every seat × every route
-│           ├── drafts-lifecycle.test.js   32 — create → autosave → submit → photos,
+│           ├── drafts-lifecycle.test.js   33 — create → autosave → submit → photos,
 │           │                             and the running score on the live-games list
 │           ├── deleted-items.test.js      19 — archive / restore / purge, incl. the FK scrub
 │           ├── detachments-admin.test.js  8 — library promotion on save; rename/merge
@@ -726,8 +726,8 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | POST | `/drafts/:id/join` | auth + `{ token }` | claim the opponent seat via a share link → `{ id, viewerSeat: 2, isOwner: false, rev }`. Idempotent for the current opponent; 409 if someone else got there first; 400 if you own it |
 | POST | `/drafts/:id/submit` | owner | file the draft as a real game → `{ gameId }`. Forces `edition: '11'`. 409 if already submitted, 400 with a player-facing message from `validateDraftSubmit` |
 | DELETE | `/drafts/:id` | owner **or admin** | discard — **archived into `deleted_items`**, and the `UPLOAD_DIR/drafts/<id>/` photo folder is deliberately left on disk so a restore comes back with its pictures. The one place admin *is* a bypass, so abandoned games can be cleared out |
-| GET | `/drafts/:id/images` | **public** | `[{ id, file_name, thumb_name, caption, round_number, width, height, uploaded_by_name }]` |
-| POST | `/drafts/:id/images` | owner or opponent | same base64 contract as `POST /games/:id/images` (12mb body limit on this route only, same `MAX_IMAGE_BYTES` / MIME caps, 40 photos per draft). Takes an optional `roundNumber` so a shot lands on the round it was taken in. Responds **201**; 409 once submitted |
+| GET | `/drafts/:id/images` | **public** | `[{ id, file_name, thumb_name, caption, round_number, is_map, width, height, uploaded_by_name }]` |
+| POST | `/drafts/:id/images` | owner or opponent | same base64 contract as `POST /games/:id/images` (12mb body limit on this route only, same `MAX_IMAGE_BYTES` / MIME caps, 40 photos per draft). Takes an optional `roundNumber` so a shot lands on the round it was taken in, and an optional `isMap: true` for the terrain-layout shot taken on Setup — clear-then-set inside one transaction, since the partial unique index allows one per draft. Responds **201**; 409 once submitted |
 | DELETE | `/drafts/:id/images/:imageId` | uploader or draft owner | unlinks both files |
 | POST | `/maps/:id/image` | auth | `{ dataUrl, thumbDataUrl? }` — picture of a terrain layout (a `deployment_maps` row), shown on every game played on it. Replacing unlinks the previous pair |
 | DELETE | `/maps/:id/image` | auth | clears the row and unlinks both files |
@@ -803,7 +803,7 @@ Tables (snake_case throughout):
 | `banner_first_seen` | one row per (player_key, faction_id); `first_seen_at` is set on save and **never updated** — the war map's seed-claim order (and thus its cross-regen geographic stability) depends on this | player_key, faction_id, first_seen_at, anchor_x + anchor_y (REAL, nullable — the banner's own map anchor; NULL falls back to `FACTION_HOMES`); PK (player_key, faction_id) |
 | `seasons` | one row per Theatre-of-War season; only one `is_active = TRUE` (enforced by partial unique index). `map_seed` drives the canvas geometry for that season — archived seasons render with their own continent. | id, name, map_seed (BIGINT), started_at, ended_at, is_active, created_at |
 | `game_drafts` | **in-progress games** for the live tracker. Deliberately NOT a row in `games` — see the invariant table. Retired, not deleted, on submit: `submitted_at` is stamped and the row stays. | id, owner_user_id (FK users CASCADE), opponent_user_id (FK users SET NULL — the invited second phone), share_token (TEXT UNIQUE, the join link), **payload (JSONB)** — exactly the camelCase shape `serializeDraft()` produces in `game-form.js`, so submit is a straight hand-off — current_step (TEXT, `'setup'` \| `'round1'`..`'round5'` \| `'summary'`; plain TEXT, no CHECK), rev (INTEGER, bumped on every accepted PATCH), **submitted_at** (TIMESTAMPTZ, NULL = still in progress — this and *not* `submitted_game_id` is what "finished" means), submitted_game_id (FK games **SET NULL** — a pointer for navigation only; it goes NULL if the resulting game is later hard-deleted, which is exactly why the lifecycle flag had to be separated from it), **started_notified_at** (TIMESTAMPTZ, NULL = not yet announced — the once-only guard for the "game started" email; see "Live game tracker"), created_at, updated_at. Two **partial** indexes on owner / opponent `WHERE submitted_at IS NULL` |
-| `game_draft_images` | photos taken mid-game; same bytes-on-disk rule as `game_images`, under `UPLOAD_DIR/drafts/<draft_id>/`. On submit the files are `fs.rename`d into `UPLOAD_DIR/<game_id>/` and re-created as `game_images` rows | id, draft_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, round_number (nullable, CHECK 1-5 — which battle round the shot belongs to), width, height, bytes, created_at |
+| `game_draft_images` | photos taken mid-game; same bytes-on-disk rule as `game_images`, under `UPLOAD_DIR/drafts/<draft_id>/`. On submit the files are `fs.rename`d into `UPLOAD_DIR/<game_id>/` and re-created as `game_images` rows, `is_map` included | id, draft_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, round_number (nullable, CHECK 1-5 — which battle round the shot belongs to; NULL = a Setup-step photo), is_map (the terrain-layout shot, partial unique index `(draft_id) WHERE is_map` — two would collide on the game's own index at relink and the second would be dropped), width, height, bytes, created_at |
 | `audit_log` | append-only audit trail of every write action (game create/update/delete/visibility, user create/update, login, password change, season start). `payload` is JSONB — **never** the raw request body; see "Recycle bin and the audit log" | id, actor_user_id (FK ON DELETE SET NULL), actor_username, action, target_type, target_id, payload (jsonb), created_at |
 | `deleted_items` | **the recycle bin.** One row per deleted game or draft, holding the whole row-set as JSON so it can be re-inserted verbatim. Lives at the very bottom of `schema.sql`. | id, kind (TEXT CHECK IN `'game'`/`'draft'`), original_id, label (what the admin panel shows), **payload (JSONB)** — `{version:1, tables:[{name, rows:[…]}]}` in dependency order — deleted_by_user_id (FK users SET NULL), deleted_by_name, deleted_at; **UNIQUE (kind, original_id)** so the same id can't be banked twice. Index on `deleted_at DESC` |
 
@@ -1655,6 +1655,15 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   `<span class="photo-badge is-round">`, captioned `Round N` or `End of round N`
   (the latter only from the between-rounds nudge). The same class renders on game
   detail, so a submitted game keeps its round labels.
+- **Setup has the same pair of buttons under "Terrain layout"**, and they post
+  `isMap: true` with a null `roundNumber` — the table you're about to play on is
+  the one photo you can only take before deploying, and tagging it at source
+  beats remembering to toggle Map on game detail a week later. Only the **first**
+  file of a batch claims the tag (the library input is `multiple`, and a game has
+  one table), so picking four photos of your board is not a lottery over which
+  one the server's clear-then-set happens to land on last. A photo with no round
+  is a Setup photo: `buildPhotoPanel(n)` filters on `round_number === n` and
+  never sees them, and the Setup panel filters on `round_number == null`.
 - **The draw picker leads with "🎲 Draw at random"**, pinned above the card list —
   tactical secondaries are drawn blind, so picking one off an alphabetical list is
   the unusual case. The free-text "card not listed" entry was **removed** from the
@@ -2019,6 +2028,14 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
   are independent, so one photo can be both. The games list's second thumbnail
   prefers this per-game photo and falls back to the picture attached to the
   `deployment_maps` row, which is shared by every game on that layout.
+  The live tracker can **set the flag at source**: its Setup step has a Terrain
+  layout panel whose Take photo / Upload buttons post `isMap: true`, so the tag
+  is carried by `relinkDraftImages` rather than toggled by hand on game detail
+  afterwards. `game_draft_images` therefore carries its own `is_map` and its own
+  partial unique index — one per draft, because two would collide on the game's
+  index at relink and the loser would be dropped as a failed relink (a lost
+  photo). Re-shooting the table demotes the previous shot rather than deleting
+  it: it stays on the game, just untagged.
 - **Deleting a game leaves its photo files exactly where they are.** Both
   `DELETE /admin/games/:id` and `DELETE /drafts/:id` archive into `deleted_items`
   and touch nothing on disk, because a restore that comes back with no pictures
@@ -2055,21 +2072,21 @@ To change behaviour, the tunables in `ratings.js` are the dial; the math in `gli
 
 ## Testing
 
-**307 tests in two suites.** Both are `node:test` — no framework, no assertion
+**311 tests in two suites.** Both are `node:test` — no framework, no assertion
 library, no mocking library. Run the unit suite before every deploy; run the
 integration suite before anything that touches `drafts.js`, `admin.js`,
 `archive.js` or the schema.
 
 ```bash
-bash scripts/test-unit.sh                    # 175 tests, ~1.5s, no network, no DB
-bash scripts/test-live.sh                    # 132 tests, live API + real Postgres
+bash scripts/test-unit.sh                    # 178 tests, ~1.5s, no network, no DB
+bash scripts/test-live.sh                    # 133 tests, live API + real Postgres
 bash scripts/test-live.sh drafts-lifecycle   # one file
 ```
 
 Both shell out to `docker run`, which is why they live in `scripts/` rather than
 as npm scripts. `npm test` inside `api/` runs the same unit glob on the host.
 
-### Unit suite (`scripts/test-unit.sh`) — 175 tests, 10 files
+### Unit suite (`scripts/test-unit.sh`) — 178 tests, 11 files
 
 `--network none`, no database, no containers. It mounts `app/` **read-only**,
 because several suites test *frontend* modules — they're dependency-free ES
@@ -2098,7 +2115,7 @@ The three additions worth knowing about:
   **the route never moves while a layer is open** — the failure this module
   exists to prevent.
 
-### Integration suite (`scripts/test-live.sh`) — 132 tests, 5 files
+### Integration suite (`scripts/test-live.sh`) — 133 tests, 5 files
 
 Joined to the `web` docker network, hitting `40k-api:3000` and `postgres:5432`
 directly — no Caddy, no NAT loopback (which doesn't work on this host anyway).
@@ -2111,6 +2128,13 @@ naming, not isolation:
 - Every row belongs to a user whose username starts with **`zz_test_`**;
   free-text reference rows it invents are prefixed **`ZZ `**.
 - `cleanup()` only deletes rows reachable from those users.
+- **`zz_test_` is also what keeps a test run out of the operator's inbox.**
+  The suite files real games against the real API, so every fixture game used to
+  send a "new game logged" email — a dozen a run, plus a "game started" per
+  draft, which is enough to burn the shared mailer's Gmail daily quota and take
+  mail down for **every** site on the box. `isFixtureActor()` in `lib/mail.js`
+  is the guard; `notifyGameLogged` and `notifyGameStarted` resolve the acting
+  account and return early on it.
 - **`zz-residue.test.js` runs last** (the glob is alphabetical and the run is
   serial) and **fails the build** if anything is left behind — including that the
   11e pack still holds exactly its 18 seeded secondaries.
@@ -2120,6 +2144,15 @@ secondary cards into the live 11e mission pack**, where they showed up in every
 user's draw picker with no way to remove them. (It's also why secondaries are
 match-only now — see "Security posture".) **If you add a table, add it to
 `cleanup()` in FK-safe order.**
+
+**If you add a notification, add it to the fixture guard.** The rule is the same
+shape as the residue guard and fails the same way — silently, in someone else's
+inbox rather than in the test output. Suppressing mail by unsetting `MAILER_URL`
+around the run is the obvious alternative and is **wrong**: an interrupted run
+leaves real notifications off for good, and nobody notices an email that didn't
+arrive. Key the suppression off the fixture name, which is already load-bearing
+here, so there is nothing to switch back on. After touching a mail path, check
+`docker logs --since <window> mailer` is empty for the run.
 
 It happened a **second** time, exactly as predicted by that sentence, when
 `promoteDetachments` started writing to `detachments`: three `ZZ ` detachments

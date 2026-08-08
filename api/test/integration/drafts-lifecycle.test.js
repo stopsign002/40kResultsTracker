@@ -595,6 +595,40 @@ test('mid-game photos move from the draft folder onto the game, keeping their ca
   assert.deepEqual(leftovers, []);
 });
 
+test('the setup map photo keeps its tag through submit, and re-shooting the table demotes the old one', async () => {
+  const draftId = await newDraft(ownerC, payload([
+    seat(guest('map_a'), { rounds: primaryRounds([5, 5, 5, 5, 5]) }),
+    seat(guest('map_b'), { rounds: primaryRounds([5, 5, 5, 5, 5]) }),
+  ]));
+
+  const first = await ownerC.post(`/drafts/${draftId}/images`,
+    { dataUrl: TINY_JPEG, caption: 'ZZ first table', isMap: true });
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  assert.equal(first.data.is_map, true);
+
+  const round = await ownerC.post(`/drafts/${draftId}/images`,
+    { dataUrl: TINY_JPEG, caption: 'ZZ round one', roundNumber: 1 });
+  assert.equal(round.data.is_map, false);
+
+  const second = await ownerC.post(`/drafts/${draftId}/images`,
+    { dataUrl: TINY_JPEG, caption: 'ZZ second table', isMap: true });
+  assert.equal(second.status, 201, JSON.stringify(second.data));
+
+  const { rows: onDraft } = await pool.query(
+    'SELECT id, caption, is_map FROM game_draft_images WHERE draft_id = $1 ORDER BY id', [draftId]);
+  assert.equal(onDraft.length, 3);
+  assert.deepEqual(onDraft.filter((r) => r.is_map).map((r) => r.caption), ['ZZ second table'],
+    'the second table shot should be the only one still tagged');
+
+  const gameId = await submitOk(ownerC, draftId);
+
+  const { rows: onGame } = await pool.query(
+    'SELECT caption, is_map FROM game_images WHERE game_id = $1 ORDER BY id', [gameId]);
+  assert.equal(onGame.length, 3);
+  assert.deepEqual(onGame.filter((r) => r.is_map).map((r) => r.caption), ['ZZ second table'],
+    'is_map did not survive the relink onto the game');
+});
+
 /* ── Submitted, then the game deleted ──────────────────────────── */
 
 test('a draft whose submitted game was hard-deleted stays retired instead of resurrecting itself', async () => {

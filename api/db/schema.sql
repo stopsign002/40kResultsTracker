@@ -538,12 +538,32 @@ CREATE TABLE IF NOT EXISTS game_draft_images (
   thumb_name          TEXT,
   caption             TEXT,
   round_number        INTEGER CHECK (round_number BETWEEN 1 AND 5),
+  -- The shot of the terrain layout, taken on the Setup step. Carried onto
+  -- game_images.is_map at submit, which is why at most one draft photo may hold
+  -- it: two would collide on the game's own partial unique index and the second
+  -- would be dropped as a failed relink.
+  is_map              BOOLEAN NOT NULL DEFAULT FALSE,
   width               INTEGER,
   height              INTEGER,
   bytes               INTEGER,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_game_draft_images_draft ON game_draft_images(draft_id);
+
+-- Migration: map-photo flag on mid-game photos. MUST sit below the CREATE TABLE
+-- above — see the game_images.is_map block for what happens on a fresh database
+-- when a guarded ALTER is placed earlier in the file.
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_draft_images' AND column_name='is_map'
+  ) THEN
+    ALTER TABLE game_draft_images ADD COLUMN is_map BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+END $$;
+-- Below the ALTER, not above it: the index references is_map.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_game_draft_images_one_map
+  ON game_draft_images(draft_id) WHERE is_map;
 
 -- ── Recycle bin ───────────────────────────────────────────────
 -- Deleting a game or a live game archives its whole row-set here as JSONB and

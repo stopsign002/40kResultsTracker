@@ -10,7 +10,7 @@
 // shares the helpers below.
 import { pool } from './db.js';
 import { FACTION_HOMES, chooseSpareAnchor } from './faction-anchors.js';
-import { notify } from './mail.js';
+import { notify, isFixtureActor } from './mail.js';
 
 // The five 11e Force Dispositions. Yours vs your opponent's decides the named
 // primary mission each of you plays.
@@ -417,6 +417,11 @@ export async function createGame(client, body, actorUserId) {
  */
 export async function notifyGameLogged(id) {
   try {
+    const creator = (await pool.query(
+      `SELECT u.username FROM games g
+         LEFT JOIN users u ON u.id = g.created_by_user_id
+        WHERE g.id = $1`, [id])).rows[0]?.username;
+    if (isFixtureActor(creator)) return;
     const players = (await pool.query(
       `SELECT gp.seat,
               COALESCE(u.display_name, gp.guest_name) AS player,

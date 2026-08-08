@@ -22,7 +22,7 @@ import { createGame, resolvePlayerIdentities, notifyGameLogged } from '../lib/ga
 import { mergeDraftPatch, opponentSeatPatch, validateDraftSubmit } from '../lib/draft.js';
 import { UPLOAD_DIR, decodeDataUrl, unlinkQuiet } from './images.js';
 import { archiveDraft } from '../lib/archive.js';
-import { notify } from '../lib/mail.js';
+import { notify, isFixtureActor } from '../lib/mail.js';
 import { idParam } from '../lib/params.js';
 
 const router = Router();
@@ -128,9 +128,13 @@ async function notifyGameStarted(id) {
     );
     if (!claimed.rows[0]) return; // already announced
     const { payload, owner_user_id: ownerId } = claimed.rows[0];
-    const owner = (await pool.query(
-      'SELECT display_name FROM users WHERE id = $1', [ownerId]
-    )).rows[0]?.display_name || 'Someone';
+    const ownerRow = (await pool.query(
+      'SELECT username, display_name FROM users WHERE id = $1', [ownerId]
+    )).rows[0];
+    // Claimed first, then dropped: the fixture draft is left stamped as
+    // announced, so it can't fire later either.
+    if (isFixtureActor(ownerRow?.username)) return;
+    const owner = ownerRow?.display_name || 'Someone';
 
     const players = Array.isArray(payload?.players) ? payload.players : [];
     const ids = players.map((p) => p?.factionId).filter(Boolean);
@@ -491,10 +495,10 @@ async function relinkDraftImages(draftId, gameId) {
       }
       await pool.query(
         `INSERT INTO game_images
-           (game_id, uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, width, height, bytes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+           (game_id, uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, bytes)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [gameId, img.uploaded_by_user_id, img.file_name, img.thumb_name ?? img.file_name,
-         img.caption, first, img.width, img.height, img.bytes]
+         img.caption, first, img.is_map === true, img.width, img.height, img.bytes]
       );
       await pool.query('DELETE FROM game_draft_images WHERE id = $1', [img.id]);
       first = false;
@@ -573,22 +577,34 @@ router.post('/:id/images', requireAuth, express.json({ limit: '12mb' }), async (
       throw e;
     }
 
+    // Clear-then-set in one transaction, like PATCH /games/:id/images: the
+    // partial unique index rejects a second map photo while the old one is
+    // still flagged, so re-shooting the table has to demote the previous shot
+    // (it stays on the game, just untagged) in the same breath.
+    const isMap = req.body?.isMap === true;
     let created;
     try {
-      created = (await pool.query(
-        `INSERT INTO game_draft_images
-           (draft_id, uploaded_by_user_id, file_name, thumb_name, caption, round_number, width, height, bytes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         RETURNING *`,
-        [
-          id, req.session.userId, fileName, thumbName,
-          (req.body?.caption || '').trim() || null,
-          imageRoundOrNull(req.body?.roundNumber),
-          Number.isInteger(req.body?.width) ? req.body.width : null,
-          Number.isInteger(req.body?.height) ? req.body.height : null,
-          full.buf.length,
-        ]
-      )).rows[0];
+      created = await withTx(async (client) => {
+        if (isMap) {
+          await client.query(
+            'UPDATE game_draft_images SET is_map = FALSE WHERE draft_id = $1 AND is_map', [id]);
+        }
+        return (await client.query(
+          `INSERT INTO game_draft_images
+             (draft_id, uploaded_by_user_id, file_name, thumb_name, caption, round_number, is_map, width, height, bytes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           RETURNING *`,
+          [
+            id, req.session.userId, fileName, thumbName,
+            (req.body?.caption || '').trim() || null,
+            imageRoundOrNull(req.body?.roundNumber),
+            isMap,
+            Number.isInteger(req.body?.width) ? req.body.width : null,
+            Number.isInteger(req.body?.height) ? req.body.height : null,
+            full.buf.length,
+          ]
+        )).rows[0];
+      });
     } catch (e) {
       await unlinkQuiet(path.join(dir, fileName));
       await unlinkQuiet(path.join(dir, thumbName));

@@ -517,13 +517,16 @@ async function renderWizard(state, draftId) {
   });
   let photoRound = null;
   let photoEndOfRound = false;
+  let photoAsMap = false;
 
   async function uploadFiles(files) {
     const list = Array.from(files || []);
     if (!list.length) return;
     const n = photoRound;
     const endOfRound = photoEndOfRound;
-    const caption = n ? (endOfRound ? `End of round ${n}` : `Round ${n}`) : null;
+    const asMap = photoAsMap;
+    const caption = asMap ? 'Terrain layout'
+      : n ? (endOfRound ? `End of round ${n}` : `Round ${n}`) : null;
     let saved = 0;
     for (const [i, file] of list.entries()) {
       toast(list.length > 1 ? `Uploading ${i + 1} of ${list.length}…` : 'Uploading photo…');
@@ -532,14 +535,21 @@ async function renderWizard(state, draftId) {
           shrink(file, FULL_MAX_PX, JPEG_QUALITY),
           shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
         ]);
-        images.push(await draftImages.upload(draftId, {
+        // Only the first of a batch claims the map tag. The library input is
+        // `multiple` and a game has one table, so tagging every file would let
+        // the server's clear-then-set hand it to whichever happened to land
+        // last — picking four photos of your board should not be a lottery.
+        const created = await draftImages.upload(draftId, {
           dataUrl: full.dataUrl,
           thumbDataUrl: thumb.dataUrl,
           width: full.width,
           height: full.height,
           roundNumber: n,
+          isMap: asMap && i === 0,
           caption,
-        }));
+        });
+        if (created.is_map) for (const im of images) im.is_map = false;
+        images.push(created);
         saved += 1;
       } catch (e) {
         // Keep going: one bad file shouldn't cost you the rest of the batch.
@@ -562,9 +572,10 @@ async function renderWizard(state, draftId) {
     root.appendChild(input);
   }
 
-  function pickPhoto(n, { endOfRound = false, source = 'camera' } = {}) {
+  function pickPhoto(n, { endOfRound = false, source = 'camera', asMap = false } = {}) {
     photoRound = n;
     photoEndOfRound = endOfRound;
+    photoAsMap = asMap;
     (source === 'library' ? libraryInput : cameraInput).click();
   }
 
@@ -860,6 +871,8 @@ async function renderWizard(state, draftId) {
         buildLayoutField(ro),
       ]),
     ]));
+
+    body.appendChild(buildMapPhotoPanel());
 
     body.appendChild(buildSeatTabs());
     body.appendChild(el('div', { class: 'lg-seats' },
@@ -1651,6 +1664,49 @@ async function renderWizard(state, draftId) {
     return el('div', { class: 'lg-clock' }, [input, derived]);
   }
 
+  // The table you're playing on, shot at setup. It carries `is_map` all the way
+  // onto the finished game, which is what puts it in the games list's second
+  // thumbnail slot — otherwise that falls back to the picture shared by every
+  // game played on the layout.
+  function buildMapPhotoPanel() {
+    const setupPhotos = images.filter((im) => im.round_number == null);
+    setupPhotos.sort((a, b) => (b.is_map === true) - (a.is_map === true) || a.id - b.id);
+    const tiles = setupPhotos.map((im) => el('div', { class: 'lg-photo' }, [
+      el('img', {
+        src: draftImages.url(draftId, im.thumb_name || im.file_name),
+        alt: im.caption || 'Terrain layout', loading: 'lazy',
+      }),
+      im.is_map
+        ? el('span', { class: 'photo-badge is-map' }, 'MAP')
+        : im.caption
+          ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption)
+          : null,
+    ].filter(Boolean)));
+
+    const take = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
+      el('span', { 'aria-hidden': 'true' }, '\u{1F4F7}'), ' Take photo',
+    ]);
+    take.addEventListener('click', () => pickPhoto(null, { source: 'camera', asMap: true }));
+    const upload = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
+      el('span', { 'aria-hidden': 'true' }, '\u{1F5BC}'), ' Upload',
+    ]);
+    upload.addEventListener('click', () => pickPhoto(null, { source: 'library', asMap: true }));
+
+    if (!tiles.length && isSpectator) return el('div', {});
+    return el('div', { class: 'panel' }, [
+      el('div', { class: 'panel-header' }, [
+        el('h2', {}, 'Terrain layout'),
+        isSpectator ? null : el('div', { class: 'btn-group' }, [take, upload]),
+      ].filter(Boolean)),
+      el('div', { class: 'panel-body' }, [
+        tiles.length
+          ? el('div', { class: 'lg-photos' }, tiles)
+          : el('div', { class: 'lg-card-meta' },
+              'A shot of the table before you deploy. It files with the game tagged MAP.'),
+      ]),
+    ]);
+  }
+
   function buildPhotoPanel(n) {
     const mine = images.filter((im) => im.round_number === n);
     const tiles = mine.map((im) => el('div', { class: 'lg-photo' }, [
@@ -1703,7 +1759,11 @@ async function renderWizard(state, draftId) {
         el('div', { class: 'panel-body' }, el('div', { class: 'lg-photos' },
           photos.map((im) => el('div', { class: 'lg-photo' }, [
             el('img', { src: draftImages.url(draftId, im.thumb_name || im.file_name), alt: im.caption || 'Game photo', loading: 'lazy' }),
-            im.caption ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption) : null,
+            im.is_map
+              ? el('span', { class: 'photo-badge is-map' }, 'MAP')
+              : im.caption
+                ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption)
+                : null,
           ].filter(Boolean))))),
       ]));
     }

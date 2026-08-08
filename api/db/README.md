@@ -61,6 +61,8 @@ Canonical examples already in the file: `player_challengers.round_number`,
 `game_drafts.submitted_at` and `game_drafts.started_notified_at`, which are the
 cleanest single-column instances of the pattern. `game_images.is_map` is the one
 that carries the footgun comment, because it's the one that shipped broken.
+`game_draft_images.is_map` is the newest, and was written by copying that
+comment rather than rediscovering it.
 Always add the index in a separate `CREATE INDEX IF NOT EXISTS` after the guard.
 
 **Two things the guard does not do**, both live in the file today:
