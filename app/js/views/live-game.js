@@ -694,13 +694,30 @@ async function renderWizard(state, draftId) {
 
   /* ── Shared chrome ────────────────────────────────────────── */
 
+  // CP is a running pool, not a per-round score — what you end round 2 with is
+  // what you start round 3 with. Nearest earlier round that carries a figure,
+  // so jumping from round 1 straight to round 4 still finds it.
+  function carriedCp(p, n) {
+    for (let k = n - 1; k >= 1; k--) {
+      const prev = (p.rounds || []).find((x) => x.roundNumber === k);
+      if (prev && prev.cpRemaining != null) return prev.cpRemaining;
+    }
+    return null;
+  }
+
   // A round counts as played if anything was actually recorded in it. Better
   // than "n < currentRound": that marks rounds you skipped past as done, and
   // blanks every pip the moment you step back to setup.
   function roundHasData(n) {
     return payload.players.some((p) => {
       const r = (p.rounds || []).find((x) => x.roundNumber === n);
-      if (r && ((r.primaryScore || 0) > 0 || r.cpRemaining != null || (r.timeSeconds || 0) > 0)) return true;
+      if (r) {
+        if ((r.primaryScore || 0) > 0 || (r.timeSeconds || 0) > 0) return true;
+        // A CP identical to the previous round's is the carried default, not
+        // something recorded here — otherwise merely opening a round lights
+        // its pip, which is the "skipped rounds read as done" bug again.
+        if (r.cpRemaining != null && r.cpRemaining !== carriedCp(p, n)) return true;
+      }
       return (p.secondaries || []).some((sec) => sec.drawnRound === n || sec.roundNumber === n);
     });
   }
@@ -1383,6 +1400,14 @@ async function renderWizard(state, draftId) {
   function buildRoundSeat(p, i, n) {
     const editable = canEditSeat(i);
     const r = roundRec(p, n);
+    // Seed on render rather than up front, so a round nobody opened stays
+    // blank — and deliberately without touch(), so paging through the wizard
+    // doesn't dirty the draft. Only our own seat: writing the opponent's
+    // number locally would push it over their in-flight edit.
+    if (editable && r.cpRemaining == null) {
+      const carried = carriedCp(p, n);
+      if (carried != null) r.cpRemaining = carried;
+    }
     const seat = el('div', {
       class: `lg-seat ${i === activeSeat ? '' : 'is-inactive'} ${editable ? '' : 'is-readonly'}`.trim(),
     });

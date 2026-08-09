@@ -1632,6 +1632,16 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   anything.
 - **`game_rounds.cp_remaining` had no UI anywhere** before this — it was plumbed
   server-side and never written. The wizard's ± stepper is its first consumer.
+- **CP carries forward between rounds; primary VP does not.** `cp_remaining` is
+  a running pool, not a per-round score, so opening round N with a blank box
+  meant re-typing the carried figure before you could adjust it. `carriedCp(p, n)`
+  finds the nearest earlier round with a figure and `buildRoundSeat` seeds from
+  it. Three deliberate limits: it seeds **on render**, so a round nobody opened
+  stays untouched; it does **not** call `touch()`, so paging through the wizard
+  can't dirty the draft; and it only seeds a seat you can edit, since writing the
+  opponent's number locally would push it over their in-flight edit. It is a pure
+  carry — the +1 CP a player gains each battle round is **not** auto-added, since
+  the field records what you *had left*, not an income model.
 - **The chess clock banks seconds as they elapse** rather than computing from a
   start stamp, so a crash costs at most one autosave interval. It writes per-round
   `time_seconds`, and `resolvePlayerTimes()` already makes the player total the
@@ -1642,12 +1652,15 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   request; don't turn them back into a passive progress indicator. Both are
   disabled rather than hidden when `canNavigate` is false.
 - **A pip reads "played" from the recorded data**, not from `n < currentRound`.
-  `roundHasData(n)` asks whether either player has a primary score, a
-  `cpRemaining`, a clocked time, or a secondary drawn/scored in that round. The
-  round-number version marked rounds you skipped past as done, and blanked every
-  pip the moment you stepped back to Setup. From Setup, the forward button is
-  labelled from the same source — `Round 4 →` when round 4 is the last one with
-  data — so it returns you where you were rather than to round 1.
+  `roundHasData(n)` asks whether either player has a primary score, a clocked
+  time, a secondary drawn/scored in that round, or a `cpRemaining` **that
+  differs from the carried one**. The round-number version marked rounds you
+  skipped past as done, and blanked every pip the moment you stepped back to
+  Setup. That last clause is what keeps CP carry-forward from re-creating the
+  same bug: without it, merely opening round 4 seeds its CP and lights its pip.
+  From Setup, the forward button is labelled from the same source — `Round 4 →`
+  when round 4 is the last one with data — so it returns you where you were
+  rather than to round 1.
 - **Two photo buttons, not one: "📷 Take photo" and "🖼 Upload".** A single
   `<input type="file">` can offer the camera **or** the library but never both —
   `capture: 'environment'` hides the library outright — so there are two hidden
