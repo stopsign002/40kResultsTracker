@@ -18,6 +18,12 @@ export const FORCE_DISPOSITIONS = new Set([
   'Take and Hold', 'Purge the Foe', 'Disruption', 'Reconnaissance', 'Priority Assets',
 ]);
 
+// Tactical (drawn) vs Fixed (two cards chosen at setup, active all battle).
+// Per player and chosen in secret, so the two seats can legitimately differ.
+// Anything else is stored as 'tactical' — the same whitelist-or-default shape
+// FORCE_DISPOSITIONS gets, rather than trusting the payload.
+export const SECONDARY_MODES = new Set(['tactical', 'fixed']);
+
 /**
  * Form takes a free-text name input. If that name (case-insensitive) matches a
  * registered user's display_name, link the player to that user — this is what
@@ -388,8 +394,9 @@ export async function createGame(client, body, actorUserId) {
       `INSERT INTO game_players
         (game_id, seat, user_id, guest_name, faction_id, detachment_id,
          detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-         primary_mission_id, primary_mission_name, force_disposition, time_seconds)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         primary_mission_id, primary_mission_name, force_disposition, time_seconds,
+         time_is_manual, secondary_mode)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
        RETURNING id`,
       [
         gameId, seat, p.userId ?? null, p.guestName ?? null,
@@ -401,6 +408,8 @@ export async function createGame(client, body, actorUserId) {
         (p.primaryMissionName && p.primaryMissionName.trim()) || null,
         FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
         p.timeSeconds ?? null,
+        !!p.timeIsManual,
+        SECONDARY_MODES.has(p.secondaryMode) ? p.secondaryMode : 'tactical',
       ]
     );
     await insertPlayerChildren(client, gp.rows[0].id, p);

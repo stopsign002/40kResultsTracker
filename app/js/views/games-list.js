@@ -1,4 +1,4 @@
-import { games, reference, gameImages, mapImages } from '../api.js';
+import { games, reference, gameImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
 import { el, clear, fmtDate, pill, selectOptions, fmtDuration } from '../components.js';
 
@@ -335,8 +335,8 @@ function previewThumb({ src, fullSrc, alt, cls }) {
   return im;
 }
 
-// Two thumbnails per row: the game's cover photo, and a picture of the terrain
-// layout it was played on. Either can be absent.
+// Two thumbnails per row: the game's cover photo, and its shot of the terrain
+// this game was played on. Either can be absent.
 // Chess-clock time per player, mirroring the "A vs B" name order above it. Only
 // rendered when someone actually clocked the game — an untimed game shows
 // nothing rather than a row of dashes.
@@ -354,37 +354,22 @@ function clockLine(p1, p2) {
 // photo set is fetched on demand and the viewer opens on the one that was
 // clicked — from there the arrows/swipe cycle the rest.
 async function openRowGallery(g, prefer, anchor) {
-  // The shared terrain-layout picture belongs to the deployment map, not to
-  // this game, so there is nothing to flip through — show it on its own.
-  const openLayout = () => {
-    const file = g.map_image_name || g.map_thumb_name;
-    if (!file) return false;
-    openLightbox({
-      items: [{
-        full: mapImages.url(file),
-        thumb: mapImages.url(g.map_thumb_name || file),
-        caption: g.deployment_map || 'Terrain layout',
-      }],
-      startIndex: 0,
-      thumbFor: () => anchor,
-    });
-    return true;
-  };
-  if (prefer === 'layout') { openLayout(); return; }
-
   let images = [];
   try { images = await gameImages.list(g.id); } catch (_) { /* fall back below */ }
 
   if (!images.length) {
     // Offline, or the row is out of date. Show what the row already has rather
     // than swallowing the click.
-    if (prefer === 'map' && openLayout()) return;
-    if (!g.thumb_name) return;
+    const thumb = prefer === 'map' ? g.map_photo_thumb : g.thumb_name;
+    if (!thumb) return;
+    const full = prefer === 'map'
+      ? (g.map_photo_file || thumb)
+      : (g.cover_file_name || thumb);
     openLightbox({
       items: [{
-        full: gameImages.url(g.id, g.cover_file_name || g.thumb_name),
-        thumb: gameImages.url(g.id, g.thumb_name),
-        caption: '',
+        full: gameImages.url(g.id, full),
+        thumb: gameImages.url(g.id, thumb),
+        caption: prefer === 'map' ? (g.deployment_map || 'Terrain layout') : '',
       }],
       startIndex: 0,
       thumbFor: () => anchor,
@@ -439,17 +424,13 @@ function thumbCell(g) {
       badge: g.image_count > 1 ? el('span', { class: 'list-thumb-count' }, String(g.image_count)) : null,
     }));
   }
-  // A photo tagged MAP on this game wins; otherwise fall back to the picture
-  // attached to the layout itself, which is shared by every game played on it.
+  // The photo tagged MAP on this game — the table this game was played on.
+  // There is no shared per-layout picture to fall back to; a terrain shot
+  // belongs to the one game it was taken for.
   const mapSrc = g.map_photo_thumb
     ? { src: gameImages.url(g.id, g.map_photo_thumb),
-        full: g.map_photo_file ? gameImages.url(g.id, g.map_photo_file) : null,
-        prefer: 'map' }
-    : (g.map_thumb_name
-        ? { src: mapImages.url(g.map_thumb_name),
-            full: g.map_image_name ? mapImages.url(g.map_image_name) : null,
-            prefer: 'layout' }
-        : null);
+        full: g.map_photo_file ? gameImages.url(g.id, g.map_photo_file) : null }
+    : null;
 
   if (mapSrc) {
     const layoutName = g.deployment_map || 'Terrain layout';
@@ -458,7 +439,7 @@ function thumbCell(g) {
       fullSrc: mapSrc.full,
       alt: layoutName,
       cls: 'is-map',
-      prefer: mapSrc.prefer,
+      prefer: 'map',
       label: `View ${layoutName}`,
       title: layoutName,
       badge: el('span', { class: 'list-thumb-tag' }, 'MAP'),

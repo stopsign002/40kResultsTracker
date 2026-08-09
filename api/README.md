@@ -8,7 +8,7 @@ Express 4 + Postgres 17 service for the 40k results tracker. ESM (`"type": "modu
 2. Construct Express app + the split body parser (`express.json({ limit: '256kb' })` app-wide, skipped for POSTs matching `IMAGE_UPLOAD_PATH`) + Postgres-backed session middleware (`connect-pg-simple`, table `session`, cookie `tg40k.sid`). `app.set('trust proxy', 1)` — Caddy is in front.
 3. `GET /health` inline, then `express-rate-limit` on `/auth/login` (20 attempts / IP / 15 min)
 4. Mount every route module **through `catchAsync(...)`**, in this order:
-   `/auth`, `/admin`, `/maps` (`images.js`'s `mapRouter`), `/games` (`images.js`), `/games` (`games.js`), `/stats` (`stats.js`), `/reference`, `/stats` (`warmap.js`), `/events`, `/seasons`, `/ratings`, `/drafts`
+   `/auth`, `/admin`, `/games` (`images.js`), `/games` (`games.js`), `/stats` (`stats.js`), `/reference`, `/stats` (`warmap.js`), `/events`, `/seasons`, `/ratings`, `/drafts`
 5. Top-level error handler emits the uniform `{ error, code? }` body; 413 / `entity.too.large` is rewritten to a human message with `code: 'too_large'`
 6. `initSchema()` — runs `db/schema.sql` then `db/seed.sql` (both idempotent — safe on every boot). A failure here `process.exit(1)`s rather than serving a half-built DB
 7. `ensureBootstrapAdmin()` — if `users` is empty AND `ADMIN_PASSWORD` is set, insert the admin user

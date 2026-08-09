@@ -16,7 +16,7 @@ to a read module silently takes the site private.
 | `auth.js` | `/auth` | **per-route** (login/logout/`GET /me` reachable while logged out; `GET /me` self-checks the session and 401s) | login, logout, me, PATCH me (self-serve `army_name` + `promptRoundPhoto`), change-password |
 | `admin.js` | `/admin` | `requireAdmin` (**top-level**) | user CRUD, game visibility toggle, game delete (**archives**), the **recycle bin** (`/deleted*`), the **detachment library** (`/detachments`, see below), audit log viewer, guest-account preview + promotion |
 | `games.js` | `/games` | **none top-level** — `GET /`, `GET /:id` public; `POST /`, `PUT /:id` inline `requireAuth` | list (with filters + free-text `q`), get, create, update. The write helpers live in `lib/game-write.js`; this file keeps the filter SQL and `PUT`'s delete-then-reinsert body. Still has **no DELETE** — hard delete is the admin escape hatch |
-| `images.js` | `/games` (mounted **before** `games.js`) + `/maps` via the named `mapRouter` export | per-route: `GET /:gameId/images` public, writes `requireAuth` | game photos (list/upload/flag/delete) and terrain-layout pictures. Bytes go to `UPLOAD_DIR` on disk and are served **by Caddy**, not by Node. Also exports `removeGameImageFiles(gameId)` — now called from `lib/archive.js#removeArchivedFiles`, i.e. only on a **permanent** delete |
+| `images.js` | `/games` (mounted **before** `games.js`) | per-route: `GET /:gameId/images` public, writes `requireAuth` | game photos — list/upload/flag/delete. `POST` and `PATCH` both accept `isMap`, which tags the shot of the terrain **that game** was played on. Bytes go to `UPLOAD_DIR` on disk and are served **by Caddy**, not by Node. Also exports `removeGameImageFiles(gameId)` — called from `lib/archive.js#removeArchivedFiles`, i.e. only on a **permanent** delete |
 | `stats.js` | `/stats` | **none — every route is public** | overview, faction/player win rates, mission/deployment breakdowns, matchups, head-to-head, first-turn impact, secondary averages, detachment win rates, trends, calendar, per-player profile |
 | `warmap.js` | `/stats` (second mount) | **none — public** | two endpoints: `/stats/warmap` (banners feed for the Theatre of War) and `/stats/warmap-timeline` (the game list its time slider scrubs) |
 | `reference.js` | `/reference` | **none — public** | factions, per-faction detachments (UNION of seeded + free-text from past games), mission packs, mission details, users, unified player picker, distinct player names |
@@ -182,14 +182,13 @@ app.use('/foo', catchAsync(fooRoutes));
 Add a row to the HTTP API reference table in CLAUDE.md and update the endpoint count at the bottom:
 
 ```bash
-grep -hE "(router|mapRouter)\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
+grep -hE "router\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
 ```
 
-The `mapRouter` alternative matters — `images.js` exports a second router that
-`server.js` mounts at `/maps`, and a pattern matching only `router.` misses it.
-The count is currently **66** in `routes/*.js` (admin 11, auth 5, drafts 12,
-events 1, games 4, images 6, ratings 3, reference 7, seasons 2, stats 13,
-warmap 2), plus `/health` defined inline in `server.js`.
+Every route module exports exactly one router now, so the plain `router.`
+pattern is complete. The count is currently **68** in `routes/*.js` (admin 15,
+auth 5, drafts 12, events 1, games 4, images 4, ratings 3, reference 7,
+seasons 2, stats 13, warmap 2), plus `/health` defined inline in `server.js`.
 
 If the new route changes an auth boundary or the draft lifecycle, add a case to
 `api/test/integration/` — `drafts-permissions.test.js` is the permission matrix

@@ -286,6 +286,39 @@ test('resolvePlayerTimes: an unclocked game stays null rather than 0', () => {
   assert.equal(p.timeSeconds, null, 'untimed is not a 0-second game');
 });
 
+// A live-tracked game arrives with every round clocked, so without an explicit
+// opt-out its total was permanently derived and could never be corrected.
+
+test('resolvePlayerTimes: a manual total outranks the round clocks', () => {
+  const p = timedPlayer([300, 300], 3600);
+  p.timeIsManual = true;
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 3600);
+  assert.equal(p.timeIsManual, true);
+});
+
+test('resolvePlayerTimes: a manual total leaves the round splits alone', () => {
+  const p = timedPlayer([300, 300], 3600);
+  p.timeIsManual = true;
+  resolvePlayerTimes([p]);
+  assert.deepEqual(p.rounds.map(r => r.timeSeconds ?? null), [300, 300, null, null, null]);
+});
+
+test('resolvePlayerTimes: an unusable manual total falls back to the rounds', () => {
+  const p = timedPlayer([300, 300], 'abc');
+  p.timeIsManual = true;
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 600, 'a manual flag must not be able to strand a game untimed');
+  assert.equal(p.timeIsManual, false);
+});
+
+test('resolvePlayerTimes: clearing the flag re-derives from the rounds', () => {
+  const p = timedPlayer([300, 300], 3600);
+  p.timeIsManual = false;
+  resolvePlayerTimes([p]);
+  assert.equal(p.timeSeconds, 600);
+});
+
 test('resolvePlayerTimes: junk and negatives are discarded', () => {
   const p = timedPlayer(null, -5);
   resolvePlayerTimes([p]);

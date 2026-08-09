@@ -131,6 +131,16 @@ router.post('/:gameId/images', requireAuth, express.json({ limit: '12mb' }), asy
       throw e;
     }
 
+    // Tagging the terrain shot at upload time, the way the live tracker's Setup
+    // step does. Inserted unflagged and set afterwards on purpose: the partial
+    // unique index would reject the INSERT while the previous shot still holds
+    // the flag, and re-shooting the table should demote that one, not fail.
+    if (req.body?.isMap === true) {
+      await pool.query('UPDATE game_images SET is_map = FALSE WHERE game_id = $1 AND is_map', [gameId]);
+      row = (await pool.query(
+        'UPDATE game_images SET is_map = TRUE WHERE id = $1 RETURNING *', [row.id])).rows[0];
+    }
+
     audit(req, 'game.image.upload', { type: 'game', id: gameId, payload: { imageId: row.id, bytes: full.buf.length } });
     res.status(201).json(row);
   } catch (e) { next(e); }
@@ -215,67 +225,5 @@ export async function removeGameImageFiles(gameId) {
     console.error('[images] failed to remove files for game', gameId, e.message);
   }
 }
-
-// ── Terrain-layout pictures ───────────────────────────────────
-// One image per deployment_map row (e.g. "Layout A"), so it's uploaded once and
-// then shown on every game played on that layout. Same client-side downscale
-// and base64 contract as game photos; files land in UPLOAD_DIR/maps/.
-//
-// Deliberately user-supplied: GW's own layout diagrams are copyrighted, so the
-// app never ships or fetches them — you photograph your table or draw your own.
-export const mapRouter = Router();
-
-const MAPS_DIR = () => path.join(UPLOAD_DIR, 'maps');
-
-mapRouter.post('/:mapId/image', requireAuth, express.json({ limit: '12mb' }), async (req, res, next) => {
-  try {
-    const mapId = parseInt(req.params.mapId, 10);
-    if (!Number.isInteger(mapId)) return res.status(400).json({ error: 'bad map id' });
-    const existing = (await pool.query(
-      'SELECT id, image_name, image_thumb_name FROM deployment_maps WHERE id = $1', [mapId])).rows[0];
-    if (!existing) return res.status(404).json({ error: 'layout not found' });
-
-    const full = decodeDataUrl(req.body?.dataUrl);
-    const thumb = decodeDataUrl(req.body?.thumbDataUrl ?? req.body?.dataUrl);
-
-    const dir = MAPS_DIR();
-    await fs.mkdir(dir, { recursive: true });
-    const stem = crypto.randomUUID();
-    const fileName = `${stem}${full.ext}`;
-    const thumbName = `${stem}_t${thumb.ext}`;
-    await fs.writeFile(path.join(dir, fileName), full.buf);
-    await fs.writeFile(path.join(dir, thumbName), thumb.buf);
-
-    const row = (await pool.query(
-      `UPDATE deployment_maps SET image_name = $2, image_thumb_name = $3
-        WHERE id = $1 RETURNING id, name, image_name, image_thumb_name`,
-      [mapId, fileName, thumbName]
-    )).rows[0];
-
-    // Replacing an image orphans the old files; drop them once the row points
-    // at the new pair, so a failed write can never leave the map imageless.
-    if (existing.image_name) await unlinkQuiet(path.join(dir, existing.image_name));
-    if (existing.image_thumb_name) await unlinkQuiet(path.join(dir, existing.image_thumb_name));
-
-    audit(req, 'map.image.upload', { type: 'deployment_map', id: mapId, payload: { bytes: full.buf.length } });
-    res.status(201).json(row);
-  } catch (e) { next(e); }
-});
-
-mapRouter.delete('/:mapId/image', requireAuth, async (req, res, next) => {
-  try {
-    const mapId = parseInt(req.params.mapId, 10);
-    const row = (await pool.query(
-      'SELECT id, image_name, image_thumb_name FROM deployment_maps WHERE id = $1', [mapId])).rows[0];
-    if (!row) return res.status(404).json({ error: 'layout not found' });
-    await pool.query(
-      'UPDATE deployment_maps SET image_name = NULL, image_thumb_name = NULL WHERE id = $1', [mapId]);
-    const dir = MAPS_DIR();
-    if (row.image_name) await unlinkQuiet(path.join(dir, row.image_name));
-    if (row.image_thumb_name) await unlinkQuiet(path.join(dir, row.image_thumb_name));
-    audit(req, 'map.image.delete', { type: 'deployment_map', id: mapId });
-    res.json({ ok: true });
-  } catch (e) { next(e); }
-});
 
 export default router;

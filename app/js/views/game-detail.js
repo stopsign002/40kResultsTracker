@@ -1,4 +1,4 @@
-import { games, admin, gameImages, mapImages } from '../api.js';
+import { games, admin, gameImages } from '../api.js';
 import { openLightbox } from '../lightbox.js';
 import { extractImagesFromZip, isZipFile } from '../zip.js';
 import { shrink } from '../images.js';
@@ -58,9 +58,13 @@ export async function renderGameDetail(state, gameId) {
 
   root.appendChild(header);
   root.appendChild(players);
-  const mapPanel = buildMapPanel(state, g);
+  // Both photo panels read the same list — the terrain shot is one of the
+  // game's photos, flagged is_map — so tagging or deleting in one has to
+  // repaint the other.
+  const gallery = await makeGallery(g.id);
+  const mapPanel = buildMapPanel(state, g, gallery);
   if (mapPanel) root.appendChild(mapPanel);
-  root.appendChild(await buildPhotosPanel(state, g));
+  root.appendChild(buildPhotosPanel(state, g, gallery));
   if (progression) root.appendChild(progression);
   if (notes) root.appendChild(notes);
   return root;
@@ -75,33 +79,57 @@ const FULL_MAX_PX = 2048;
 const THUMB_MAX_PX = 400;
 const JPEG_QUALITY = 0.82;
 
-// Picture of the terrain layout this game was played on. It belongs to the
-// layout (deployment_maps row), not the game, so uploading it once makes it
-// show on every game played on that layout. GW's own layout diagrams are
-// copyrighted, so nothing is bundled or fetched — this is your own photo.
-function buildMapPanel(state, g) {
+// One list of the game's photos, shared by the two panels that render it.
+// Either can change it (upload, tag, delete), so a repaint has to reach both.
+async function makeGallery(gameId) {
+  const gallery = {
+    images: [],
+    painters: [],
+    async reload() {
+      try {
+        gallery.images = await gameImages.list(gameId);
+      } catch { /* panels still render, just empty */ }
+      gallery.repaint();
+    },
+    repaint() {
+      gallery.painters.forEach(paint => paint());
+    },
+  };
+  try {
+    gallery.images = await gameImages.list(gameId);
+  } catch { /* panels still render, just empty */ }
+  return gallery;
+}
+
+// The shot of the terrain THIS game was played on. It is one of the game's own
+// photos, flagged is_map — a table is dressed for one game, so the picture is
+// never shared with other games on the same named layout. GW's own layout
+// diagrams are copyrighted, so nothing is bundled or fetched either.
+function buildMapPanel(state, g, gallery) {
   if (!g.deployment_map_id) return null;
   const name = g.deployment_map_name || 'Terrain layout';
   const body = el('div', { class: 'panel-body' });
 
   const fileInput = el('input', { type: 'file', accept: 'image/*', style: { display: 'none' } });
   const status = el('span', { class: 'muted', style: { fontSize: '12px', marginLeft: '8px' } }, '');
+  const uploadBtn = el('button', { class: 'btn small' }, 'Add picture');
 
-  let imageName = g.map_image_name || null;
-  let thumbName = g.map_thumb_name || null;
+  const mapShot = () => gallery.images.find(x => x.is_map) || null;
 
   function paint() {
+    const img = mapShot();
     body.textContent = '';
-    if (imageName) {
+    uploadBtn.textContent = img ? 'Replace' : 'Add picture';
+    if (img) {
       const thumb = el('img', {
         class: 'map-image',
-        src: mapImages.url(thumbName || imageName),
+        src: gameImages.url(g.id, img.thumb_name),
         alt: name,
         loading: 'lazy',
       });
       const opener = el('button', { class: 'photo-open map-open', type: 'button', 'aria-label': `Open ${name}` }, thumb);
       opener.addEventListener('click', () => openLightbox({
-        items: [{ full: mapImages.url(imageName), thumb: mapImages.url(thumbName || imageName), caption: name }],
+        items: [{ full: gameImages.url(g.id, img.file_name), thumb: gameImages.url(g.id, img.thumb_name), caption: name }],
         startIndex: 0,
         thumbFor: () => thumb,
       }));
@@ -109,8 +137,8 @@ function buildMapPanel(state, g) {
     } else {
       body.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
         state.user
-          ? `No picture for ${name} yet — add one and it'll show on every game played on it.`
-          : `No picture for ${name}.`));
+          ? `No picture of the terrain for this game yet — add a shot of the table you played on.`
+          : `No picture of the terrain for this game.`));
     }
   }
 
@@ -124,22 +152,26 @@ function buildMapPanel(state, g) {
         shrink(file, FULL_MAX_PX, JPEG_QUALITY),
         shrink(file, THUMB_MAX_PX, JPEG_QUALITY),
       ]);
-      const row = await mapImages.upload(g.deployment_map_id, {
-        dataUrl: full.dataUrl, thumbDataUrl: thumb.dataUrl,
+      // Replacing demotes the previous shot rather than deleting it — it stays
+      // on the game as an ordinary photo, just untagged.
+      await gameImages.upload(g.id, {
+        dataUrl: full.dataUrl,
+        thumbDataUrl: thumb.dataUrl,
+        width: full.width,
+        height: full.height,
+        isMap: true,
       });
-      imageName = row.image_name;
-      thumbName = row.image_thumb_name;
-      paint();
-      toast('Layout picture saved');
+      await gallery.reload();
+      toast('Terrain photo saved');
     } catch (e) {
       toast(e.message, 'error');
     }
     status.textContent = '';
   });
 
-  const uploadBtn = el('button', { class: 'btn small' }, imageName ? 'Replace' : 'Add picture');
   uploadBtn.addEventListener('click', () => fileInput.click());
 
+  gallery.painters.push(paint);
   paint();
 
   return el('div', { class: 'panel' }, [
@@ -151,12 +183,7 @@ function buildMapPanel(state, g) {
   ]);
 }
 
-async function buildPhotosPanel(state, g) {
-  let images = [];
-  try {
-    images = await gameImages.list(g.id);
-  } catch { /* panel still renders, just empty */ }
-
+function buildPhotosPanel(state, g, gallery) {
   const grid = el('div', { class: 'photo-grid' });
   const fileInput = el('input', {
     // .zip because Google Photos bundles a multi-photo download into one.
@@ -176,6 +203,7 @@ async function buildPhotosPanel(state, g) {
   function paint() {
     grid.textContent = '';
     thumbEls = [];
+    const images = gallery.images;
     if (!images.length) {
       grid.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
         state.user ? 'No photos yet.' : 'No photos.'));
@@ -222,8 +250,8 @@ async function buildPhotosPanel(state, g) {
             onClick: async () => {
               try {
                 await gameImages.update(g.id, img.id, { isThumbnail: true });
-                images = images.map(x => ({ ...x, is_thumbnail: x.id === img.id }));
-                paint();
+                gallery.images = images.map(x => ({ ...x, is_thumbnail: x.id === img.id }));
+                gallery.repaint();
                 toast('Cover photo set');
               } catch (e) { toast(e.message, 'error'); }
             },
@@ -235,8 +263,8 @@ async function buildPhotosPanel(state, g) {
               const next = !img.is_map;
               try {
                 await gameImages.update(g.id, img.id, { isMap: next });
-                images = images.map(x => ({ ...x, is_map: next && x.id === img.id }));
-                paint();
+                gallery.images = images.map(x => ({ ...x, is_map: next && x.id === img.id }));
+                gallery.repaint();
                 toast(next ? 'Map photo set' : 'Map photo cleared');
               } catch (e) { toast(e.message, 'error'); }
             },
@@ -253,8 +281,7 @@ async function buildPhotosPanel(state, g) {
               if (!ok) return;
               try {
                 await gameImages.remove(g.id, img.id);
-                images = await gameImages.list(g.id);
-                paint();
+                await gallery.reload();
                 toast('Photo deleted');
               } catch (e) { toast(e.message, 'error'); }
             },
@@ -313,11 +340,11 @@ async function buildPhotosPanel(state, g) {
     }
     uploadBtn.disabled = false;
     status.textContent = '';
-    images = await gameImages.list(g.id);
-    paint();
+    await gallery.reload();
     if (done) toast(done === 1 ? 'Photo added' : `${done} photos added`);
   });
 
+  gallery.painters.push(paint);
   paint();
 
   return el('div', { class: 'panel' }, [
@@ -443,6 +470,22 @@ function buildMeta(g) {
   ));
 }
 
+// The total normally IS the sum of the round clocks. When it was set by hand
+// it can legitimately differ from them, so say so rather than leaving two
+// numbers on screen that don't add up.
+function clockPill(p) {
+  const node = pill(`⏱ ${fmtDuration(p.time_seconds)}`, '');
+  if (p.time_is_manual) {
+    const rounds = (p.rounds || [])
+      .filter(r => r.time_seconds != null)
+      .reduce((sum, r) => sum + r.time_seconds, 0);
+    node.title = rounds
+      ? `Total set by hand. The round clocks below sum to ${fmtDuration(rounds)}.`
+      : 'Total set by hand.';
+  }
+  return node;
+}
+
 function buildPlayerCard(p, g) {
   const isWinner = p.result === 'win';
   const totalRoundScore = (p.rounds || []).reduce((s, r) => s + r.primary_score + r.secondary_score, 0);
@@ -469,27 +512,41 @@ function buildPlayerCard(p, g) {
   // Entry is alphabetical (easy to find a card); review is chronological (easy
   // to read the game back). 11e only — in 10e a card is drawn and scored in the
   // same round, so there's no separate draw order to sort by.
-  const orderedSecondaries = is11
-    ? (p.secondaries || []).slice().sort((a, b) =>
-        (a.drawn_round ?? 99) - (b.drawn_round ?? 99) ||
-        (a.round_number ?? 99) - (b.round_number ?? 99) ||
-        ((a.card_name || '') < (b.card_name || '') ? -1 : 1))
-    : (p.secondaries || []);
+  // Fixed missions are chosen at setup, never drawn, and can score in several
+  // rounds — so they read back grouped by card, then by the round each entry
+  // scored, rather than by a draw order that doesn't exist for them.
+  const isFixed = p.secondary_mode === 'fixed';
+  const orderedSecondaries = !is11
+    ? (p.secondaries || [])
+    : isFixed
+      ? (p.secondaries || []).slice().sort((a, b) =>
+          ((a.card_name || '') < (b.card_name || '') ? -1 : (a.card_name || '') > (b.card_name || '') ? 1 : 0) ||
+          (a.round_number ?? 99) - (b.round_number ?? 99))
+      : (p.secondaries || []).slice().sort((a, b) =>
+          (a.drawn_round ?? 99) - (b.drawn_round ?? 99) ||
+          (a.round_number ?? 99) - (b.round_number ?? 99) ||
+          ((a.card_name || '') < (b.card_name || '') ? -1 : 1));
 
   const secondaries = orderedSecondaries.length ? el('div', {}, [
-    el('h3', { style: { marginTop: '14px' } }, 'Secondaries'),
+    el('h3', { style: { marginTop: '14px' } }, [
+      'Secondaries',
+      is11 ? ' ' : null,
+      is11 ? el('span', { class: 'dim', style: { fontSize: '12px', fontWeight: 'normal' } },
+        isFixed ? 'Fixed' : 'Tactical') : null,
+    ].filter(Boolean)),
     el('table', {}, [
       el('thead', {}, el('tr', {}, [
         el('th', {}, 'Card'),
-        is11 ? el('th', {}, 'Drawn') : null,
+        is11 && !isFixed ? el('th', {}, 'Drawn') : null,
         el('th', {}, is11 ? 'Scored' : 'Round'),
         el('th', { style: { textAlign: 'right' } }, 'Score'),
       ].filter(Boolean))),
       el('tbody', {}, orderedSecondaries.map(s => el('tr', {}, [
         // 10e decks aren't in the 11e card data, so don't offer a link that
         // could only ever answer "no rules text on file".
-        el('td', {}, (is11 && missionLink('secondary', s.card_name)) || s.card_name),
-        is11 ? el('td', { class: 'muted' }, s.drawn_round ? `R${s.drawn_round}` : '—') : null,
+        el('td', {}, (is11 && missionLink('secondary', s.card_name,
+          { mode: isFixed ? 'fixed' : 'tactical' })) || s.card_name),
+        is11 && !isFixed ? el('td', { class: 'muted' }, s.drawn_round ? `R${s.drawn_round}` : '—') : null,
         el('td', { class: 'muted' },
           s.round_number ? `R${s.round_number}` : (is11 ? 'Never' : 'Fixed')),
         el('td', { class: 'tabular', style: { textAlign: 'right' } }, String(s.score)),
@@ -538,7 +595,7 @@ function buildPlayerCard(p, g) {
       ' ',
       p.went_first ? pill('Went 1st', 'first') : pill('Went 2nd', ''),
       p.time_seconds != null ? ' ' : null,
-      p.time_seconds != null ? pill(`⏱ ${fmtDuration(p.time_seconds)}`, '') : null,
+      p.time_seconds != null ? clockPill(p) : null,
     ].filter(Boolean)),
     el('div', { class: 'muted', style: { fontSize: '13px', marginBottom: '8px' } }, [
       [

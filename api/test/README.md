@@ -2,9 +2,9 @@
 
 Two suites, both on Node's built-in `node:test` runner, no framework:
 
-- **`test/*.test.js` — 178 unit cases.** Pure functions, no DB, no network, no
+- **`test/*.test.js` — 190 unit cases.** Pure functions, no DB, no network, no
   filesystem. Runs in under two seconds.
-- **`test/integration/*.test.js` — 133 cases.** Real HTTP against the running
+- **`test/integration/*.test.js` — 156 cases.** Real HTTP against the running
   API and the **live** Postgres. Every row it creates belongs to a `zz_test_*`
   user, and it cleans up after itself. That prefix is also what keeps the run
   out of the operator's inbox — see `isFixtureActor()` in `lib/mail.js`.
@@ -17,8 +17,8 @@ cd api && npm test                    # node --test test/*.test.js
 node --test test/game-scoring.test.js # single file
 
 # from the repo root, in a node:22-alpine container
-scripts/test-unit.sh                  # the 178 unit cases, --network none
-scripts/test-live.sh                  # all 133 integration cases
+scripts/test-unit.sh                  # the 190 unit cases, --network none
+scripts/test-live.sh                  # all 156 integration cases
 scripts/test-live.sh drafts-lifecycle # one integration file
 ```
 
@@ -89,6 +89,7 @@ Real HTTP, real sessions, real Postgres, real photo files on disk. 132 cases.
 | `_harness.js` | Not a test — the shared plumbing. See "Harness rules" below. |
 | `drafts-permissions.test.js` (70) | The live tracker's whole auth matrix over HTTP: who can read (anyone, signed in or not), who gets `share_token` (owner only), PATCH scoping (owner anything / opponent seat 2 only / rando and anon nothing), merge semantics end-to-end, invite + join (self-invite, non-integer and deactivated userIds, second invite after a join, wrong token, already-claimed seat), submit and delete, photo writes, and that a submitted draft rejects everything with a 409 and stays finished even when its game row is deleted. |
 | `drafts-lifecycle.test.js` (33) | The tracker end to end. **Isolation** — a scoring draft is absent from `/games`, the stats overview, faction win-rates and the war map, and creates no `games` row until submit. **Faithful hand-off into `createGame`** — the pinned 11e reference game scores 77 over HTTP, `manualWinner`, `cp_remaining`, an independently drawn/scored secondary, multiple detachments, per-round chess-clock sums, `army_list_code`, forced edition 11, season attachment. **Scars** — rounds 0/6/duplicate-3 don't surface as an opaque 500 on the CHECK/UNIQUE constraints; mid-game photos move onto the game keeping captions and exactly one cover; the Setup terrain-layout photo keeps `is_map` through the relink and re-shooting the table demotes the previous one; a draft whose game was hard-deleted stays retired; **two simultaneous submits → one 200, one 409, exactly one game**; deleting a draft takes its rows and its photo dir. **Reference-data safety** — a secondary whose card row vanished mid-game still submits by name, and an unrecognised secondary is recorded on the game without joining the mission pack. **List scores** — `GET /drafts` reports the pinned reference game as `[77, 35]` and the filed game matches it exactly; a draft with no seats yet is `[null, null]` rather than a throw. |
+| `game-images.test.js` (6) | The terrain shot as a game photo. `POST /games/:id/images` accepts `isMap`, the first upload still auto-becomes the cover, re-shooting the table **demotes** the previous shot rather than colliding on the `(game_id) WHERE is_map` partial unique index — and a second game on the same layout starts with no photos, since nothing is shared between games. |
 | `deleted-items.test.js` (19) | The recycle bin. Three properties: **archive is not delete** (the game leaves `games`, `/games` and the stats while the archive row and the photo files remain); **restore is faithful and lands on the original id** (rounds, secondaries with independent drawn/scored rounds, detachments, scores, photos with exactly one cover — and a game created *afterwards* gets a fresh id rather than colliding, which is the SERIAL-sequence hazard); **permanent delete is the only thing that unlinks files**. Plus the live-game side, admin-deleting-someone-else's, `canRestore false` + 409 when the id has been reoccupied, 404s for restoring a purged or already-restored entry, and 401/403/200 on all three routes. |
 | `detachments-admin.test.js` (8) | The detachment library. **Promotion**: a name typed into a saved game lands in that faction's `detachments` table, case-insensitively, so a second spelling is not a second row. **Rename**: rewrites the library *and* every `player_detachments` row for the faction, and the derived `game_players.detachment_name` with it. **Merge**: renaming onto an existing name collapses a seat that held both spellings, so the display string can't read "X, X". **Refusals**: delete is 409 `in_use` while games reference the name, a case-insensitive add is 409, and all four routes are 403 for a plain user / 401 for anon. |
 | `zz-residue.test.js` (3) | Runs **last** and fails the build on any leakage. See below. |

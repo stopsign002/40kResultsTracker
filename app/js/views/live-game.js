@@ -12,7 +12,9 @@
 
 import { drafts, draftImages, reference } from '../api.js';
 import { el, clear, toast, confirmModal, choiceModal, promptModal, fmtDuration, selectOptions } from '../components.js';
-import { missionLink, openMissionCard, openMissionBrowser } from '../mission-cards.js';
+import {
+  missionLink, openMissionCard, openMissionBrowser, fixedSecondaryOptions,
+} from '../mission-cards.js';
 import { shrink } from '../images.js';
 import { pushLayer } from '../nav-stack.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
@@ -25,6 +27,13 @@ import {
   E11_SECONDARY_ROUND_CAP,
   sumSecondaryForRound,
   secondaryRoundHeadroom,
+  secondaryMode,
+  isFixedMode,
+  foldCardName,
+  fixedCardTotal,
+  fixedCardHeadroom,
+  FIXED_SECONDARY_COUNT,
+  E11_FIXED_CARD_CAP,
   cumulativeTimeThrough,
   roundTimeFromClock,
   parseDuration,
@@ -264,6 +273,10 @@ async function renderWizard(state, draftId) {
     if (pack11) payload.missionPackId = pack11.id;
   }
   let missionDetails = await loadMissionDetails(payload.missionPackId);
+  // Which secondaries may be taken Fixed comes from the mission-card deck, not
+  // the DB — see fixedSecondaryOptions(). A failure here only costs the Fixed
+  // picker; everything else on Setup still works.
+  const fixedOptions = await fixedSecondaryOptions().catch(() => []);
   const detachmentsByFaction = {};
   await Promise.all(payload.players.map((p) => cacheDetachments(p.factionId)));
 
@@ -931,6 +944,125 @@ async function renderWizard(state, draftId) {
     ]);
   }
 
+  /* ── Secondary missions: Tactical or Fixed ────────────────── */
+
+  // Chosen at setup (step 6 of the sequence), per player and in secret — one
+  // army can run Fixed while the other runs Tactical. A Fixed Mission is never
+  // drawn and never discarded: it sits face-up and can score in EVERY battle
+  // round, which is why it pays less per trigger and why one card can hold more
+  // than one scoring entry (see setFixedScore).
+  const fixedPicks = (p) => {
+    const seen = new Map();
+    for (const s of p.secondaries || []) {
+      const key = foldCardName(s.cardName);
+      if (key && !seen.has(key)) seen.set(key, s.cardName);
+    }
+    return [...seen.values()];
+  };
+
+  const isPicked = (p, name) =>
+    (p.secondaries || []).some((s) => foldCardName(s.cardName) === foldCardName(name));
+
+  function togglePick(p, card) {
+    const key = foldCardName(card.name);
+    const mine = (p.secondaries || []).filter((s) => foldCardName(s.cardName) === key);
+    if (mine.length) {
+      p.secondaries = (p.secondaries || []).filter((s) => foldCardName(s.cardName) !== key);
+    } else {
+      (p.secondaries || (p.secondaries = [])).push({
+        cardId: cardIdFor(card.name), cardName: card.name,
+        drawnRound: null, roundNumber: null, score: 0, wasDiscarded: false,
+      });
+    }
+    touch();
+    rerender();
+  }
+
+  // The deck rows come from the DB (seed casing: "Bring it Down") while the
+  // Fixed-legal list comes from the card data (GDC casing: "Bring It Down"), so
+  // the id has to be looked up by a folded name rather than an exact match.
+  function cardIdFor(name) {
+    const want = foldCardName(name);
+    const hit = (missionDetails.secondaryCards || [])
+      .find((c) => foldCardName(c.name) === want);
+    return hit?.id ?? null;
+  }
+
+  function buildSecondaryMode(p, i, editable) {
+    const mode = secondaryMode(p);
+    const modeBtn = (value, label) => {
+      const b = el('button', {
+        class: `btn ${mode === value ? 'primary' : ''}`.trim(),
+        type: 'button',
+        style: { flex: '1', justifyContent: 'center', minHeight: '44px' },
+      }, label);
+      b.disabled = !editable;
+      b.addEventListener('click', async () => {
+        if (mode === value) return;
+        // Switching modes invalidates whatever is already on the record: a
+        // drawn hand means nothing in Fixed, and Fixed picks mean nothing in
+        // Tactical. Ask rather than silently binning someone's game.
+        if ((p.secondaries || []).length) {
+          const ok = await confirmModal({
+            title: `Switch to ${label}?`,
+            body: `That clears the ${(p.secondaries || []).length} secondary card(s) already recorded for ${seatName(p, i)}.`,
+            confirmLabel: 'Switch',
+          });
+          if (!ok) return;
+        }
+        p.secondaryMode = value;
+        p.secondaries = [];
+        touch();
+        rerender();
+      });
+      return b;
+    };
+
+    const rows = [el('div', { class: 'lg-mode-row' }, [
+      modeBtn('tactical', 'Tactical'),
+      modeBtn('fixed', 'Fixed'),
+    ])];
+
+    if (mode === 'fixed') {
+      const picked = fixedPicks(p);
+      const short = FIXED_SECONDARY_COUNT - picked.length;
+      rows.push(el('div', { class: 'lg-card-meta' },
+        short > 0
+          ? `Pick ${short} more — ${FIXED_SECONDARY_COUNT} Fixed Missions, up to ${E11_FIXED_CARD_CAP} VP from each.`
+          : `${picked.length} chosen · up to ${E11_FIXED_CARD_CAP} VP from each.`));
+
+      if (!fixedOptions.length) {
+        rows.push(el('div', { class: 'lg-empty' }, 'Could not load the Fixed Mission list.'));
+      }
+      rows.push(el('div', { class: 'lg-cards' }, fixedOptions.map((card) => {
+        const on = isPicked(p, card.name);
+        // Over the limit is allowed rather than blocked — the app records what
+        // happened, and refusing the third tap is how you lose the first two.
+        const pick = el('button', {
+          class: `btn ${on ? 'primary' : ''} lg-pick`.trim(), type: 'button',
+        }, on ? '✓ Chosen' : 'Choose');
+        pick.disabled = !editable;
+        pick.addEventListener('click', () => togglePick(p, card));
+        return el('div', { class: `lg-card ${on ? 'is-scored' : ''}`.trim() }, [
+          el('div', { class: 'lg-card-main' }, [
+            el('div', { class: 'lg-card-name' },
+              missionLink('secondary', card.name, { mode: 'fixed' }) || card.name),
+          ]),
+          pick,
+        ]);
+      })));
+      if (picked.length > FIXED_SECONDARY_COUNT) {
+        rows.push(el('div', { class: 'lg-card-meta' },
+          `That is ${picked.length} — the rules allow ${FIXED_SECONDARY_COUNT}.`));
+      }
+    }
+
+    return el('div', { class: 'lg-field' }, [
+      el('label', {}, 'Secondary missions'),
+      ...rows,
+    ]);
+  }
+
   function buildSetupSeat(p, i) {
     const editable = canEditSeat(i);
     const seat = el('div', {
@@ -1006,6 +1138,7 @@ async function renderWizard(state, draftId) {
     seat.appendChild(el('div', { class: 'lg-field' }, [el('label', {}, 'Faction'), facSel]));
     seat.appendChild(buildDetachments(p, i, editable));
     seat.appendChild(el('div', { class: 'lg-field' }, [el('label', {}, 'Force disposition'), dispSel, primary]));
+    seat.appendChild(buildSecondaryMode(p, i, editable));
     seat.appendChild(el('div', { class: 'lg-field' }, firstBtn));
     seat.appendChild(buildArmyList(p, editable));
     return seat;
@@ -1369,7 +1502,114 @@ async function renderWizard(state, draftId) {
 
   /* ── Secondaries: the hand ────────────────────────────────── */
 
+  // A Fixed Mission stays face-up all game and scores in any battle round it is
+  // met, so one card holds one entry PER ROUND it scored rather than the single
+  // draw-then-score entry a Tactical card gets. The pick itself survives an
+  // unscored game as a lone entry with no roundNumber, which is the same
+  // "recorded but never scored" shape game detail already renders.
+  function setFixedScore(p, card, n, vp) {
+    const list = p.secondaries || (p.secondaries = []);
+    const want = foldCardName(card.name);
+    const mine = (idx) => list.filter((s) => foldCardName(s.cardName) === want)[idx];
+    let e = list.find((s) => foldCardName(s.cardName) === want && s.roundNumber === n);
+    if (vp > 0) {
+      if (!e) {
+        e = list.find((s) => foldCardName(s.cardName) === want && s.roundNumber == null);
+        if (e) e.roundNumber = n;
+        else {
+          e = {
+            cardId: cardIdFor(card.name), cardName: card.name,
+            drawnRound: null, roundNumber: n, score: 0, wasDiscarded: false,
+          };
+          list.push(e);
+        }
+      }
+      e.score = vp;
+    } else if (e) {
+      list.splice(list.indexOf(e), 1);
+    }
+    // Zeroing the only entry must not un-choose the mission.
+    if (!mine(0)) {
+      list.push({
+        cardId: cardIdFor(card.name), cardName: card.name,
+        drawnRound: null, roundNumber: null, score: 0, wasDiscarded: false,
+      });
+    }
+    touch();
+    rerender();
+  }
+
+  function buildFixedSecondaries(p, i, n, editable) {
+    const picks = fixedPicks(p);
+    const rows = picks.map((name) => {
+      const card = fixedOptions.find((c) => foldCardName(c.name) === foldCardName(name))
+        || { name, id: null };
+      const here = (p.secondaries || [])
+        .find((s) => foldCardName(s.cardName) === foldCardName(name) && s.roundNumber === n);
+      const total = fixedCardTotal(p, name);
+
+      const score = cardBtn(here ? 'Edit' : 'Score', 'is-score', async () => {
+        // Two ceilings bite at once: 15 VP of secondary per battle round across
+        // ALL cards, and 20 VP per Fixed card across the whole game. `here` is
+        // excluded from both or re-saving a card at its own number would
+        // ratchet it down every time.
+        const roundLeft = secondaryRoundHeadroom(p, n, here || null);
+        const cardLeft = fixedCardHeadroom(p, name, here || null);
+        const headroom = Math.min(roundLeft, cardLeft);
+        if (headroom <= 0) {
+          toast(cardLeft <= 0
+            ? `${name} is already at its ${E11_FIXED_CARD_CAP} VP limit for this battle`
+            : `Round ${n} is already at the ${E11_SECONDARY_ROUND_CAP} VP secondary cap`, 'error');
+          return;
+        }
+        const vp = await promptModal({
+          title: name,
+          label: `Victory points this round — ${headroom} left (${cardLeft} of this card's ${E11_FIXED_CARD_CAP})`,
+          defaultValue: String(here?.score ?? Math.min(4, headroom)),
+          type: 'number',
+        });
+        if (vp == null) return;
+        const asked = Math.max(0, parseInt(vp, 10) || 0);
+        const scored = Math.min(asked, headroom);
+        if (scored < asked) toast(`Capped at ${scored} — only ${headroom} VP were available`);
+        setFixedScore(p, card, n, scored);
+      });
+
+      const clear = here
+        ? cardBtn('Clear', 'is-discard', () => setFixedScore(p, card, n, 0))
+        : null;
+
+      return el('div', { class: `lg-card ${here ? 'is-scored' : ''}`.trim() }, [
+        el('div', { class: 'lg-card-main' }, [
+          el('div', { class: 'lg-card-name' },
+            missionLink('secondary', name, { mode: 'fixed' }) || name),
+          el('div', { class: 'lg-card-meta' },
+            `${total} / ${E11_FIXED_CARD_CAP} this battle`),
+        ]),
+        here ? el('div', { class: 'lg-card-vp' }, String(here.score || 0)) : null,
+        editable ? el('div', { class: 'lg-card-actions' }, [score, clear].filter(Boolean)) : null,
+      ].filter(Boolean));
+    });
+
+    if (!rows.length) {
+      rows.push(el('div', { class: 'lg-empty' },
+        'No Fixed Missions chosen yet — pick them on Setup.'));
+    }
+
+    const scoredThisRound = sumSecondaryForRound(p, n);
+    return el('div', { class: 'lg-field' }, [
+      el('label', {}, [
+        'Secondary missions (Fixed)',
+        el('span', {
+          class: `lg-cap ${scoredThisRound >= E11_SECONDARY_ROUND_CAP ? 'is-full' : ''}`.trim(),
+        }, `${scoredThisRound} / ${E11_SECONDARY_ROUND_CAP} this round`),
+      ]),
+      el('div', { class: 'lg-cards' }, rows),
+    ]);
+  }
+
   function buildSecondaries(p, i, n, editable) {
+    if (isFixedMode(p)) return buildFixedSecondaries(p, i, n, editable);
     const hand = (p.secondaries || []).filter((s) =>
       s.drawnRound != null && s.drawnRound <= n && s.roundNumber == null);
     const settled = (p.secondaries || []).filter((s) => s.roundNumber === n);
@@ -1937,6 +2177,7 @@ function emptyPlayer() {
     factionId: null, detachmentId: null, detachmentName: null,
     primaryMissionId: null, primaryMissionName: null, forceDisposition: null,
     detachments: [], timeSeconds: null, armyListCode: null,
+    secondaryMode: 'tactical',
     wentFirst: false, isAttacker: null, manualWinner: false,
     finalScore: 0, result: null,
     rounds: ROUNDS.map((n) => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0, cpRemaining: null, timeSeconds: null })),
@@ -1993,6 +2234,7 @@ function normalisePayload(raw) {
       wasDiscarded: !!s.wasDiscarded,
     })).filter((s) => s.cardName);
     player.detachments = Array.isArray(src.detachments) ? src.detachments.slice() : [];
+    player.secondaryMode = secondaryMode(src);
     player.challengers = [];
     return player;
   });

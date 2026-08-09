@@ -1,11 +1,13 @@
 import { games, reference } from '../api.js';
 import { el, clear, toast, selectOptions, confirmModal, fmtDuration } from '../components.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
-import { missionLink } from '../mission-cards.js';
+import { missionLink, fixedSecondaryOptions } from '../mission-cards.js';
 import {
   ROUNDS, DEFAULT_EDITION, MATCHED_PLAY_LAYOUTS, E11_PRIMARY_CAP, E11_SECONDARY_CAP,
   E11_PRIMARY_ROUND_CAP, E11_SECONDARY_ROUND_CAP, secondaryRoundHeadroom,
   FORCE_DISPOSITIONS, PRIMARY_MATRIX, parseDuration,
+  secondaryMode, isFixedMode, foldCardName, fixedCardTotal, fixedCardHeadroom,
+  FIXED_SECONDARY_COUNT, E11_FIXED_CARD_CAP,
   sumPrimary, sumSecondaries, sumSecondaryPoints, capLabel, calcTotal,
 } from '../game-rules.js';
 
@@ -96,6 +98,14 @@ export async function renderGameForm(state, gameId) {
   let missionDetails = { primaryMissions: [], deploymentMaps: [], missionRules: [], secondaryCards: [], challengerCards: [] };
   if (draft.missionPackId) {
     missionDetails = await reference.missionDetails(draft.missionPackId);
+  }
+
+  // Which secondaries may be taken Fixed comes from the mission-card deck, not
+  // the DB — see fixedSecondaryOptions(). 11e only, and lazily: a 10e write-up
+  // has no Fixed missions and shouldn't pay for 51KB of card data.
+  let fixedOptions = [];
+  if ((draft.edition || DEFAULT_EDITION) === '11') {
+    fixedOptions = await fixedSecondaryOptions().catch(() => []);
   }
 
   // Prefetch detachments per faction selected
@@ -280,7 +290,15 @@ export async function renderGameForm(state, gameId) {
     editionSel.value = draft.edition || DEFAULT_EDITION;
     // Structural: 11e moves the primary mission per-player and swaps the whole
     // secondary section, so the form has to be rebuilt.
-    editionSel.addEventListener('change', () => { draft.edition = editionSel.value; rerender(); });
+    editionSel.addEventListener('change', async () => {
+      draft.edition = editionSel.value;
+      // Switching a 10e write-up to 11e is the one path that reaches the Fixed
+      // picker without having paid for the card data at load.
+      if (draft.edition === '11' && !fixedOptions.length) {
+        fixedOptions = await fixedSecondaryOptions().catch(() => []);
+      }
+      rerender();
+    });
 
     const mediumSel = el('select', {}, [
       el('option', { value: 'physical' }, 'Physical (tabletop)'),
@@ -442,8 +460,11 @@ export async function renderGameForm(state, gameId) {
       scoreMode(p) === 'final' ? null : buildRoundsTable(p),
       buildScoreModeToggle(p),
       scoreMode(p) === 'final' ? buildFinalScoreOnly(p, idx) : null,
+      scoreMode(p) === 'cards' && is11() ? buildSecondaryMode(p) : null,
       scoreMode(p) === 'cards'
-        ? (is11() ? buildHeldSecondaries(p) : buildPerRoundSecondaries(p))
+        ? (is11()
+            ? (isFixedMode(p) ? buildFixedSecondaries(p) : buildHeldSecondaries(p))
+            : buildPerRoundSecondaries(p))
         : null,
     ].filter(Boolean));
   }
@@ -584,36 +605,79 @@ export async function renderGameForm(state, gameId) {
   }
 
   const roundsAreClocked = (p) => (p.rounds || []).some(r => r.timeSeconds != null);
+  const roundsTotal = (p) => (p.rounds || []).reduce((sum, r) => sum + (r.timeSeconds || 0), 0);
 
-  // Total chess-clock time. Read-only and derived once any round carries a
-  // time, so the headline can never contradict the per-round breakdown — the
-  // same rule the server applies in resolvePlayerTimes().
+  // Total chess-clock time. Derived from the rounds by default, so the headline
+  // can never contradict the per-round breakdown — the same rule the server
+  // applies in resolvePlayerTimes(). "Edit" opts this player out: the typed
+  // total then outranks the rounds, which stay on the record as whatever the
+  // clock actually saw. Without that escape hatch a live-tracked game, which
+  // arrives with every round clocked, had no editable total at all.
   function buildTotalTime(p, idx) {
-    const derived = roundsAreClocked(p);
-    const total = derived
-      ? (p.rounds || []).reduce((sum, r) => sum + (r.timeSeconds || 0), 0)
-      : p.timeSeconds;
+    const group = el('div', { class: 'form-group' });
 
-    const inp = el('input', {
-      type: 'text', inputmode: 'numeric',
-      placeholder: derived ? '' : 'e.g. 1:12:30',
-      value: fmtDuration(total) ?? '',
-      readonly: derived ? '' : null,
-      'data-time-total': String(idx),
-      style: derived ? { opacity: '0.7' } : null,
-    });
-    if (!derived) {
-      inp.addEventListener('change', () => {
-        p.timeSeconds = parseDuration(inp.value);
-        inp.value = fmtDuration(p.timeSeconds) ?? '';
+    function paint() {
+      clear(group);
+      const clocked = roundsAreClocked(p);
+      const derived = clocked && !p.timeIsManual;
+
+      const inp = el('input', {
+        type: 'text', inputmode: 'numeric',
+        placeholder: derived ? '' : 'e.g. 1:12:30',
+        value: fmtDuration(derived ? roundsTotal(p) : p.timeSeconds) ?? '',
+        readonly: derived ? '' : null,
+        'data-time-total': String(idx),
+        style: derived ? { opacity: '0.7' } : null,
       });
+      if (!derived) {
+        inp.addEventListener('change', () => {
+          p.timeSeconds = parseDuration(inp.value);
+          inp.value = fmtDuration(p.timeSeconds) ?? '';
+        });
+      }
+
+      const toggle = clocked
+        ? el('button', {
+            class: 'btn small', type: 'button',
+            title: p.timeIsManual
+              ? 'Go back to the sum of the round clocks'
+              : 'Set the total by hand, leaving the round clocks as they are',
+            onClick: () => {
+              p.timeIsManual = !p.timeIsManual;
+              if (p.timeIsManual) p.timeSeconds = roundsTotal(p);
+              paint();
+              const box = group.querySelector('input');
+              if (p.timeIsManual && box) box.focus();
+            },
+          }, p.timeIsManual ? 'Use round times' : 'Edit')
+        : null;
+
+      const children = [
+        el('div', {
+          style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' },
+        }, [
+          el('label', { style: { margin: '0' } },
+            derived ? 'Total Time (from rounds)'
+              : clocked ? 'Total Time (set by hand)' : 'Total Time'),
+          toggle,
+        ].filter(Boolean)),
+        inp,
+      ];
+      if (p.timeIsManual) {
+        children.push(el('div', {
+          class: 'dim', style: { fontSize: '11px', marginTop: '4px' },
+          'data-time-rounds': String(idx),
+        }, roundsHint(p)));
+      }
+      children.forEach(c => group.appendChild(c));
     }
 
-    return el('div', { class: 'form-group' }, [
-      el('label', {}, derived ? 'Total Time (from rounds)' : 'Total Time'),
-      inp,
-    ]);
+    paint();
+    return group;
   }
+
+  const roundsHint = (p) =>
+    `Round clocks sum to ${fmtDuration(roundsTotal(p)) ?? '0:00'} and stay on the record.`;
 
   function buildScoreModeToggle(p) {
     const sel = el('select', { style: { width: 'auto' } }, [
@@ -758,9 +822,11 @@ export async function renderGameForm(state, gameId) {
       const pri = root.querySelector(`[data-pri-total="${i}"]`);
       if (pri) pri.textContent = capLabel(sumPrimary(pl), E11_PRIMARY_CAP);
       const t = root.querySelector(`[data-time-total="${i}"]`);
-      if (t && roundsAreClocked(pl)) {
-        t.value = fmtDuration((pl.rounds || []).reduce((sum, r) => sum + (r.timeSeconds || 0), 0)) ?? '';
+      if (t && roundsAreClocked(pl) && !pl.timeIsManual) {
+        t.value = fmtDuration(roundsTotal(pl)) ?? '';
       }
+      const hint = root.querySelector(`[data-time-rounds="${i}"]`);
+      if (hint) hint.textContent = roundsHint(pl);
     });
   }
 
@@ -769,6 +835,177 @@ export async function renderGameForm(state, gameId) {
   // "remember every card name and type it". A row only becomes a stored
   // secondary once it has a drawn round, a scored round or a score — untouched
   // rows never reach the payload.
+  /* ── Tactical vs Fixed (11e) ──────────────────────────────── */
+
+  // The choice is made at setup, per player and in secret, so the two seats can
+  // differ. Fixed missions are never drawn and never discarded — they sit
+  // face-up and can score in EVERY battle round, which is why the entry grid
+  // below is card x round rather than the one-row-per-card deck Tactical uses.
+  const fixedPicks = (p) => {
+    const seen = new Map();
+    for (const s of p.secondaries || []) {
+      const key = foldCardName(s.cardName);
+      if (key && !seen.has(key)) seen.set(key, s.cardName);
+    }
+    return [...seen.values()];
+  };
+
+  const cardIdFor = (name) => {
+    const want = foldCardName(name);
+    return (missionDetails.secondaryCards || [])
+      .find(c => foldCardName(c.name) === want)?.id ?? null;
+  };
+
+  function setFixedScore(p, name, roundNumber, vp) {
+    const list = p.secondaries || (p.secondaries = []);
+    const want = foldCardName(name);
+    const forCard = () => list.filter(s => foldCardName(s.cardName) === want);
+    let e = list.find(s => foldCardName(s.cardName) === want && s.roundNumber === roundNumber);
+    if (vp > 0) {
+      if (!e) {
+        e = list.find(s => foldCardName(s.cardName) === want && s.roundNumber == null);
+        if (e) e.roundNumber = roundNumber;
+        else {
+          e = { cardId: cardIdFor(name), cardName: name, drawnRound: null, roundNumber, score: 0 };
+          list.push(e);
+        }
+      }
+      e.score = vp;
+    } else if (e) {
+      list.splice(list.indexOf(e), 1);
+    }
+    // Zeroing every round must not un-choose the mission.
+    if (!forCard().length) {
+      list.push({ cardId: cardIdFor(name), cardName: name, drawnRound: null, roundNumber: null, score: 0 });
+    }
+  }
+
+  function buildSecondaryMode(p) {
+    const mode = secondaryMode(p);
+    const sel = el('select', { style: { width: 'auto' } }, [
+      el('option', { value: 'tactical' }, 'Tactical — drawn each round'),
+      el('option', { value: 'fixed' }, `Fixed — ${FIXED_SECONDARY_COUNT} chosen at setup`),
+    ]);
+    sel.value = mode;
+    sel.addEventListener('change', async () => {
+      const next = sel.value;
+      if (next === mode) return;
+      if ((p.secondaries || []).length) {
+        const ok = await confirmModal({
+          title: next === 'fixed' ? 'Switch to Fixed?' : 'Switch to Tactical?',
+          body: `That clears the ${(p.secondaries || []).length} secondary card(s) already recorded for this player.`,
+          confirmLabel: 'Switch',
+        });
+        if (!ok) { sel.value = mode; return; }
+      }
+      p.secondaryMode = next;
+      p.secondaries = [];
+      rerender();
+    });
+
+    return el('div', {
+      style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px', flexWrap: 'wrap' },
+    }, [
+      el('span', { class: 'dim', style: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em' } },
+        'Secondaries'),
+      sel,
+    ]);
+  }
+
+  function buildFixedSecondaries(p) {
+    if (!fixedOptions.length) {
+      return el('div', { class: 'muted', style: { marginTop: '10px' } },
+        'Could not load the Fixed Mission list.');
+    }
+    const picked = fixedPicks(p);
+    const short = FIXED_SECONDARY_COUNT - picked.length;
+
+    // Only four of the eighteen may be taken Fixed. Over the limit is allowed
+    // rather than blocked — this form writes up games that already happened.
+    const chooser = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } },
+      fixedOptions.map(card => {
+        const on = picked.some(n => foldCardName(n) === foldCardName(card.name));
+        const b = el('button', { class: `btn small ${on ? 'primary' : ''}`.trim(), type: 'button' },
+          `${on ? '✓ ' : ''}${card.name}`);
+        b.addEventListener('click', () => {
+          if (on) {
+            const key = foldCardName(card.name);
+            p.secondaries = (p.secondaries || []).filter(s => foldCardName(s.cardName) !== key);
+          } else {
+            setFixedScore(p, card.name, null, 0);
+          }
+          rerender();
+        });
+        return b;
+      }));
+
+    const rows = picked.map(name => {
+      const cells = [el('td', {}, missionLink('secondary', name, { mode: 'fixed' }) || name)];
+      for (const rn of ROUNDS) {
+        const entry = (p.secondaries || [])
+          .find(s => foldCardName(s.cardName) === foldCardName(name) && s.roundNumber === rn);
+        const inp = el('input', {
+          type: 'number', min: '0', max: String(E11_FIXED_CARD_CAP), step: '1', inputmode: 'numeric',
+          value: entry ? String(entry.score || 0) : '',
+          placeholder: '–',
+          style: { textAlign: 'center' },
+        });
+        inp.addEventListener('change', () => {
+          const asked = Math.max(0, parseInt(inp.value, 10) || 0);
+          // Two ceilings at once: 15 VP of secondary per round across all cards,
+          // and 20 VP per Fixed card across the battle. The entry being edited
+          // is excluded from both, or re-saving it at its own number would
+          // ratchet the value down a little every time.
+          const here = (p.secondaries || [])
+            .find(s => foldCardName(s.cardName) === foldCardName(name) && s.roundNumber === rn) || null;
+          const headroom = Math.min(
+            secondaryRoundHeadroom(p, rn, here),
+            fixedCardHeadroom(p, name, here),
+          );
+          const scored = Math.min(asked, headroom);
+          if (scored < asked) toast(`${name} capped at ${scored} in round ${rn}`);
+          setFixedScore(p, name, rn, scored);
+          inp.value = scored > 0 ? String(scored) : '';
+          refreshTotals();
+          refreshFixedTotals(p);
+        });
+        cells.push(el('td', {}, inp));
+      }
+      cells.push(el('td', {
+        class: 'dim tabular',
+        style: { textAlign: 'center', fontSize: '12px' },
+        'data-fixed-total': foldCardName(name),
+      }, `${fixedCardTotal(p, name)} / ${E11_FIXED_CARD_CAP}`));
+      return el('tr', {}, cells);
+    });
+
+    return el('div', {}, [
+      el('h3', { style: { marginTop: '14px' } }, 'Fixed Missions'),
+      el('div', { class: 'dim', style: { fontSize: '11px' } },
+        short > 0
+          ? `Pick ${short} more — ${FIXED_SECONDARY_COUNT} Fixed Missions, scoring in any round, up to ${E11_FIXED_CARD_CAP} VP from each.`
+          : `${picked.length} chosen${picked.length > FIXED_SECONDARY_COUNT ? ` — the rules allow ${FIXED_SECONDARY_COUNT}` : ''}. Each scores in any round, up to ${E11_FIXED_CARD_CAP} VP over the battle.`),
+      chooser,
+      rows.length
+        ? el('table', { class: 'round-entry-table', style: { marginTop: '10px' } }, [
+            el('thead', {}, el('tr', {}, [
+              el('th', {}, 'Mission'),
+              ...ROUNDS.map(rn => el('th', {}, `R${rn}`)),
+              el('th', {}, 'Total'),
+            ])),
+            el('tbody', {}, rows),
+          ])
+        : null,
+    ].filter(Boolean));
+  }
+
+  function refreshFixedTotals(p) {
+    for (const name of fixedPicks(p)) {
+      const cell = root.querySelector(`[data-fixed-total="${foldCardName(name)}"]`);
+      if (cell) cell.textContent = `${fixedCardTotal(p, name)} / ${E11_FIXED_CARD_CAP}`;
+    }
+  }
+
   function buildHeldSecondaries(p) {
     const idx = draft.players.indexOf(p);
     const COLS = '1fr 88px 88px 64px 30px';
@@ -1229,6 +1466,8 @@ function makeDraft(existing) {
       primaryMissionName: p.primary_mission_name ?? null,
       forceDisposition: p.force_disposition ?? null,
       timeSeconds: p.time_seconds ?? null,
+      timeIsManual: !!p.time_is_manual,
+      secondaryMode: p.secondary_mode === 'fixed' ? 'fixed' : 'tactical',
       detachments: Array.isArray(p.detachments) && p.detachments.length
         ? p.detachments.slice()
         : (p.detachment_name ? [p.detachment_name] : []),
@@ -1263,7 +1502,8 @@ function emptyPlayer() {
     userId: null, guestName: null,
     factionId: null, detachmentId: null, detachmentName: null,
     primaryMissionId: null, primaryMissionName: null,
-    forceDisposition: null, detachments: [], timeSeconds: null,
+    forceDisposition: null, detachments: [], timeSeconds: null, timeIsManual: false,
+    secondaryMode: 'tactical',
     armyListCode: null, wentFirst: false, isAttacker: null,
     manualWinner: false,
     rounds: ROUNDS.map(n => ({ roundNumber: n, primaryScore: 0, secondaryScore: 0 })),
@@ -1356,6 +1596,8 @@ function restorePayload(g) {
       primaryMissionName: p.primary_mission_name ?? null,
       forceDisposition: p.force_disposition ?? null,
       timeSeconds: p.time_seconds ?? null,
+      timeIsManual: !!p.time_is_manual,
+      secondaryMode: p.secondary_mode === 'fixed' ? 'fixed' : 'tactical',
       detachments: Array.isArray(p.detachments) && p.detachments.length
         ? p.detachments.slice()
         : (p.detachment_name ? [p.detachment_name] : []),

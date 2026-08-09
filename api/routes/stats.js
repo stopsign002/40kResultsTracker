@@ -202,16 +202,34 @@ router.get('/first-turn-impact', async (req, res) => {
 
 // ── Secondary card averages ──────────────────────────────────
 router.get('/secondary-averages', async (_req, res) => {
+  // One row per card was one "pick" until Fixed missions existed. A Fixed
+  // mission is never discarded and scores in EVERY round it is met, so it holds
+  // one row per scoring round — counting rows would report a card taken once
+  // and scored three times as three picks averaging a third of what it earned.
+  //
+  // `pick_key` collapses those rows to one pick per (seat, card) for a Fixed
+  // seat only. Tactical keeps `ps.id`, which is unique, so every tactical group
+  // is still a single row and the numbers are byte-identical to before —
+  // including a card drawn again after being discarded, which stays two picks.
   const sql = `
-    SELECT ps.card_name,
+    WITH picks AS (
+      SELECT ps.game_player_id, ps.card_name, ps.score,
+             CASE WHEN gp.secondary_mode = 'fixed' THEN 0 ELSE ps.id END AS pick_key
+      FROM player_secondaries ps
+      JOIN game_players gp ON gp.id = ps.game_player_id
+      JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
+    ),
+    per_pick AS (
+      SELECT card_name, SUM(score)::int AS score
+      FROM picks
+      GROUP BY game_player_id, card_name, pick_key
+    )
+    SELECT card_name,
       COUNT(*)::int AS picks,
-      ROUND(AVG(ps.score)::numeric, 2) AS avg_score,
-      MAX(ps.score) AS max_score
-    FROM player_secondaries ps
-    JOIN game_players gp ON gp.id = ps.game_player_id
-    JOIN games g ON g.id = gp.game_id AND ${COUNTED_GAMES}
-    GROUP BY ps.card_name
-    HAVING COUNT(*) >= 1
+      ROUND(AVG(score)::numeric, 2) AS avg_score,
+      MAX(score) AS max_score
+    FROM per_pick
+    GROUP BY card_name
     ORDER BY picks DESC, avg_score DESC
   `;
   const { rows } = await pool.query(sql);

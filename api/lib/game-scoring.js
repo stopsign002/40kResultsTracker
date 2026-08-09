@@ -100,21 +100,31 @@ export function computeFinalScores(players, edition = '10') {
  * headline figures can never disagree. With no per-round data the typed total
  * stands on its own. Same shape as the secondary card/round-total rule.
  *
- * Mutates each player in place, setting `p.timeSeconds`.
+ * `timeIsManual` opts out of the derivation entirely: the total was set by hand
+ * and outranks the rounds. The live tracker clocks every round, so without this
+ * a tracked game's total could never be corrected. A manual flag with no usable
+ * total falls back to the derived rule rather than leaving the game untimed.
+ *
+ * Mutates each player in place, setting `p.timeSeconds` and `p.timeIsManual`.
  *
  * @param {PlayerPayload[]} players
  * @returns {void}
  */
 export function resolvePlayerTimes(players) {
   for (const p of players || []) {
+    const typed = toSeconds(p.timeSeconds);
+    if (p.timeIsManual && typed != null) {
+      p.timeSeconds = typed;
+      p.timeIsManual = true;
+      continue;
+    }
     const perRound = (p.rounds || [])
       .map(r => toSeconds(r.timeSeconds))
       .filter(v => v != null);
-    if (perRound.length) {
-      p.timeSeconds = perRound.reduce((sum, v) => sum + v, 0);
-    } else {
-      p.timeSeconds = toSeconds(p.timeSeconds);
-    }
+    p.timeSeconds = perRound.length
+      ? perRound.reduce((sum, v) => sum + v, 0)
+      : typed;
+    p.timeIsManual = false;
   }
 }
 

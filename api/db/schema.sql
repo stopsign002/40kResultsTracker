@@ -80,11 +80,9 @@ CREATE TABLE IF NOT EXISTS deployment_maps (
   id              SERIAL PRIMARY KEY,
   mission_pack_id INTEGER NOT NULL REFERENCES mission_packs(id) ON DELETE CASCADE,
   name            TEXT NOT NULL,
-  -- Optional picture of the terrain layout, uploaded once and then shown on
-  -- every game that used it. File lives at UPLOAD_DIR/maps/<image_name>,
-  -- served by Caddy at /uploads/maps/<image_name> like game photos.
-  image_name       TEXT,
-  image_thumb_name TEXT,
+  -- No picture column here on purpose. A terrain layout is photographed per
+  -- game — that table existed for that game only — so the shot lives on
+  -- game_images.is_map, not on the shared layout row.
   UNIQUE (mission_pack_id, name)
 );
 
@@ -151,7 +149,15 @@ CREATE TABLE IF NOT EXISTS game_players (
     ('Take and Hold','Purge the Foe','Disruption','Reconnaissance','Priority Assets')),
   -- Chess-clock time for this player. DERIVED (the sum) whenever any round
   -- carries a time; otherwise it's whatever total was typed directly.
+  -- time_is_manual overrides that: the total was set by hand and outranks the
+  -- rounds, which stay on the record as whatever the clock actually saw.
   time_seconds         INTEGER CHECK (time_seconds >= 0),
+  time_is_manual       BOOLEAN NOT NULL DEFAULT FALSE,
+  -- **11e only.** Tactical (drawn) or Fixed (two cards chosen at setup, face-up
+  -- and active all battle). Chosen per player and in secret, so the two seats
+  -- can differ — this is not a game-level column.
+  secondary_mode       TEXT NOT NULL DEFAULT 'tactical'
+    CHECK (secondary_mode IN ('tactical', 'fixed')),
   army_list_code  TEXT,
   went_first      BOOLEAN NOT NULL DEFAULT FALSE,
   is_attacker     BOOLEAN,
@@ -332,18 +338,36 @@ DO $$ BEGIN
   ) THEN
     ALTER TABLE game_rounds ADD COLUMN time_seconds INTEGER CHECK (time_seconds >= 0);
   END IF;
+  -- A hand-set total outranks the per-round sum. Needed because the live
+  -- tracker clocks every round, which made the derived total unchangeable.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='game_players' AND column_name='time_is_manual'
+  ) THEN
+    ALTER TABLE game_players ADD COLUMN time_is_manual BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
 END $$;
 
--- Migration: terrain-layout picture on a deployment map.
+-- Migration: Tactical vs Fixed secondary missions (11e). Defaults to 'tactical',
+-- which is what every game recorded before the choice existed was played as.
 DO $$ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
-    WHERE table_name='deployment_maps' AND column_name='image_name'
+    WHERE table_name='game_players' AND column_name='secondary_mode'
   ) THEN
-    ALTER TABLE deployment_maps ADD COLUMN image_name TEXT;
-    ALTER TABLE deployment_maps ADD COLUMN image_thumb_name TEXT;
+    ALTER TABLE game_players ADD COLUMN secondary_mode TEXT NOT NULL DEFAULT 'tactical'
+      CHECK (secondary_mode IN ('tactical', 'fixed'));
   END IF;
 END $$;
+
+-- Migration: drop the shared terrain-layout picture. It was one image per
+-- deployment_maps row, shown on every game played on that layout — but a
+-- terrain photo is of the table THAT game was played on, not of the abstract
+-- layout, so sharing it across games was wrong. The per-game shot
+-- (game_images.is_map) is the only one now. Files under UPLOAD_DIR/maps/ are
+-- deliberately left on disk; unlinking here would destroy the only copy.
+ALTER TABLE deployment_maps DROP COLUMN IF EXISTS image_name;
+ALTER TABLE deployment_maps DROP COLUMN IF EXISTS image_thumb_name;
 
 -- Migration: 11e Force Disposition (per player). Yours vs your opponent's is
 -- what decides the named primary mission each of you plays. NULL on 10e games.

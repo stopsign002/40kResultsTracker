@@ -67,10 +67,11 @@ Always add the index in a separate `CREATE INDEX IF NOT EXISTS` after the guard.
 
 **Two things the guard does not do**, both live in the file today:
 
-- **A multi-column block only checks its first column.** `deployment_maps.image_name
-  / image_thumb_name` and `banner_first_seen.anchor_x / anchor_y` add two columns
-  under one `IF NOT EXISTS` on the first. A half-applied migration won't
-  self-heal. Prefer one guard per column.
+- **A multi-column block only checks its first column.** `banner_first_seen.anchor_x
+  / anchor_y` adds two columns under one `IF NOT EXISTS` on the first. A
+  half-applied migration won't self-heal. Prefer one guard per column — or, as
+  the `deployment_maps` picture columns do on the way back out, a bare
+  `DROP COLUMN IF EXISTS` per column, which needs no guard at all.
 - **`CREATE INDEX IF NOT EXISTS` will not change an existing index's predicate.**
   When `game_drafts`'s partial indexes moved from `WHERE submitted_game_id IS NULL`
   to `WHERE submitted_at IS NULL`, the statements kept their names — so a
@@ -127,7 +128,7 @@ If you add a new backfill: write the predicate so it finds zero matching rows on
 | `audit_log` | Append-only. INSERT only — never UPDATE or DELETE. |
 | `player_detachments` | Source of truth for a player's detachments (11e allows several). `game_players.detachment_name` is the **derived** `', '`-joined display string — never write it directly, and point analytics/autocomplete at this table instead. |
 | `game_images` | Photo metadata; the bytes live on disk under `UPLOAD_DIR`. Two independent role flags, each with its own partial unique index: `is_thumbnail` (games-list cover) and `is_map` (terrain-layout shot). One photo may hold both. Deleting rows does **not** delete files — see `removeGameImageFiles`. |
-| `deployment_maps` | Also carries an optional `image_name` / `image_thumb_name` pair: a picture of that terrain layout, shared by every game played on it. `Layout A/B/C` for the 11e pack are ordinary rows here. |
+| `deployment_maps` | Name only — `Layout A/B/C` for the 11e pack are ordinary rows here. It deliberately carries **no** picture: a terrain photo is of the table one game was played on, so it lives on `game_images.is_map`. The old `image_name` / `image_thumb_name` pair is dropped by a migration. |
 | `game_drafts` | **`submitted_at` is what "finished" means**, not `submitted_game_id`. That FK is `ON DELETE SET NULL`, so deleting the resulting game used to silently un-submit the draft and put it back in the live list. The pointer is now for navigation only and may legitimately be NULL. `started_notified_at` guards the one-per-draft "a game just started" email, claimed with a conditional `UPDATE … WHERE started_notified_at IS NULL` so two phones can't double-send. Both partial indexes read `WHERE submitted_at IS NULL`. |
 | `deleted_items` | The recycle bin. One row per archived game or live game: `kind` (`'game'`\|`'draft'`), `original_id`, `label`, `payload` (JSONB), `deleted_by_user_id` (`ON DELETE SET NULL`, with `deleted_by_name` as the denormalised fallback), `deleted_at`, `UNIQUE (kind, original_id)`. Written and read **only** by `lib/archive.js` — `seed.sql` never touches it, so a fresh install starts with an empty bin. See below. |
 

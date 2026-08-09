@@ -44,7 +44,7 @@ router.get('/mission-packs/:id/details', async (req, res) => {
   if (!id) return res.status(400).json({ error: 'bad mission pack id' });
   const [primaries, deployments, rules, secondaries, challengers] = await Promise.all([
     pool.query('SELECT id, name FROM primary_missions WHERE mission_pack_id = $1 ORDER BY name', [id]),
-    pool.query('SELECT id, name, image_name, image_thumb_name FROM deployment_maps WHERE mission_pack_id = $1 ORDER BY name', [id]),
+    pool.query('SELECT id, name FROM deployment_maps WHERE mission_pack_id = $1 ORDER BY name', [id]),
     pool.query('SELECT id, name FROM mission_rules WHERE mission_pack_id = $1 ORDER BY name', [id]),
     pool.query('SELECT id, name, card_type FROM secondary_cards WHERE mission_pack_id = $1 ORDER BY card_type, name', [id]),
     pool.query('SELECT id, name FROM challenger_cards WHERE mission_pack_id = $1 ORDER BY name', [id]),

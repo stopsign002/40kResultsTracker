@@ -1309,7 +1309,8 @@
      ]
     }
    ],
-   "description": "**WHEN DRAWN:** If there are no enemy units with a **starting strength** of 13+ on the battlefield, you can discard this card and draw one new **Secondary Mission** card."
+   "description": "**WHEN DRAWN:** If there are no enemy units with a **starting strength** of 13+ on the battlefield, you can discard this card and draw one new **Secondary Mission** card.",
+   "fixed": true
   },
   {
    "name": "A Tempting Target",
@@ -1355,7 +1356,8 @@
       }
      ]
     }
-   ]
+   ],
+   "fixed": true
   },
   {
    "name": "Beacon",
@@ -1422,7 +1424,8 @@
      ]
     }
    ],
-   "description": "WHEN DRAWN: If there are no enemy models with a **W** of 10 or more on the battlefield, you can discard this card and draw one new **Secondary Mission** card."
+   "description": "WHEN DRAWN: If there are no enemy models with a **W** of 10 or more on the battlefield, you can discard this card and draw one new **Secondary Mission** card.",
+   "fixed": true
   },
   {
    "name": "Burden Of Trust",
@@ -1585,7 +1588,8 @@
      ]
     }
    ],
-   "description": "If one or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are wholly within a table quarter, and those units are not within 6\" of the centre of the battlefield, you have a **presence** in that table quarter."
+   "description": "If one or more friendly units (excluding **AIRCRAFT** and **battle‑shocked** units) are wholly within a table quarter, and those units are not within 6\" of the centre of the battlefield, you have a **presence** in that table quarter.",
+   "fixed": true
   },
   {
    "name": "Forward Position",

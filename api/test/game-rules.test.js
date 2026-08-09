@@ -31,6 +31,13 @@ import {
   sumSecondaryPoints,
   capLabel,
   calcTotal,
+  E11_FIXED_CARD_CAP,
+  FIXED_SECONDARY_COUNT,
+  secondaryMode,
+  isFixedMode,
+  foldCardName,
+  fixedCardTotal,
+  fixedCardHeadroom,
 } from '../../app/js/game-rules.js';
 import { fmtDuration } from '../../app/js/components.js';
 import { computeFinalScores } from '../lib/game-scoring.js';
@@ -347,6 +354,80 @@ test('the per-round caps match the mission pack the app ships', async () => {
   // either number can't slip past unnoticed.
   assert.equal(E11_PRIMARY_CAP, pack.limits.primaryGame);
   assert.equal(E11_SECONDARY_CAP, pack.limits.secondaryGame);
+  // Per FIXED CARD, per game — not 20 shared between the two.
+  assert.equal(E11_FIXED_CARD_CAP, pack.limits.fixedSecondaryCap);
+});
+
+// ── Fixed secondary missions ──────────────────────────────────
+// Only four of the eighteen may be taken Fixed, and the deck says so itself by
+// giving those cards a second scoring block. If GW widens the pool this test
+// fails, which is the point — the app derives the list from this data.
+
+test('exactly four secondaries are Fixed-legal, and they are the expected four', async () => {
+  const fs = await import('node:fs/promises');
+  const url = new URL('../../app/data/mission-cards-11e.json', import.meta.url);
+  const pack = JSON.parse(await fs.readFile(url, 'utf8'));
+  const fixed = pack.secondaryMissions.filter((c) => c.fixed).map((c) => c.name).sort();
+  assert.deepEqual(fixed,
+    ['A Grievous Blow', 'Assassination', 'Bring It Down', 'Engage On All Fronts']);
+  assert.equal(fixed.length, 4);
+});
+
+test('every Fixed-legal card carries both a fixed and a tactical scoring row', async () => {
+  const fs = await import('node:fs/promises');
+  const url = new URL('../../app/data/mission-cards-11e.json', import.meta.url);
+  const pack = JSON.parse(await fs.readFile(url, 'utf8'));
+  for (const card of pack.secondaryMissions.filter((c) => c.fixed)) {
+    const modes = new Set(card.objectives.flatMap((o) => o.scoring.map((r) => r.mode)));
+    assert.ok(modes.has('fixed'), `${card.name} has no fixed scoring row`);
+    assert.ok(modes.has('tactical'), `${card.name} has no tactical scoring row`);
+  }
+});
+
+test('secondaryMode defaults to tactical and rejects junk', () => {
+  assert.equal(secondaryMode(undefined), 'tactical');
+  assert.equal(secondaryMode({}), 'tactical');
+  assert.equal(secondaryMode({ secondaryMode: 'nonsense' }), 'tactical');
+  assert.equal(secondaryMode({ secondaryMode: 'fixed' }), 'fixed');
+  assert.equal(isFixedMode({ secondaryMode: 'fixed' }), true);
+  assert.equal(isFixedMode({ secondaryMode: 'tactical' }), false);
+});
+
+test('foldCardName bridges GDC title-case and GW casing', () => {
+  assert.equal(foldCardName('Bring It Down'), foldCardName('Bring it Down'));
+  assert.equal(foldCardName('Engage On All Fronts'), foldCardName('Engage on All Fronts'));
+  assert.notEqual(foldCardName('Assassination'), foldCardName('A Grievous Blow'));
+});
+
+// A Fixed mission is never discarded, so it holds one entry per round it
+// scored — the total is what the 20 VP per-card ceiling applies to.
+test('fixedCardTotal sums every round a Fixed mission scored in', () => {
+  const p = { secondaries: [
+    { cardName: 'Bring it Down', roundNumber: 1, score: 4 },
+    { cardName: 'Bring It Down', roundNumber: 3, score: 8 },
+    { cardName: 'Assassination', roundNumber: 2, score: 3 },
+  ] };
+  assert.equal(fixedCardTotal(p, 'Bring It Down'), 12, 'case must not split a card in two');
+  assert.equal(fixedCardTotal(p, 'Assassination'), 3);
+  assert.equal(fixedCardHeadroom(p, 'Bring it Down'), E11_FIXED_CARD_CAP - 12);
+});
+
+test('fixedCardHeadroom excludes the entry being edited so it cannot ratchet down', () => {
+  const entry = { cardName: 'Assassination', roundNumber: 2, score: 6 };
+  const p = { secondaries: [entry] };
+  assert.equal(fixedCardHeadroom(p, 'Assassination'), E11_FIXED_CARD_CAP - 6);
+  assert.equal(fixedCardHeadroom(p, 'Assassination', entry), E11_FIXED_CARD_CAP,
+    're-saving a card at its own number must not shrink its own headroom');
+});
+
+test('fixedCardHeadroom never goes negative', () => {
+  const p = { secondaries: [{ cardName: 'Bring it Down', roundNumber: 1, score: 40 }] };
+  assert.equal(fixedCardHeadroom(p, 'Bring it Down'), 0);
+});
+
+test('two Fixed missions ceiling under the game secondary cap', () => {
+  assert.ok(FIXED_SECONDARY_COUNT * E11_FIXED_CARD_CAP <= E11_SECONDARY_CAP,
+    'the per-card cap must not let Fixed outscore the 45 VP secondary ceiling');
 });
 
 test('sumSecondaryForRound totals the cards that SCORED in a round, not the ones drawn in it', () => {

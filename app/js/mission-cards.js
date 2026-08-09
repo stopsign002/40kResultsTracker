@@ -53,6 +53,21 @@ export function hasCard(kind, name) {
   return !!(kind === 'primary' ? findPrimary(cache, name) : findSecondary(cache, name));
 }
 
+// Which secondaries may be taken as Fixed Missions. Only four of the eighteen
+// can, and the deck says so itself by giving those cards a second scoring block
+// — build-mission-cards.py stamps `fixed: true` from that and fails the build
+// if the count moves. Reading it from the data rather than hard-coding four
+// names here means GW widening the pool is a rebuild, not a code change.
+export async function fixedSecondaryOptions() {
+  const data = await loadMissionCards();
+  return (data.secondaryMissions || []).filter((c) => c.fixed);
+}
+
+export function isFixedOption(name) {
+  if (!cache) return false;
+  return !!findSecondary(cache, name)?.fixed;
+}
+
 /* ── Rules prose ──────────────────────────────────────────────── */
 
 // The source marks keywords with **…**. Rendered as real nodes rather than
@@ -66,10 +81,12 @@ function richText(text) {
   return out;
 }
 
-function scoringRow(row) {
+function scoringRow(row, activeMode) {
   const vp = row.victoryPoints == null ? '' : `${row.cumulative ? '+' : ''}${row.victoryPoints}`;
   const capNote = row.cap != null ? el('span', { class: 'mc-cap' }, `max ${row.cap}`) : null;
-  const mode = row.mode ? el('span', { class: `mc-mode is-${row.mode}` }, row.mode) : null;
+  // With a mode selected the badge is noise — every row on screen is that mode.
+  const showBadge = row.mode && row.mode !== 'standard' && !activeMode;
+  const mode = showBadge ? el('span', { class: `mc-mode is-${row.mode}` }, row.mode) : null;
   return el('div', { class: 'mc-score' }, [
     el('div', { class: 'mc-vp' }, [vp, el('span', { class: 'mc-vp-unit' }, 'VP')]),
     el('div', { class: 'mc-score-text' }, [
@@ -79,11 +96,22 @@ function scoringRow(row) {
   ]);
 }
 
-function objectiveBlock(obj) {
+// A dual-mode card carries BOTH halves — a 'fixed' row and a 'tactical' row for
+// the same criteria — and showing both to someone who has already committed to
+// one is how you misread a card mid-game. Given a mode, drop the other half;
+// 'standard' rows score the same either way and always stay.
+function scoringForMode(rows, mode) {
+  if (!mode) return rows;
+  const relevant = rows.filter((r) => !r.mode || r.mode === 'standard' || r.mode === mode);
+  return relevant.length ? relevant : rows;
+}
+
+function objectiveBlock(obj, mode) {
+  const scoring = scoringForMode(obj.scoring || [], mode);
   return el('div', { class: 'mc-objective' }, [
     obj.name ? el('div', { class: 'mc-objective-name' }, obj.name) : null,
     obj.when ? el('div', { class: 'mc-when' }, [el('span', { class: 'mc-when-label' }, 'When:'), ' ', ...richText(obj.when)]) : null,
-    ...(obj.scoring || []).map(scoringRow),
+    ...scoring.map((row) => scoringRow(row, mode)),
   ].filter(Boolean));
 }
 
@@ -101,19 +129,32 @@ function actionBlock(act) {
   ].filter(Boolean));
 }
 
-export function renderCardBody(card, kind) {
+// A "WHEN DRAWN" clause is by definition Tactical — a Fixed Mission is never
+// drawn, it is chosen at setup and put face-up — so it is dead text in Fixed
+// mode. Only that clause: Engage On All Fronts uses the same field to define
+// what a "presence" is, which applies in both modes and has to stay.
+const WHEN_DRAWN = /^\*{0,2}WHEN DRAWN/i;
+
+export function renderCardBody(card, kind, { mode = null } = {}) {
   const dispositions = (card.dispositions || [])
     .map((d) => `${d.yours} vs ${d.theirs}`)
     .join(' · ');
+  const description = mode === 'fixed' && WHEN_DRAWN.test(card.description || '')
+    ? null
+    : card.description;
 
   return el('div', { class: 'mc-card' }, [
     kind === 'primary' && dispositions
       ? el('div', { class: 'mc-dispositions' }, dispositions)
       : null,
     card.detachment ? el('div', { class: 'mc-dispositions' }, card.detachment) : null,
+    mode && card.fixed
+      ? el('div', { class: `mc-mode is-${mode}`, style: { alignSelf: 'flex-start' } },
+          mode === 'fixed' ? 'Fixed Mission' : 'Tactical Mission')
+      : null,
     card.lore ? el('div', { class: 'mc-lore' }, card.lore) : null,
-    card.description ? el('div', { class: 'mc-description' }, richText(card.description)) : null,
-    ...(card.objectives || []).map(objectiveBlock),
+    description ? el('div', { class: 'mc-description' }, richText(description)) : null,
+    ...(card.objectives || []).map((o) => objectiveBlock(o, mode)),
     ...(card.actions || []).map(actionBlock),
   ].filter(Boolean));
 }
@@ -137,17 +178,17 @@ function simpleModal({ title, body, extraButtons = [] }) {
 // lazily on first tap, so at render time we can't know whether we hold this
 // card, and openMissionCard says so if we don't. Reading is not an edit, so
 // spectators and signed-out visitors get it too.
-export function missionLink(kind, name, { onMissing = (m) => toast(m, 'error') } = {}) {
+export function missionLink(kind, name, { onMissing = (m) => toast(m, 'error'), mode = null } = {}) {
   if (!name) return null;
   return el('button', {
     class: 'mc-open',
     type: 'button',
     title: 'Read this mission’s rules',
-    onClick: () => openMissionCard({ kind, name, onMissing }),
+    onClick: () => openMissionCard({ kind, name, onMissing, mode }),
   }, name);
 }
 
-export async function openMissionCard({ kind, name, onMissing }) {
+export async function openMissionCard({ kind, name, onMissing, mode = null }) {
   let data;
   try {
     data = await loadMissionCards();
@@ -160,11 +201,11 @@ export async function openMissionCard({ kind, name, onMissing }) {
     if (onMissing) onMissing(`No rules text on file for "${name}".`);
     return;
   }
-  simpleModal({ title: card.name, body: renderCardBody(card, kind) });
+  simpleModal({ title: card.name, body: renderCardBody(card, kind, { mode }) });
 }
 
 // The whole deck, for playing off the app with no physical cards to hand.
-export async function openMissionBrowser({ kind = 'secondary', onMissing } = {}) {
+export async function openMissionBrowser({ kind = 'secondary', onMissing, mode = null } = {}) {
   let data;
   try {
     data = await loadMissionCards();
@@ -178,13 +219,14 @@ export async function openMissionBrowser({ kind = 'secondary', onMissing } = {})
 
   const meta = (card) => (active === 'primary'
     ? (card.dispositions || []).map((d) => `${d.yours} vs ${d.theirs}`).join(' · ')
-    : (card.objectives || []).map((o) => o.name).filter(Boolean).join(' · '));
+    : [card.fixed ? 'Fixed or Tactical' : 'Tactical only',
+       ...(card.objectives || []).map((o) => o.name).filter(Boolean)].join(' · '));
 
   const detail = el('div', { class: 'mc-detail' });
   const showCard = (card) => {
     detail.replaceChildren(
       el('h3', { class: 'mc-detail-title' }, card.name),
-      renderCardBody(card, active),
+      renderCardBody(card, active, { mode: active === 'secondary' ? mode : null }),
     );
     detail.scrollIntoView({ block: 'nearest' });
   };

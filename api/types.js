@@ -45,6 +45,8 @@
  * @property {string|null} [primaryMissionName]
  * @property {string|null} [forceDisposition]            Edition 11 only; one of FORCE_DISPOSITIONS
  * @property {number|null} [timeSeconds]                 Chess clock; derived from the rounds when clocked
+ * @property {boolean} [timeIsManual]                    Total was set by hand and outranks the rounds
+ * @property {'tactical'|'fixed'} [secondaryMode]        Edition 11 only; Fixed = two cards chosen at setup
  * @property {string|null} [armyListCode]
  * @property {boolean} [wentFirst]
  * @property {boolean|null} [isAttacker]

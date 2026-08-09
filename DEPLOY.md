@@ -176,7 +176,7 @@ shouldn't carry multi-MB blobs.
 |---|---|
 | On the host | `~/sites/sites/40kResultsTracker/uploads/` |
 | In the container | `/data/uploads` (`UPLOAD_DIR`, set in `docker-compose.yml`) |
-| Served at | `/uploads/<game_id>/<file>` and `/uploads/maps/<file>` |
+| Served at | `/uploads/<game_id>/<file>` (and `/uploads/drafts/<draft_id>/<file>` until a live game is submitted) |
 | Served by | **Caddy, off disk** — Node is not in the read path |
 
 The path is the **project root, not `app/`**, deliberately: that keeps uploads
@@ -237,7 +237,10 @@ Migrations included in this update path so far:
 - `player_detachments` table + backfill of one row per historical
   `game_players.detachment_name` — 11e allows several detachments per player
 - `game_images` table (+ `is_map` flag) — photo metadata; bytes on disk
-- `deployment_maps.image_name` / `image_thumb_name` — terrain-layout pictures
+- ~~`deployment_maps.image_name` / `image_thumb_name`~~ — a terrain picture
+  shared by every game on a layout. **Dropped**: the shot is of the table one
+  game was played on, so it lives on `game_images.is_map` instead. Any files
+  under `UPLOAD_DIR/maps/` are left on disk, unreferenced
 - `seasons` table + `games.season_id` — Theatre-of-War seasons. A partial unique
   index enforces one active season; `seed.sql` creates "Season 1" only when the
   table is empty and back-fills every existing game onto it
@@ -304,7 +307,7 @@ homes and colours), schema changes, new views, new endpoints.
 │   │   │                 insertPlayerChildren + resolvePlayerIdentities +
 │   │   │                 recordBannerFirstSeen)
 │   │   ├── drafts.js     /drafts/* — the live game tracker's in-progress games
-│   │   ├── images.js     /games/:id/images + (as mapRouter) /maps/:id/image
+│   │   ├── images.js     /games/:id/images — upload, flag (cover / map), delete
 │   │   ├── stats.js      /stats/* — overview + 12 stat endpoints
 │   │   ├── warmap.js     /stats/warmap + /stats/warmap-timeline — banners feed
 │   │   │                 and the time-travel slider's game list
@@ -328,7 +331,7 @@ homes and colours), schema changes, new views, new endpoints.
         ├── app.js        hash router, shell renderer, route table, nav links,
         │                 error boundary; per-route requireAuth / requireAdmin
         ├── api.js        fetch wrapper; api / auth / seasons / reference /
-        │                 gameImages / mapImages / games / drafts / draftImages /
+        │                 gameImages / games / drafts / draftImages /
         │                 stats / admin / ratings export objects
         ├── components.js el(), clear(), toast(), pill(), fmtDate(),
         │                 fmtDuration(), fmtScore(), selectOptions(),
@@ -365,7 +368,7 @@ homes and colours), schema changes, new views, new endpoints.
 |---|---|---|---|
 | View games, photos, stats, war map, player profiles | ✓ | ✓ | ✓ |
 | Create / edit games | – | ✓ (any logged-in user) | ✓ |
-| Upload photos / layout pictures | – | ✓ | ✓ |
+| Upload photos (incl. the terrain shot) | – | ✓ | ✓ |
 | Delete a photo | – | own uploads only | ✓ |
 | Set own army name / change own password | – | ✓ | ✓ |
 | Start / score a live game (`/play`) | – | ✓ (own seat) | ✓ |
@@ -448,8 +451,8 @@ gunzip -c ~/sites/backups/40k_db_<date>.sql.gz \
   (`/play`) and the Stats page have both had full mobile passes; the rest of the
   site is still desktop-first
 - No CSV/JSON export yet
-- ~~No photo uploads~~ — **added**: photos and terrain-layout pictures, stored on
-  a bind-mounted volume and served by Caddy (see "Photo / layout-picture storage")
+- ~~No photo uploads~~ — **added**: game photos, one of which can be tagged as
+  the terrain shot, stored on a bind-mounted volume and served by Caddy
 - ~~Game deletion not implemented~~ — **added**: admin-only hard delete
   (`DELETE /admin/games/:id`). "Hide from stats" is still the normal move
 - ~~Faction matchup matrix / head-to-head have no UI~~ — **added**: matchup

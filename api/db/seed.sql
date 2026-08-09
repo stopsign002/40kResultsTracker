@@ -609,9 +609,22 @@ END $$;
 
 -- The full 18-card 11e secondary deck. All 18 are drawable as Tactical, so all
 -- are seeded 'tactical' — card_type only drives sort order in reference.js, it
--- gates nothing. Four of them (A Grievous Blow, Assassination, Bring it Down,
--- Engage on All Fronts) are additionally the Fixed-mission options; that isn't
--- representable here without a second row per card, and nothing consumes it.
+-- gates nothing.
+--
+-- Four of them (A Grievous Blow, Assassination, Bring it Down, Engage on All
+-- Fronts) may ALSO be taken as Fixed Missions. That is deliberately NOT modelled
+-- here as a second row per card, the way 10e Pariah Nexus did it with a
+-- "(Fixed)" name suffix (those rows are still above, and no recorded game has
+-- ever used one). Three reasons: `UNIQUE (mission_pack_id, name)` forbids the
+-- same card existing twice; `findCardId` in lib/game-write.js matches on name
+-- with a bare LIMIT 1 and would resolve a duplicate nondeterministically; and
+-- mission-cards.js looks rules text up by name, so a suffixed row would render
+-- as "no rules text on file".
+--
+-- Instead the mode lives on the SEAT (`game_players.secondary_mode`) and the
+-- Fixed-legal set is derived from the card data, where GW's own deck marks it
+-- by giving those four a second scoring block. See CLAUDE.md "Fixed vs Tactical
+-- secondaries". Keep this list at exactly 18 — zz-residue.test.js asserts it.
 INSERT INTO secondary_cards (mission_pack_id, name, card_type)
 SELECT id, n, 'tactical' FROM mission_packs, (VALUES
   ('A Grievous Blow'),

@@ -34,6 +34,12 @@ OUT = pathlib.Path(__file__).resolve().parent.parent / 'app' / 'data' / 'mission
 
 EXPECT_PRIMARIES = 25
 EXPECT_SECONDARIES = 18
+# Only four of the eighteen may be taken as Fixed Secondary Missions, and the
+# deck says so by giving those cards a second scoring block: `scoringType` is
+# 'fixed'/'tactical' on a dual-mode card and 'standard' on one that scores the
+# same either way. Deriving the set from that beats hard-coding four names in
+# the app, which would go quietly wrong the day GW widens the pool.
+EXPECT_FIXED_OPTIONS = 4
 
 
 def en(value):
@@ -113,10 +119,13 @@ def build(raw):
         ]
         primaries.append(entry)
 
-    secondaries = [
-        card(src, extra_keys=('description',))
-        for src in raw.get('secondaryMissions') or []
-    ]
+    secondaries = []
+    for src in raw.get('secondaryMissions') or []:
+        entry = card(src, extra_keys=('description',))
+        if any(row.get('mode') == 'fixed'
+               for obj in entry['objectives'] for row in obj['scoring']):
+            entry['fixed'] = True
+        secondaries.append(entry)
 
     primaries.sort(key=lambda c: c['name'])
     secondaries.sort(key=lambda c: c['name'])
@@ -146,6 +155,10 @@ def verify(built):
         problems.append(f"expected {EXPECT_PRIMARIES} primary missions, got {len(built['primaryMissions'])}")
     if len(built['secondaryMissions']) != EXPECT_SECONDARIES:
         problems.append(f"expected {EXPECT_SECONDARIES} secondaries, got {len(built['secondaryMissions'])}")
+    fixed = [c['name'] for c in built['secondaryMissions'] if c.get('fixed')]
+    if len(fixed) != EXPECT_FIXED_OPTIONS:
+        problems.append(
+            f'expected {EXPECT_FIXED_OPTIONS} Fixed-legal secondaries, got {len(fixed)}: {fixed}')
     for kind in ('primaryMissions', 'secondaryMissions'):
         for entry in built[kind]:
             if not entry['name']:
@@ -189,8 +202,10 @@ def main():
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(text, encoding='utf-8')
+    fixed = sum(1 for c in built['secondaryMissions'] if c.get('fixed'))
     print(f'wrote {OUT} — {len(built["primaryMissions"])} primaries, '
-          f'{len(built["secondaryMissions"])} secondaries, {len(text)/1024:.0f}KB, '
+          f'{len(built["secondaryMissions"])} secondaries ({fixed} Fixed-legal), '
+          f'{len(text)/1024:.0f}KB, '
           f'data version {built["compatibleDataVersion"]}')
     return 0
 

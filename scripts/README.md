@@ -97,9 +97,15 @@ directly (there is no `node` on this box outside containers).
 - Upstream is ~500KB because every string carries eight translations. The script
   keeps **English only** and drops the app-runtime plumbing — uuids, input widget
   types, scorable-period lists, recommended layout presets — landing at ~51KB.
-- It **refuses to write** unless it sees exactly **25 primaries and 18
-  secondaries**, each with at least one scoring objective. A silently truncated
-  upstream is the failure mode worth catching; a hard crash is not.
+- It **refuses to write** unless it sees exactly **25 primaries, 18 secondaries
+  and 4 Fixed-legal secondaries**, each card with at least one scoring objective.
+  A silently truncated upstream is the failure mode worth catching; a hard crash
+  is not.
+- It stamps **`fixed: true`** on the four secondaries that may be taken as Fixed
+  Missions, derived from the deck's own `scoringType` (`fixed`/`tactical` marks a
+  dual-mode card; `standard` scores the same either way). The app reads that
+  flag rather than hard-coding four names, so GW widening the pool is a rebuild
+  — which is exactly why the count is a build-time assertion and not a warning.
 - `--check` rebuilds into memory and exits non-zero if the committed file has
   drifted, without touching it. Safe for a cron or a pre-deploy sanity run.
 

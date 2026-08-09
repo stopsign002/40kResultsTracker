@@ -35,6 +35,47 @@ export const E11_SECONDARY_CAP = 45;
 export const E11_PRIMARY_ROUND_CAP = 15;
 export const E11_SECONDARY_ROUND_CAP = 15;
 
+// Secondary missions are Tactical (drawn, discarded when achieved) or Fixed
+// (chosen at setup, face-up, active all battle). The choice is made per PLAYER
+// and secretly — one army can run Fixed while the other runs Tactical — which
+// is why the mode lives on the seat and not on the game.
+export const SECONDARY_MODES = ['tactical', 'fixed'];
+export const DEFAULT_SECONDARY_MODE = 'tactical';
+export const FIXED_SECONDARY_COUNT = 2;
+
+// `fixedSecondaryMissionCapLimit` in the pack: a maximum of 20 VP from EACH
+// Fixed card over the battle, not 20 shared between them. Two cards therefore
+// ceiling at 40, which still sits under the 45 game / 15 per-round secondary
+// caps — those apply to both modes alike. Like every other ceiling here it is
+// an INPUT limit, never a clamp in the scoring maths (see the note above).
+export const E11_FIXED_CARD_CAP = 20;
+
+export const secondaryMode = (p) =>
+  SECONDARY_MODES.includes(p?.secondaryMode) ? p.secondaryMode : DEFAULT_SECONDARY_MODE;
+
+export const isFixedMode = (p) => secondaryMode(p) === 'fixed';
+
+// A Fixed mission is never discarded, so it can score in every battle round —
+// one `player_secondaries` entry per round it scored, all sharing a card name.
+// That is what this sums, and what the 20 VP per-card ceiling applies to.
+export function fixedCardTotal(p, cardName, exclude = null) {
+  const want = foldCardName(cardName);
+  return (p.secondaries || [])
+    .filter((s) => s !== exclude && foldCardName(s.cardName) === want)
+    .reduce((sum, s) => sum + (s.score || 0), 0);
+}
+
+export function fixedCardHeadroom(p, cardName, exclude = null) {
+  return Math.max(0, E11_FIXED_CARD_CAP - fixedCardTotal(p, cardName, exclude));
+}
+
+// GDC title-cases every word ("Bring It Down") where seed.sql follows GW's own
+// casing ("Bring it Down"), so every name comparison across that boundary has
+// to fold. Same rule mission-cards.js uses to look a card up.
+export function foldCardName(name) {
+  return (name || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
 // Secondary VP landing in ONE battle round. A card's `roundNumber` is the round
 // it scored (null if it never did), so this — not the draw round — is the figure
 // the 15-per-round ceiling applies to.

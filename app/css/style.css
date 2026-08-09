@@ -1516,6 +1516,10 @@ body.lb-lock { overflow: hidden; }
   margin: 0;
 }
 
+/* ── Secondary missions: Tactical vs Fixed ───────────────────── */
+.lg-mode-row { display: flex; gap: 8px; }
+.lg-pick { flex-shrink: 0; min-height: 44px; }
+
 /* ── Secondary cards: the hand ───────────────────────────────── */
 .lg-cards { display: flex; flex-direction: column; gap: 6px; }
 .lg-card {

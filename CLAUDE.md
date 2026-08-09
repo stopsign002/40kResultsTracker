@@ -95,7 +95,6 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   │                   game_drafts table. list/create/read/autosave-PATCH/invite/join/
 │   │   │                   submit/discard + mid-game photos. Per-route auth, not blanket
 │   │   ├── images.js       /games/:id/images — photo upload/cover/delete (bytes on disk);
-│   │   │                   also exports mapRouter, mounted separately at /maps
 │   │   ├── stats.js        /stats/* — overview + 12 stat endpoints (incl. trends, calendar)
 │   │   ├── warmap.js       /stats/warmap + /stats/warmap-timeline — banners feed for the
 │   │   │                   Theatre of War, and the game list its time slider scrubs
@@ -110,9 +109,9 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
 │   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
-│   └── test/                see "Testing" — 178 unit + 133 integration
+│   └── test/                see "Testing" — 190 unit + 156 integration
 │       ├── README.md       how to run + what's covered
-│       ├── game-scoring.test.js  38 cases pinning the camelCase payload contract
+│       ├── game-scoring.test.js  42 cases pinning the camelCase payload contract
 │       ├── game-rules.test.js    34 — the client mirror, cross-checked payload-by-payload
 │       │                         against the server's computeFinalScores
 │       ├── army-list.test.js     24 — YAAB decoding off real round-tripped codes,
@@ -132,6 +131,13 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │           ├── drafts-lifecycle.test.js   33 — create → autosave → submit → photos,
 │           │                             and the running score on the live-games list
 │           ├── deleted-items.test.js      19 — archive / restore / purge, incl. the FK scrub
+│           ├── game-images.test.js        6 — the terrain shot is a game photo:
+│           │                              POST accepts isMap, re-shooting demotes
+│           │                              the previous one, nothing is shared
+│           ├── game-times.test.js         7 — chess-clock totals: derived from the
+│           │                              rounds, and the time_is_manual override
+│           ├── secondary-modes.test.js  10 — Tactical vs Fixed per seat; a Fixed
+│           │                              mission holding a row per scoring round
 │           ├── detachments-admin.test.js  8 — library promotion on save; rename/merge
 │           │                              across the library AND recorded games; 409 in_use
 │           └── zz-residue.test.js         3 — runs LAST; fails the build on leaked test data
@@ -145,13 +151,14 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
     └── js/
         ├── README.md       module roles
         ├── app.js          hash router, shell renderer, route table, nav links, error boundary
-        ├── api.js          fetch wrapper; 12 exports: api, auth, reference, games, gameImages,
-        │                   mapImages, drafts, draftImages, stats, admin, seasons, ratings
+        ├── api.js          fetch wrapper; 11 exports: api, auth, reference, games, gameImages,
+        │                   drafts, draftImages, stats, admin, seasons, ratings
         ├── components.js   el(), clear(), toast(), pill(), fmtDate(), fmtDuration(), fmtScore(),
         │                   selectOptions(), confirmModal(), promptModal() — USE THESE
         ├── game-rules.js   40k rules constants + score maths shared by game-form.js AND
         │                   live-game.js: ROUNDS, DEFAULT_EDITION, MATCHED_PLAY_LAYOUTS,
-        │                   E11_PRIMARY_CAP/E11_SECONDARY_CAP, FORCE_DISPOSITIONS,
+        │                   E11_PRIMARY_CAP/E11_SECONDARY_CAP, E11_FIXED_CARD_CAP, FIXED_SECONDARY_COUNT,
+        │                   secondaryMode/isFixedMode/fixedCardTotal/fixedCardHeadroom, FORCE_DISPOSITIONS,
         │                   PRIMARY_MATRIX, parseDuration, sumPrimary, sumSecondaries,
         │                   sumSecondaryPoints, capLabel, calcTotal
         ├── images.js       shrink(file, maxDim, quality) → { dataUrl, width, height };
@@ -395,7 +402,7 @@ Full write-up in "Security posture".
    throw took the whole container down.
 1. Construct the Express app + session middleware (Postgres-backed via `connect-pg-simple`, table `session`, cookie **`tg40k.sid`**, `httpOnly` + `sameSite: 'lax'`, `secure` only when `NODE_ENV === 'production'`, 30-day `maxAge`). `app.set('trust proxy', 1)` — Caddy is in front.
 2. Register **`/health`** inline, then apply `express-rate-limit` to `/auth/login` (20 attempts / IP / 15 min). It's the only limiter on the app.
-3. Mount every router, each wrapped in **`catchAsync()`**: `/auth`, `/admin`, `/maps` (images.js's `mapRouter`), `/games` (twice — `images.js` **before** `games.js`), `/stats`, `/reference`, `/stats` again (warmap.js), `/events`, `/seasons`, `/ratings`, `/drafts`
+3. Mount every router, each wrapped in **`catchAsync()`**: `/auth`, `/admin`, `/games` (twice — `images.js` **before** `games.js`), `/stats`, `/reference`, `/stats` again (warmap.js), `/events`, `/seasons`, `/ratings`, `/drafts`
 
    **`/drafts` is a top-level mount, not `/games/drafts`.** `games.js` has a
    `router.get('/:id')`, which would swallow `/games/drafts` as a game id and
@@ -410,7 +417,7 @@ Full write-up in "Security posture".
 
 Steps 1–2 also install the split body parser: `express.json({ limit: '256kb' })`
 runs app-wide **except** on paths matching `IMAGE_UPLOAD_PATH`
-(`POST /games/:id/images`, `POST /maps/:id/image`, `POST /drafts/:id/images`),
+(`POST /games/:id/images`, `POST /drafts/:id/images`),
 which parse themselves at 12mb inside `routes/images.js` / `routes/drafts.js`.
 Add any new upload route to that regex or it will 413 before the handler is
 reached — see pitfall #11.
@@ -579,8 +586,8 @@ apart. Extend these rather than re-implementing in a view:
   only — the server value is authoritative, but the two must agree or the number
   on screen changes when you hit Save.
 - **`images.js`** — `shrink(file, maxDim, quality)`, the browser-side downscale
-  every upload path goes through (game photos, layout pictures, mid-game draft
-  photos, zip batches).
+  every upload path goes through (game photos incl. the terrain shot, mid-game
+  draft photos, zip batches).
 - **`army-list.js`** — YAAB share-code decoding; see "Army lists" below.
 
 ### Back-button handling (`app/js/nav-stack.js`)
@@ -666,7 +673,6 @@ export const reference = { factions, detachments, missionPacks, missionDetails, 
                             players, playerNames };   // players = unified user+guest picker
 export const games     = { list, get, create, update };
 export const gameImages = { list, upload, update, remove, url };   // url() → /uploads/<gameId>/<file>
-export const mapImages  = { upload, remove, url };                 // url() → /uploads/maps/<file>
 export const drafts    = { list, get, create, patch, join, invite, uninvite, submit, remove };
 export const draftImages = { list, upload, remove, url };          // url() → /uploads/drafts/<draftId>/<file>
 export const stats     = { overview, factionWinRates, playerWinRates, factionMissionBreakdown,
@@ -714,7 +720,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | POST | `/games` | auth | create game; payload is the camelCase draft shape — see `serializeDraft()` in `game-form.js`; auto-attached to active season |
 | PUT | `/games/:id` | auth | replace game; same payload as POST |
 | GET | `/games/:id/images` | public | `[{ id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, uploaded_by_name }]` |
-| POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only. Responds **201**. Server-side caps: `MAX_IMAGE_BYTES` 8MB **decoded** (413), `MAX_PER_GAME` 40 photos (409), MIME must be jpeg/png/webp (415) |
+| POST | `/games/:id/images` | auth | `{ dataUrl, thumbDataUrl?, width?, height?, caption?, isMap? }` — base64 data URLs, already downscaled in the browser. 12mb body limit on this route only. Responds **201**. Server-side caps: `MAX_IMAGE_BYTES` 8MB **decoded** (413), `MAX_PER_GAME` 40 photos (409), MIME must be jpeg/png/webp (415) |
 | PATCH | `/games/:id/images/:imageId` | auth | `{ isThumbnail?: true, caption?: string, isMap?: boolean }` — each flag is clear-then-set, because the partial unique index rejects a second winner while the old one is still flagged |
 | DELETE | `/games/:id/images/:imageId` | auth | uploader or admin only; unlinks both files |
 | GET | `/drafts` | **public** | **every** in-progress game, not just yours — `submitted_at IS NULL`, yours sorted first, then newest `updated_at`. A game nobody can find is a game nobody can watch. Each row carries enough to render a list card: `isOwner`, `viewerSeat`, `playedAt`, `pointsLimit`, `playerNames[]`, `playerFactionIds[]`, `scores[]` (the running total per seat, from the real `computeFinalScores` — `[null, null]` until both seats exist) |
@@ -729,8 +735,6 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/drafts/:id/images` | **public** | `[{ id, file_name, thumb_name, caption, round_number, is_map, width, height, uploaded_by_name }]` |
 | POST | `/drafts/:id/images` | owner or opponent | same base64 contract as `POST /games/:id/images` (12mb body limit on this route only, same `MAX_IMAGE_BYTES` / MIME caps, 40 photos per draft). Takes an optional `roundNumber` so a shot lands on the round it was taken in, and an optional `isMap: true` for the terrain-layout shot taken on Setup — clear-then-set inside one transaction, since the partial unique index allows one per draft. Responds **201**; 409 once submitted |
 | DELETE | `/drafts/:id/images/:imageId` | uploader or draft owner | unlinks both files |
-| POST | `/maps/:id/image` | auth | `{ dataUrl, thumbDataUrl? }` — picture of a terrain layout (a `deployment_maps` row), shown on every game played on it. Replacing unlinks the previous pair |
-| DELETE | `/maps/:id/image` | auth | clears the row and unlinks both files |
 | GET | `/stats/overview` | public | totals + recent activity |
 | GET | `/stats/faction-winrates` | public | per-faction W/L/D + win% + avg score |
 | GET | `/stats/player-winrates` | public | per-player W/L/D + win% (groups by user_id OR guest_name) |
@@ -768,10 +772,10 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
 | GET | `/events` | public | Server-Sent Events stream; emits `game.saved`, `season.changed`, `draft.updated`. Comment heartbeat every 25s. The subscriber records `req.session?.userId` when there is one, but a session is **not** required — anonymous viewers get live updates too, which is exactly why `draft.updated` carries **no draft content**, only `{ id, rev, by }` |
 
-**Total: 70 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check — note the second pattern, `images.js` also exports the separately-mounted `mapRouter`:
+**Total: 68 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check:
 
 ```bash
-grep -hE "(router|mapRouter)\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
+grep -hE "router\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
 ```
  `/ratings/*` and the two guest endpoints are admin-only; ratings are computed on the fly (no tables).
 
@@ -789,14 +793,14 @@ Tables (snake_case throughout):
 | `detachments` | seeded per-faction detachments — autocomplete only; UNIONed with free-text `game_players.detachment_name` from past games. Consumed by `/stats/detachment-winrates`. | id, faction_id, name; UNIQUE (faction_id, name) |
 | `mission_packs` | e.g. Pariah Nexus, Leviathan | id, name (unique) |
 | `primary_missions` | e.g. Take and Hold | id, mission_pack_id, name |
-| `deployment_maps` | e.g. Hammer and Anvil; also the 11e `Layout A/B/C` rows | id, mission_pack_id, name, image_name + image_thumb_name (optional picture of the layout, shared by every game played on it; files under `UPLOAD_DIR/maps/`) |
+| `deployment_maps` | e.g. Hammer and Anvil; also the 11e `Layout A/B/C` rows | id, mission_pack_id, name. **Name only** — a terrain photo is of the table one game was played on, so it lives on `game_images.is_map`, never here |
 | `mission_rules` | e.g. Chilling Rain | id, mission_pack_id, name |
 | `secondary_cards` | tactical or fixed | id, mission_pack_id, name, card_type ('tactical'\|'fixed') |
 | `challenger_cards` | Pariah Nexus Secret Missions (formerly "Gambits"); 4 cards: Command Insertion, War of Attrition, Unbroken Wall, Shatter Cohesion | id, mission_pack_id, name |
 | `games` | the match record | id, created_by_user_id, played_at (DATE), game_format, points_limit, mission_pack_id, primary_mission_id, deployment_map_id, mission_rule_id, turn_count, end_condition ('normal'\|'concession'\|'tabled'), tournament_*, location, notes, hidden_from_stats, play_medium ('physical'\|'digital' — digital = Tabletop Simulator), edition ('10'\|'11' — DB default '11'; pre-existing rows backfilled to '10'), season_id (FK seasons.id), created_at, updated_at |
-| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy), detachment_name (**DERIVED** — `player_detachments` joined with ', '), force_disposition (**11e only**, 5-value CHECK), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), time_seconds (chess clock — **derived** as the sum whenever any round is clocked), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
+| `game_players` | exactly 2 per game | id, game_id, seat (1\|2), user_id (nullable), guest_name (nullable — at least one required), faction_id, detachment_id (legacy), detachment_name (**DERIVED** — `player_detachments` joined with ', '), force_disposition (**11e only**, 5-value CHECK), primary_mission_id + primary_mission_name (**11e only** — each player picks their own primary; NULL on 10e games, which use the game-level column), time_seconds (chess clock — **derived** as the sum whenever any round is clocked, unless time_is_manual), time_is_manual (BOOLEAN NOT NULL DEFAULT FALSE — the total was set by hand and outranks the rounds; the escape hatch for live-tracked games, which arrive fully clocked), secondary_mode ('tactical'|'fixed', **11e only**, NOT NULL DEFAULT 'tactical' — chosen per player and in secret, so the two seats can differ), army_list_code, went_first, is_attacker, final_score, result ('win'\|'loss'\|'draw') |
 | `game_rounds` | per-round score per player | id, game_player_id, round_number (1-5), primary_score, secondary_score, cp_remaining, time_seconds (optional chess-clock split); UNIQUE (game_player_id, round_number) |
-| `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (10e: the round scored; **11e: the round the card SCORED, NULL if it never did**), drawn_round (**11e only** — the round it entered hand; NULL on 10e where draw and score coincide), card_id, card_name, score, was_discarded |
+| `player_secondaries` | per-round secondary scoring | id, game_player_id, round_number (10e: the round scored; **11e: the round the card SCORED, NULL if it never did**), drawn_round (**11e only** — the round it entered hand; NULL on 10e where draw and score coincide, and always NULL for a Fixed mission, which is chosen not drawn), card_id, card_name, score, was_discarded. **A Fixed mission holds ONE ROW PER SCORING ROUND** — there is no uniqueness constraint on (game_player_id, card_id), and that is what lets a card that is never discarded score every round |
 | `player_challengers` | per-round challenger scoring | id, game_player_id, card_id, card_name, round_number (nullable), completed, score |
 | `game_images` | photos attached to a game; **bytes live on disk**, not in Postgres | id, game_id (CASCADE), uploaded_by_user_id, file_name, thumb_name, caption, is_thumbnail, is_map, width, height, bytes, created_at. Two partial unique indexes — `(game_id) WHERE is_thumbnail` (cover) and `(game_id) WHERE is_map` (terrain layout). The flags are independent, so one photo can be both |
 | `player_detachments` | a player's detachments; 11e allows more than one. **Source of truth** — `game_players.detachment_name` is the derived display string | id, game_player_id (CASCADE), detachment_id (nullable), detachment_name, sort_order |
@@ -862,7 +866,6 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 | Change own password | – | ✓ | ✓ | `POST /auth/change-password` |
 | Upload a game photo | – | ✓ | ✓ | `requireAuth` on `POST /games/:id/images`; set Cover / Map via `PATCH` |
 | Delete a game photo | – | own only | ✓ | `DELETE /games/:id/images/:imageId` — uploader **or** admin; unlike games, a photo is just an attachment |
-| Upload / clear a terrain-layout picture | – | ✓ | ✓ | `requireAuth` on `POST`/`DELETE /maps/:id/image`. It belongs to the layout, so it changes what **every** game on that layout shows |
 
 Server enforcement is the source of truth; client gating is a UX convenience only.
 
@@ -1269,7 +1272,7 @@ backfilled to **10** (see the invariant table).
 | Primary mission | one per game (`games.primary_mission_id`) | **one per player**, decided by the Force Disposition pairing (`game_players.primary_mission_id` / `_name`). The games list renders it as `"A vs B"` (`missionLabel()`), since there's no single game-level mission to put in that column |
 | Force Disposition | n/a | one per player (`game_players.force_disposition`), 5 values |
 | Detachments | one per player | **many** per player (`player_detachments`) |
-| Secondaries | 2 slots per round; drawn and scored in the same round | cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored) |
+| Secondaries | 2 slots per round; drawn and scored in the same round | **Tactical or Fixed, chosen per player at setup.** Tactical cards persist in hand — `drawn_round` is when it entered hand, `round_number` is when it **scored** (NULL = never scored). Fixed is two cards chosen up front that never discard and score in any round — see "Fixed vs Tactical secondaries" |
 | Challenger cards | yes | **none** — `serializeDraft()` drops them and `computeFinalScores` ignores them |
 | Score ceiling | `min(100, primary + secondary + challengers)` | `min(45, primary) + min(45, secondary)` — two independent halves, no cross-subsidy — **plus 15 per half per battle round**, enforced as an input ceiling in the live tracker (see below), not as a clamp in the scoring maths |
 | Deployment map / mission rule | game-level | game-level (unchanged) |
@@ -1733,6 +1736,98 @@ pre-v2 full-army codes, a raw JSON paste, and a YAAB share **URL** (`?a=…`).
 
 ---
 
+## Fixed vs Tactical secondaries
+
+11e secondary missions are played one of two ways, and **the choice is made per
+player, in secret, at setup** (step 6: after the mission, disposition, layout and
+attacker/defender are all known, before deployment). One army can run Fixed while
+the other runs Tactical, which is why `secondary_mode` sits on `game_players` and
+not on `games`.
+
+- **Tactical** — draw, score once, discard. The existing model.
+- **Fixed** — pick **two** cards up front. They sit face-up, **cannot be
+  discarded, and are active all battle**, so each can score in *every* battle
+  round it is met.
+
+### Only four of the eighteen may be taken Fixed
+
+A Grievous Blow, Assassination, Bring it Down, Engage on All Fronts. They are
+**not** removed from the Tactical deck — it is the same card with two scoring
+blocks, paying less per trigger in Fixed (uncapped, because it fires every round)
+and more in Tactical (immediately flattened by a cap into a one-shot).
+
+**That set is derived from the card data, never hard-coded.** GW's own deck
+marks it: `scoringType` is `fixed`/`tactical` on a dual-mode card and `standard`
+on one that scores the same either way. `build-mission-cards.py` stamps
+`fixed: true` from that and **refuses to write unless exactly four come out**
+(`EXPECT_FIXED_OPTIONS`), so GW widening the pool is a rebuild rather than a code
+change — and a unit test pins the four names against the committed asset.
+
+### Why it is a mode on the seat, not extra card rows
+
+10e Pariah Nexus seeded four **duplicate rows with a `(Fixed)` name suffix**.
+Those rows are still in `seed.sql` and **no recorded game has ever used one**.
+Don't copy that pattern:
+
+- `secondary_cards` has `UNIQUE (mission_pack_id, name)` — the same card cannot
+  exist twice in one pack.
+- `findCardId` matches on name with a bare `LIMIT 1` and no `card_type`, so a
+  duplicate would resolve nondeterministically.
+- `mission-cards.js` looks rules text up **by name**, so a suffixed row could
+  only ever render "no rules text on file".
+- `zz-residue.test.js` asserts the 11e pack holds **exactly 18** rows.
+
+### One row per scoring round
+
+This is the part that surprises. A Fixed mission is never discarded, so it
+holds **one `player_secondaries` row per round it scored**, all sharing a card
+name. There is no uniqueness constraint on `(game_player_id, card_id)`, so the
+existing table takes it as-is, and `computeFinalScores` already derives each
+round's secondary figure by filtering on `roundNumber` — the per-round breakdown
+keeps working with no scoring change at all.
+
+- **A card chosen but never scored survives as a lone row** with
+  `round_number = NULL`, which is the same "recorded but never scored" shape 11e
+  already had. `setFixedScore()` (present in both `live-game.js` and
+  `game-form.js`) consumes that placeholder on the first score and re-creates it
+  if every round is cleared back to zero — **zeroing a card must not un-choose
+  the mission**.
+- `drawn_round` is always NULL for a Fixed mission. It was chosen, not drawn.
+
+### The 20 VP cap is PER CARD
+
+`fixedSecondaryMissionCapLimit` in the pack: a maximum of 20 VP from **each**
+Fixed card over the battle, not 20 shared between them. Two cards therefore
+ceiling at 40, still under the 45 game / 15 per-round secondary caps, which apply
+to both modes alike.
+
+Like every other ceiling here it is an **input** limit — enforced where a number
+is entered, never as a clamp inside `calcTotal` / `computeFinalScores`. Clamping
+in the scoring maths would silently rewrite the total of an already-recorded game
+the next time someone saved it (the same rule that shaped the score-detail ladder
+and the per-round caps). Both entry surfaces take
+`min(secondaryRoundHeadroom(...), fixedCardHeadroom(...))`, and both pass the
+entry being edited as `exclude` — without it, re-saving a card at its own number
+ratchets the value down a little every time.
+
+### Where it shows up
+
+| Surface | What it does |
+|---|---|
+| Live tracker Setup | Tactical/Fixed toggle per seat, then a Choose/✓ list of the four. Switching mode confirms first — it clears that seat's cards, because a drawn hand means nothing in Fixed and vice versa |
+| Live tracker round screen | `buildSecondaries` branches: Fixed shows the chosen missions with a Score/Edit + Clear per round and a running `x / 20 this battle` |
+| `/games/new` + edit | A Secondaries dropdown per player, then a **card × R1–R5 grid** with a per-card total. Card-major like the Tactical deck, but with five VP cells instead of one |
+| Game detail | Heading says Tactical or Fixed; Fixed hides the Drawn column (there is no draw) and groups by card, then round |
+| Mission card reader | `renderCardBody(card, kind, { mode })` shows **only the relevant half** of a dual-mode card, and hides a `WHEN DRAWN` clause in Fixed mode — it is dead text there. Engage on All Fronts uses that same field to define "presence", which applies in both modes, so the filter is anchored on the literal words |
+| `/stats/secondary-averages` | Counts one pick per (seat, card) for a Fixed seat instead of one per row, or a card taken once and scored three times would report as three picks averaging a third of what it earned. Tactical is byte-identical to before |
+
+Not enforced anywhere: **picking other than two**. The app records games that
+already happened, and refusing the third tap is how you lose the first two — the
+UI says "Pick 1 more" or "That is 3 — the rules allow 2" and stores what you tell
+it.
+
+---
+
 ## Chess-clock timing
 
 Optional, and granular only if you want it. `game_players.time_seconds` is the
@@ -1746,10 +1841,31 @@ player total; `game_rounds.time_seconds` is the optional per-round breakdown.
   *untimed*, not a 0-second game, so don't let it become 0 or averages will lie.
 - The form's Total Time box goes **read-only and derived** as soon as one round
   is clocked, mirroring the server rule in the UI.
+- **`game_players.time_is_manual` is the opt-out from that derivation**, and it
+  exists because the rule above had no escape hatch. The live tracker clocks
+  **every** round, so a tracked game arrived permanently derived: the total was
+  read-only on screen *and* recomputed from the sum on every save, which meant
+  the only way to correct a runaway clock was to hand-edit five round splits
+  until they happened to add up. With the flag set, the typed total outranks the
+  rounds and they stay on the record as whatever the timer actually saw.
+  - **A manual flag with an unusable total falls back to the derived rule** and
+    clears itself, so the flag can never strand a game untimed.
+  - The form's Total Time box carries an **Edit** button whenever any round is
+    clocked (flip to hand-set, seeded with the current sum) and **Use round
+    times** to go back. `refreshTotals()` must keep skipping a manual total, or
+    typing a round time would silently overwrite the number you set.
+  - Game detail shows the manual total in the ⏱ pill with a `title` saying what
+    the round clocks sum to — two numbers on screen that don't add up need to
+    say why.
+  - This also unsticks the `final` score-mode trap: that mode hides the rounds
+    table but keeps `r.timeSeconds`, so the total used to be derived from times
+    you could no longer see or edit.
 - **The live tracker writes the per-round split directly.** Its running clock
   banks seconds into the current round as they elapse, so a tracked game arrives
   fully clocked and the derived total falls out of the existing rule — no new
-  code on the display side.
+  code on the display side. It has **no manual-total control of its own**: fix a
+  round in-wizard with the Chess clock reading field, or set the total by hand
+  after submit from `/games/:id/edit`.
 - **A physical chess clock on "time up" is entered as a READING, not a
   duration.** Such a clock is never reset between rounds — it keeps counting
   while that player takes their turn — so what it shows at the end of round N is
@@ -1920,11 +2036,15 @@ so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
 - Which mode is selected is remembered on the draft (`draft.mapMode`) rather
   than re-derived from the stored name each render — otherwise picking Custom
   and not yet typing would snap straight back to Matched Play.
-- **Layout pictures** live on the `deployment_maps` row (`image_name` /
-  `image_thumb_name`, files under `UPLOAD_DIR/maps/`), so one upload shows on
-  **every** game played on that layout. Uploaded via `POST /maps/:id/image`,
-  same browser-downscale + base64 contract as game photos; a replace unlinks the
-  previous pair only after the row points at the new one.
+- **A terrain picture belongs to ONE game.** The table is dressed for that
+  game; two games on "Layout B" are two different boards. So the shot is one of
+  the game's own photos, flagged `game_images.is_map`, and there is no
+  per-layout picture — `deployment_maps` carries a name and nothing else. This
+  was the other way round until 2026-08-09; the columns, the `mapRouter`
+  (`POST`/`DELETE /maps/:id/image`) and the games-list fallback to a shared
+  picture were all removed, and a `DROP COLUMN IF EXISTS` migration takes the
+  columns out. Files already under `UPLOAD_DIR/maps/` are **left on disk**
+  unreferenced rather than unlinked. Don't reintroduce a shared picture.
 - **These are deliberately user-supplied.** GW's own layout diagrams are
   copyrighted, so the app neither ships nor fetches them — you photograph your
   table or draw your own. Don't "helpfully" scrape them in later.
@@ -1955,7 +2075,7 @@ so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
   thumb immediately and swaps in the full-resolution file once that loads, so a
   large preview isn't just a blown-up 400px thumbnail and the big file is only
   fetched when someone actually lingers. Rows can carry **two** thumbnails —
-  the game's cover photo and the terrain layout it was played on. It is appended to `<body>`, **not** the row: `.panel` is
+  the game's cover photo and its own terrain shot. It is appended to `<body>`, **not** the row: `.panel` is
   `overflow: hidden`, so anything scaled up inside the table gets clipped at the
   panel edge. It prefers to sit right of the row, then left, then centred,
   clamped into the cushion either way, and is gated behind
@@ -1970,12 +2090,10 @@ so the 11e map field is a two-part control: **Matched Play Maps** (Layout A / B
   teardown paths there rather than assuming the pointer will leave politely.
 - **Clicking a row thumbnail opens the photo viewer, not the game.** The tiles
   are `<button class="list-thumb-wrap">` that `stopPropagation()` on the row's
-  navigate handler. The list row only carries the cover + layout thumbs, so
+  navigate handler. The list row only carries the cover + map thumbs, so
   `openRowGallery()` fetches `GET /games/:id/images` on click and opens the
-  lightbox at the photo you clicked, with the rest cyclable. The terrain-layout
-  tile is a special case: when it's the picture attached to the `deployment_maps`
-  row (rather than a game photo tagged MAP) it isn't part of the game's set, so
-  it opens on its own with no cycling chrome.
+  lightbox at the photo you clicked, with the rest cyclable. Both tiles land in
+  the same set — the terrain shot is just the game photo tagged MAP.
 
 ---
 
@@ -2023,11 +2141,14 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
 - **Cover photo** — `is_thumbnail` picks the one shown in the games list, with a
   partial unique index enforcing at most one per game. The first upload becomes
   the cover automatically; deleting the cover promotes the oldest survivor.
-- **Map photo** — `is_map` works the same way (own partial unique index, toggled
-  from the same panel) and marks the shot of the terrain layout. The two flags
-  are independent, so one photo can be both. The games list's second thumbnail
-  prefers this per-game photo and falls back to the picture attached to the
-  `deployment_maps` row, which is shared by every game on that layout.
+- **Map photo** — `is_map` works the same way (own partial unique index) and
+  marks the shot of the terrain **this game** was played on. The two flags are
+  independent, so one photo can be both. It is set from the Photos panel's Map
+  button, from game detail's Terrain Layout panel (which uploads with
+  `isMap: true` — `POST /games/:id/images` accepts the flag, inserting unflagged
+  and setting it afterwards so the partial unique index can't reject the insert),
+  or at source in the live tracker. The games list's second thumbnail is this
+  photo and nothing else — there is no shared per-layout picture to fall back to.
   The live tracker can **set the flag at source**: its Setup step has a Terrain
   layout panel whose Take photo / Upload buttons post `isMap: true`, so the tag
   is carried by `relinkDraftImages` rather than toggled by hand on game detail
@@ -2072,21 +2193,21 @@ To change behaviour, the tunables in `ratings.js` are the dial; the math in `gli
 
 ## Testing
 
-**311 tests in two suites.** Both are `node:test` — no framework, no assertion
+**346 tests in two suites.** Both are `node:test` — no framework, no assertion
 library, no mocking library. Run the unit suite before every deploy; run the
 integration suite before anything that touches `drafts.js`, `admin.js`,
 `archive.js` or the schema.
 
 ```bash
-bash scripts/test-unit.sh                    # 178 tests, ~1.5s, no network, no DB
-bash scripts/test-live.sh                    # 133 tests, live API + real Postgres
+bash scripts/test-unit.sh                    # 190 tests, ~1.5s, no network, no DB
+bash scripts/test-live.sh                    # 156 tests, live API + real Postgres
 bash scripts/test-live.sh drafts-lifecycle   # one file
 ```
 
 Both shell out to `docker run`, which is why they live in `scripts/` rather than
 as npm scripts. `npm test` inside `api/` runs the same unit glob on the host.
 
-### Unit suite (`scripts/test-unit.sh`) — 178 tests, 11 files
+### Unit suite (`scripts/test-unit.sh`) — 190 tests, 11 files
 
 `--network none`, no database, no containers. It mounts `app/` **read-only**,
 because several suites test *frontend* modules — they're dependency-free ES
@@ -2115,7 +2236,7 @@ The three additions worth knowing about:
   **the route never moves while a layer is open** — the failure this module
   exists to prevent.
 
-### Integration suite (`scripts/test-live.sh`) — 133 tests, 5 files
+### Integration suite (`scripts/test-live.sh`) — 156 tests, 8 files
 
 Joined to the `web` docker network, hitting `40k-api:3000` and `postgres:5432`
 directly — no Caddy, no NAT loopback (which doesn't work on this host anyway).

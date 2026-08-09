@@ -7,7 +7,7 @@ import { ensureBootstrapAdmin } from './lib/auth.js';
 import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import gameRoutes from './routes/games.js';
-import imageRoutes, { mapRouter } from './routes/images.js';
+import imageRoutes from './routes/images.js';
 import statsRoutes from './routes/stats.js';
 import referenceRoutes from './routes/reference.js';
 import warmapRoutes from './routes/warmap.js';
@@ -28,7 +28,7 @@ app.set('trust proxy', 1);
 // reject the body with a 413 before the route's own parser ever saw it — so
 // that one path is skipped here and parses itself (see routes/images.js).
 const jsonBody = express.json({ limit: '256kb' });
-const IMAGE_UPLOAD_PATH = /^\/(?:games\/\d+\/images|maps\/\d+\/image|drafts\/\d+\/images)\/?$/;
+const IMAGE_UPLOAD_PATH = /^\/(?:games\/\d+\/images|drafts\/\d+\/images)\/?$/;
 app.use((req, res, next) => {
   if (req.method === 'POST' && IMAGE_UPLOAD_PATH.test(req.path)) return next();
   return jsonBody(req, res, next);
@@ -64,7 +64,6 @@ app.use('/auth/login', loginLimiter);
 
 app.use('/auth', catchAsync(authRoutes));
 app.use('/admin', catchAsync(adminRoutes));
-app.use('/maps', catchAsync(mapRouter));
 app.use('/games', catchAsync(imageRoutes));
 app.use('/games', catchAsync(gameRoutes));
 app.use('/stats', catchAsync(statsRoutes));

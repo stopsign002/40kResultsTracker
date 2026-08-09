@@ -72,14 +72,6 @@ export const gameImages = {
   url:       (gameId, file) => `/uploads/${gameId}/${file}`,
 };
 
-// Terrain-layout pictures, one per deployment_maps row. Uploaded like game
-// photos (browser-downscaled base64); read as plain /uploads/maps/ URLs.
-export const mapImages = {
-  upload: (mapId, payload) => api.post(`/maps/${mapId}/image`, payload),
-  remove: (mapId) => api.del(`/maps/${mapId}/image`),
-  url:    (file) => `/uploads/maps/${file}`,
-};
-
 export const games = {
   list:   (filters = {}) => {
     const qs = new URLSearchParams();

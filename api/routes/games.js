@@ -7,6 +7,7 @@ import { computeFinalScores, validateGameInput, resolvePlayerTimes } from '../li
 import {
   createGame, resolvePlayerIdentities, resolveGameLookups, insertPlayerChildren,
   joinDetachments, recordBannerFirstSeen, notifyGameLogged, FORCE_DISPOSITIONS,
+  SECONDARY_MODES,
 } from '../lib/game-write.js';
 import { idParam, intParam } from '../lib/params.js';
 
@@ -101,8 +102,6 @@ router.get('/', async (req, res) => {
       (SELECT gi.file_name FROM game_images gi
         WHERE gi.game_id = g.id
         ORDER BY gi.is_thumbnail DESC, gi.id ASC LIMIT 1) AS cover_file_name,
-      dm.image_name       AS map_image_name,
-      dm.image_thumb_name AS map_thumb_name,
       (SELECT gi.thumb_name FROM game_images gi
         WHERE gi.game_id = g.id AND gi.is_map ORDER BY gi.id LIMIT 1) AS map_photo_thumb,
       (SELECT gi.file_name FROM game_images gi
@@ -130,7 +129,7 @@ router.get('/', async (req, res) => {
     LEFT JOIN factions f ON f.id = gp.faction_id
     LEFT JOIN primary_missions ppm ON ppm.id = gp.primary_mission_id
     ${whereSql}
-    GROUP BY g.id, mp.name, pm.name, dm.name, dm.image_name, dm.image_thumb_name
+    GROUP BY g.id, mp.name, pm.name, dm.name
     ORDER BY g.played_at DESC, g.id DESC
     LIMIT $${i++} OFFSET $${i}
   `;
@@ -145,7 +144,6 @@ router.get('/:id', async (req, res) => {
   const game = await pool.query(
     `SELECT g.*, mp.name AS mission_pack_name, pm.name AS primary_mission_name,
             dm.name AS deployment_map_name, mr.name AS mission_rule_name,
-            dm.image_name AS map_image_name, dm.image_thumb_name AS map_thumb_name,
             cu.display_name AS created_by_name
      FROM games g
      LEFT JOIN mission_packs mp ON mp.id = g.mission_pack_id
@@ -278,8 +276,9 @@ router.put('/:id', requireAuth, async (req, res) => {
           `INSERT INTO game_players
             (game_id, seat, user_id, guest_name, faction_id, detachment_id,
              detachment_name, army_list_code, went_first, is_attacker, final_score, result,
-             primary_mission_id, primary_mission_name, force_disposition, time_seconds)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             primary_mission_id, primary_mission_name, force_disposition, time_seconds,
+             time_is_manual, secondary_mode)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
            RETURNING id`,
           [
             id, seat, p.userId ?? null, p.guestName ?? null,
@@ -291,6 +290,8 @@ router.put('/:id', requireAuth, async (req, res) => {
             (p.primaryMissionName && p.primaryMissionName.trim()) || null,
             FORCE_DISPOSITIONS.has(p.forceDisposition) ? p.forceDisposition : null,
             p.timeSeconds ?? null,
+            !!p.timeIsManual,
+            SECONDARY_MODES.has(p.secondaryMode) ? p.secondaryMode : 'tactical',
           ]
         );
         await insertPlayerChildren(client, gp.rows[0].id, p);

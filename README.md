@@ -119,12 +119,13 @@ full-screen viewer, and use the arrow keys or swipe to cycle.
 
 In the games list, hovering a thumbnail enlarges it, and **clicking a thumbnail
 opens the photo viewer** rather than following the row into the game — from
-there you can cycle the rest of that game's pictures. (The terrain-layout tile
-opens on its own when the picture belongs to the layout rather than the game,
-since it isn't part of that game's photo set.)
+there you can cycle the rest of that game's pictures.
 
-A layout picture is attached from the game form's terrain-layout field and is
-shared by **every** game played on that layout.
+A terrain photo belongs to **one game** — it's a picture of the table that game
+was played on, not of the abstract layout — so it is never shown on another game
+that happens to share the same Layout A / B / C name. Tag it from the game's
+photo panel, or add it straight from the **Terrain Layout** panel; the live
+tracker's Setup step tags it at source.
 
 ### Editing a game
 
@@ -314,7 +315,7 @@ Full rationale for each is in [`CLAUDE.md`](./CLAUDE.md#critical-invariants--do-
 |---|---|---|---|
 | View games / stats / war map / player profiles / photos | ✓ | ✓ | ✓ |
 | Create / edit games | – | ✓ | ✓ |
-| Upload game or terrain-layout photos | – | ✓ | ✓ |
+| Upload game photos (incl. the terrain shot) | – | ✓ | ✓ |
 | Delete a photo | – | own only | ✓ |
 | Set own army name / change own password | – | ✓ | ✓ |
 | Hide game from stats | – | – | ✓ |
