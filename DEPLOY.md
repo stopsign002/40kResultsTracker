@@ -183,10 +183,29 @@ The path is the **project root, not `app/`**, deliberately: that keeps uploads
 out of git and out of the SPA's `try_files` fallback, while Caddy can still read
 them through the existing read-only `/srv` mount.
 
-**Backups:** the host's nightly config tarball already archives `sites/sites`
-excluding `*/app`, so `uploads/` is captured with no extra setup. It's a *full*
-tarball every night, so if the photo library ever gets large, split it into an
-incremental `rclone sync` rather than letting the nightly upload grow.
+**Backups:** `uploads/` has its own leg of `~/sites/base/backup.sh` (since
+2026-08-16) — an incremental `rclone copy` to `b2:homewebhost/media/40kResultsTracker/uploads`,
+verified each night with `rclone check --one-way`. It is **excluded** from the
+nightly config tarball, which is what used to carry it: that tarball is written
+in full every night, so 29MB of photos that never change were being re-uploaded
+365 times a year into a bucket whose current object versions are never expired.
+Excluding them took it from 32MB to 11MB.
+
+It is `copy`, not `sync`, so nothing is ever deleted on the remote — the
+filenames are UUIDs, so each photo uploads exactly once and later runs transfer
+nothing. The trade-off is that a photo deleted in the app stays in B2 forever.
+
+Restore:
+
+```sh
+rclone copy b2:homewebhost/media/40kResultsTracker/uploads \
+            ~/sites/sites/40kResultsTracker/uploads
+sudo chown -R root:root ~/sites/sites/40kResultsTracker/uploads
+```
+
+The `chown` matters: the API writes these as root inside the container, so a
+host-side restore otherwise leaves files `unlinkQuiet` cannot delete — photos
+would reappear as 404s after a "delete forever".
 
 **Files vs rows:** deleting a game no longer unlinks its photos. `DELETE
 /admin/games/:id` archives the whole row-set into `deleted_items` and leaves the
@@ -391,10 +410,12 @@ Reads being public is deliberate — see the exposure note at the top.
 repo's script.** `~/sites/base/backup.sh` runs nightly at 03:15 from the host
 crontab, `pg_dumpall`s the whole Postgres instance (so `40k_db` is included),
 gzips it to `~/sites/backups/pg_all_<date>.sql.gz`, and `rclone copy`s it
-off-site to Backblaze B2 along with a config tarball that captures `uploads/`
-and the `.env`. A monthly restore drill (`~/sites/base/restore-test.sh`, 1st of
-the month at 04:30) proves the B2 copy restores. Nothing per-site needs setting
-up for that to work.
+off-site to Backblaze B2 along with a config tarball that captures the `.env`.
+The photos under `uploads/` ride a separate incremental mirror in the same job
+— see "Backups" under Photo storage above. A monthly restore drill
+(`~/sites/base/restore-test.sh`, 1st of the month at 04:30) proves the B2
+database copy restores; the photo mirror is instead re-verified every night by
+`rclone check`. Nothing per-site needs setting up for either.
 
 `scripts/backup.sh` in this repo is an **optional extra**, currently **not in
 cron** — a single-database snapshot for when you want a 40k-only dump before a
