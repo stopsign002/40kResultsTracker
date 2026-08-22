@@ -319,6 +319,30 @@ td.tabular { font-variant-numeric: tabular-nums; }
 }
 .filters .form-group { margin: 0; }
 
+/* ── Player panel scoring grids ─────────────────────────────
+   Columns live here rather than inline so the phone block can override them
+   without !important. `> * { min-width: 0 }` on each: a form control's
+   min-content width is its intrinsic size (an <input>'s default `size` is ~20
+   characters), which is what a `1fr` track's `min-width: auto` resolves to. */
+.sec-grid {                        /* 11e: card / drawn R# / scored R# / VP / x */
+  display: grid;
+  grid-template-columns: 1fr 88px 88px 64px 30px;
+  gap: 6px;
+  align-items: center;
+}
+.sec-grid > * { min-width: 0; }
+.round-slot-grid {                 /* 10e: R# label + 2-3 slots; columns set inline */
+  display: grid;
+  gap: 6px;
+}
+.round-slot-grid > * { min-width: 0; }
+.round-slot {                      /* one card + its VP box inside a slot */
+  display: grid;
+  grid-template-columns: 1fr 70px;
+  gap: 4px;
+}
+.round-slot > * { min-width: 0; }
+
 /* ── Game detail ───────────────────────────────────────────── */
 .players-grid {
   display: grid;
@@ -326,6 +350,11 @@ td.tabular { font-variant-numeric: tabular-nums; }
   gap: 18px;
   margin-bottom: 20px;
 }
+/* Same hazard as .stats-grid above: a grid item's default `min-width: auto` is
+   its MIN-CONTENT width, so one wide child (the secondary scoring grid) makes
+   the panel wider than the track it was given. On phone that put the panel's
+   right edge 35-52px past the viewport with no way to scroll to it. */
+.players-grid > * { min-width: 0; }
 .player-panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
@@ -631,18 +660,31 @@ button.stats-cal-day:focus-visible { outline: 2px solid var(--accent); outline-o
   .players-grid { grid-template-columns: 1fr; }
   .form-row.cols-2, .form-row.cols-3, .form-row.cols-4 { grid-template-columns: 1fr; }
 
-  /* Per-round secondary/challenger scoring grid: stack the slots vertically
-     and label each so it's still readable on phone width. The row label
-     (R1/R2/...) becomes a section header. */
-  .player-panel > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
-  .player-panel > div[style*="grid-template-columns"] > div:first-child {
-    font-size: 14px !important;
-    padding: 10px 0 4px !important;
+  /* Scoring grids at phone width. The 11e grid spent 270px on fixed columns
+     plus 24px of gaps before the card name got a pixel, which is what pushed
+     the whole panel off the screen; trimmed, it fits, with ~86px for the name
+     (card names wrap to two lines rather than being cut off).
+     Form controls also get min-width: 0 — an <input>'s intrinsic ~20-character
+     width is otherwise the floor for any `1fr` track it sits in.
+     (This replaces `.player-panel > div[style*="grid-template-columns"]`, which
+     could only ever match a DIRECT child and so matched none of these.) */
+  .player-panel input, .player-panel select, .player-panel textarea { min-width: 0; }
+  .sec-grid { grid-template-columns: 1fr 56px 56px 50px 30px; gap: 4px; }
+
+  /* 10e per-round slots stack one per line. Side by side they fit, but a card
+     name box gets ~57px, which is not a name; stacked it gets the panel's full
+     width. The column-header row goes with them — "Secondary 1 / Secondary 2"
+     labels mean nothing once the slots are no longer in columns — and the R#
+     cell becomes the heading for its round. `!important` because the column
+     count is dynamic (2 slots, or 3 with challengers) and set inline. */
+  .round-slot-grid { grid-template-columns: 1fr !important; }
+  .round-slot-head { display: none; }
+  .round-slot-grid > div:first-child {
+    font-size: 14px;
+    padding: 10px 0 4px;
     border-top: 1px solid var(--border);
   }
-  .player-panel > div[style*="grid-template-columns"]:first-of-type > div:first-child {
-    border-top: none;
-  }
+  .round-slot-head + .round-slot-grid > div:first-child { border-top: none; }
 
   /* Make number inputs in the round grids tap-friendly. */
   .player-panel input[type="number"] { min-height: 36px; font-size: 16px; }
@@ -1201,9 +1243,9 @@ body.lb-lock { overflow: hidden; }
    This is the only touch-first surface in the app: it's used one-handed,
    standing at a table, mid-game. Hence its own scale — 44px targets and
    16px inputs throughout, rather than the 31px buttons / 14px inputs the
-   desktop views use. Everything is a real class; do not reach for the
-   `div[style*="grid-template-columns"]` attribute hack the 700px block
-   uses for game-form's inline grids.
+   desktop views use. Everything is a real class — as game-form's scoring
+   grids now are too, after the attribute-selector hack that used to style
+   them turned out to match nothing (see .sec-grid / .round-slot-grid).
    ────────────────────────────────────────────────────────────── */
 
 /* On desktop the wizard reads as one panel, like every other page — same
@@ -1417,7 +1459,8 @@ body.lb-lock { overflow: hidden; }
 
 /* Utilities. These exist so the view stops hand-rolling inline flex rows and an
    11px dim note four times over — the inline-layout habit is what forced the
-   `div[style*="grid-template-columns"]` selector into the 700px block. */
+   `div[style*="grid-template-columns"]` selector into the 700px block, a rule
+   that then silently matched nothing for as long as it existed. */
 /* Collapsible section heading — same treatment as the h3s it sits among,
    without re-declaring the five properties inline. */
 .detail-summary {

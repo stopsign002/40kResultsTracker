@@ -1008,7 +1008,6 @@ export async function renderGameForm(state, gameId) {
 
   function buildHeldSecondaries(p) {
     const idx = draft.players.indexOf(p);
-    const COLS = '1fr 88px 88px 64px 30px';
     // Alphabetical, explicitly: the API orders by (card_type, name), which is
     // only alphabetical while every card shares a type. Entry is "find the card
     // that came up", so a stable A-Z beats deck order. Codepoint compare on the
@@ -1097,7 +1096,7 @@ export async function renderGameForm(state, gameId) {
       });
 
       const row = el('div', {
-        style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '4px', alignItems: 'center' },
+        class: 'sec-grid', style: { marginBottom: '4px' },
       }, [
         // buildHeldSecondaries only runs for 11e, so every name here is a card
         // the mission data covers.
@@ -1183,7 +1182,7 @@ export async function renderGameForm(state, gameId) {
       });
 
       return el('div', {
-        style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '4px', alignItems: 'center' },
+        class: 'sec-grid', style: { marginBottom: '4px' },
       }, [cardSel, drawn, scored, scoreInp, remove]);
     };
 
@@ -1211,7 +1210,7 @@ export async function renderGameForm(state, gameId) {
         }, capLabel(sumSecondaries(p), E11_SECONDARY_CAP)),
       ]),
       deck.length || extras.length
-        ? el('div', { style: { display: 'grid', gridTemplateColumns: COLS, gap: '6px', marginBottom: '2px' } },
+        ? el('div', { class: 'sec-grid', style: { marginBottom: '2px' } },
             [hdr('Card'), hdr('Drawn R#', 'center'), hdr('Scored R#', 'center'), hdr('VP', 'center'), el('div', {})])
         : el('div', { class: 'muted', style: { fontSize: '12px', marginBottom: '6px' } },
             'Choose a mission pack to list its secondaries.'),
@@ -1238,7 +1237,7 @@ export async function renderGameForm(state, gameId) {
       const scoreInp = el('input', {
         type: 'number', min: '0', max: '15',
         value: entry?.score ?? 0,
-        style: { width: '70px', textAlign: 'center' },
+        style: { width: '100%', textAlign: 'center' },
       });
       const cardSel = comboField(missionDetails.secondaryCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName === 'Unspecified' ? null : (entry?.cardName ?? null)),
         (id, name) => {
@@ -1269,7 +1268,7 @@ export async function renderGameForm(state, gameId) {
           rerender();
         }
       });
-      return el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 70px', gap: '4px' } }, [cardSel, scoreInp]);
+      return el('div', { class: 'round-slot' }, [cardSel, scoreInp]);
     }
 
     function buildChalSlot(player, rn) {
@@ -1277,7 +1276,7 @@ export async function renderGameForm(state, gameId) {
       const scoreInp = el('input', {
         type: 'number', min: '0', max: '20',
         value: entry?.score ?? 0,
-        style: { width: '70px', textAlign: 'center' },
+        style: { width: '100%', textAlign: 'center' },
       });
       const cardSel = comboField(missionDetails.challengerCards, entry?.cardId, entry?.cardId ? null : (entry?.cardName === 'Unspecified' ? null : (entry?.cardName ?? null)),
         (id, name) => {
@@ -1308,7 +1307,7 @@ export async function renderGameForm(state, gameId) {
           rerender();
         }
       });
-      return el('div', { style: { display: 'grid', gridTemplateColumns: '1fr 70px', gap: '4px' } }, [cardSel, scoreInp]);
+      return el('div', { class: 'round-slot' }, [cardSel, scoreInp]);
     }
 
     const colCount = hasChallengers ? '48px 1fr 1fr 1fr' : '48px 1fr 1fr';
@@ -1329,12 +1328,12 @@ export async function renderGameForm(state, gameId) {
         buildSecSlot(p, rn, existing[1] || null),
       ];
       if (hasChallengers) cells.push(buildChalSlot(p, rn));
-      return el('div', { style: { display: 'grid', gridTemplateColumns: colCount, gap: '6px', marginBottom: '4px', alignItems: 'start' } }, cells);
+      return el('div', { class: 'round-slot-grid', style: { gridTemplateColumns: colCount, marginBottom: '4px', alignItems: 'start' } }, cells);
     });
 
     return el('div', {}, [
       el('h3', { style: { marginTop: '18px' } }, 'Secondary & Challenger Scoring'),
-      el('div', { style: { display: 'grid', gridTemplateColumns: colCount, gap: '6px', marginBottom: '2px' } }, headerCells),
+      el('div', { class: 'round-slot-grid round-slot-head', style: { gridTemplateColumns: colCount, marginBottom: '2px' } }, headerCells),
       ...rows,
     ]);
   }

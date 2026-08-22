@@ -148,9 +148,12 @@ not where you'd look:
   actually leaves the page. A tap that navigates on a heatmap is too easy to hit
   by accident while scrolling.
 - **Span cards use `.stats-span`, not `.stat-card[style*="grid-column"]`.** The
-  attribute-selector hack is gone from this view. It survives elsewhere in
-  `style.css` (`.player-panel > div[style*="grid-template-columns"]`) reaching
-  into `game-form.js`'s inline grids — don't propagate it into new code.
+  attribute-selector hack is gone from this view, and as of 2026-08-22 from
+  `style.css` entirely: `.player-panel > div[style*="grid-template-columns"]`
+  used to reach into `game-form.js`'s inline grids, but the `>` meant it only
+  matched DIRECT children and both scoring grids are wrapped, so it silently
+  matched nothing while reading as if it handled the phone layout. They are
+  `.sec-grid` / `.round-slot-grid` / `.round-slot` now. Don't reintroduce it.
 
 ## Adding a new view
 

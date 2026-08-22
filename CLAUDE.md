@@ -659,9 +659,12 @@ that `.panel` / `.panel-body` carry, so nothing contained it.
   readout with a separate "View games" button. A 11px cell is far too easy to
   hit by accident to make it a navigation.
 - The `.stat-card[style*="grid-column"]` attribute-selector hack is **gone** —
-  it's a real `.stats-span` class now. The surviving
-  `div[style*="grid-template-columns"]` rules reach into `game-form.js`'s inline
-  grids and are the pattern *not* to propagate (see "CSS" under the live tracker).
+  it's a real `.stats-span` class now. So is the last one: the 700px block's
+  `.player-panel > div[style*="grid-template-columns"]` rule was removed
+  2026-08-22 once it turned out its `>` meant it had never matched either of
+  `game-form.js`'s scoring grids (both are wrapped a level deeper), which is how
+  they came to overflow a phone viewport. They are `.sec-grid` /
+  `.round-slot-grid` / `.round-slot` now — don't reintroduce the pattern.
 
 ### `api.js` shape
 
@@ -1715,9 +1718,10 @@ breakpoint 60px away just creates a band where this block has collapsed and the
 shared `.form-row` rules have not.
 
 It uses **real class names**, deliberately *not* the
-`div[style*="grid-template-columns"]` attribute-selector hack the existing 700px
-block uses to reach into `game-form.js`'s inline grids. Don't propagate that
-pattern into new code.
+`div[style*="grid-template-columns"]` attribute-selector hack the 700px block
+used to reach into `game-form.js`'s inline grids — a rule since removed, because
+its `>` meant it matched nothing while looking like it handled the phone layout.
+Don't reintroduce that pattern.
 
 ---
 
