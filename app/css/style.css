@@ -860,8 +860,19 @@ button.stats-cal-day:focus-visible { outline: 2px solid var(--accent); outline-o
   left: 14px;
   z-index: 25;
   max-width: 320px;
-  max-height: 60dvh;
+  /* Cap the height against the MAP WRAPPER, not the viewport. The panel is
+     absolutely positioned inside .warmap canvas wrapper, which is
+     overflow:hidden and on a phone is far shorter than 60dvh — so a
+     viewport-relative cap let the panel grow taller than its own clipping
+     ancestor: the title and the first few faction rows were chopped off above
+     the wrapper, and overflow-y:auto never engaged because nothing overflowed
+     the *panel*. 100% here is the wrapper's height; 70px = the 56px the panel
+     sits above the wrapper's bottom edge plus a 14px breathing gap at the top.
+     Keep the min() with 60dvh so the panel stays sane on a tall desktop map.
+     If you change `bottom` below, change the 70px too. (issue #10) */
+  max-height: min(60dvh, calc(100% - 70px));
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(2, 6, 16, 0.96);
   border: 1px solid rgba(120, 220, 255, 0.45);
   border-radius: var(--radius);
