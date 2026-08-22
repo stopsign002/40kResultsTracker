@@ -10,8 +10,23 @@
   <div id="app"></div>
   <div id="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <!-- Vendored from jsdelivr 2026-08-22 (homewebhost#16). These used to load
+       straight from cdn.jsdelivr.net with no integrity= attribute, so a CDN
+       compromise or DNS hijack would have executed arbitrary script on the
+       page — and this is the site that publishes real people's names. Serving
+       them same-origin removes the third-party trust entirely, which is
+       strictly better than adding SRI, and it lets the CSP in
+       conf.d/40k.caddy keep a plain script-src 'self'.
+       Upstream: chart.js@4.4.4, chartjs-adapter-date-fns@3.0.0.
+       sha384 of the bytes as fetched, for provenance:
+         chart.umd.min.js
+           NrKB+u6Ts6AtkIhwPixiKTzgSKNblyhlk0Sohlgar9UHUBzai/sgnNNWWd291xqt
+         chartjs-adapter-date-fns.bundle.min.js
+           cVMg8E3QFwTvGCDuK+ET4PD341jF3W8nO1auiXfuZNQkzbUUiBGLsIQUE+b1mxws
+       To upgrade: re-download the pinned version, re-record these hashes,
+       and re-check the charts render. -->
+  <script src="/vendor/chart.umd.min.js"></script>
+  <script src="/vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script type="module" src="/js/api.js"></script>
   <script type="module" src="/js/components.js"></script>
   <script type="module" src="/js/game-rules.js"></script>
