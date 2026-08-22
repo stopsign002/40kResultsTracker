@@ -1233,7 +1233,13 @@ export async function renderGameForm(state, gameId) {
       ]);
     }
 
-    function buildSecSlot(player, rn, entry) {
+    function buildSecSlot(player, rn, entry0) {
+      // `let`, not the parameter itself: when a card is first named in an
+      // EMPTY slot we have to create the record, and both this closure and the
+      // score input's closure need to see it. Rebuilding the form was how that
+      // used to happen, and it cost the user their cursor — see the comment on
+      // the push below and CLAUDE.md pitfall #2.
+      let entry = entry0;
       const scoreInp = el('input', {
         type: 'number', min: '0', max: '15',
         value: entry?.score ?? 0,
@@ -1250,8 +1256,18 @@ export async function renderGameForm(state, gameId) {
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
           } else {
-            player.secondaries.push({ cardId: id, cardName: name, roundNumber: rn, score: parseInt(scoreInp.value, 10) || 0 });
-            rerender();
+            // Naming a card in an empty slot used to push the record and then
+            // rerender() — which clears the form root and rebuilds every input.
+            // The text box the user was typing in got destroyed, focus fell to
+            // <body>, and the next Tab + keystroke went nowhere (40k#14). The
+            // rebuild was only ever there to hand these closures the new entry,
+            // so bind it directly instead. An empty slot and a filled one render
+            // identically, so there is nothing to rebuild. persistDraft() is
+            // kept because rerender() used to do it for us.
+            entry = { cardId: id, cardName: name, roundNumber: rn, score: parseInt(scoreInp.value, 10) || 0 };
+            player.secondaries.push(entry);
+            persistDraft();
+            refreshTotals();
           }
         }, { placeholder: '—' });
       scoreInp.addEventListener('change', () => {
@@ -1262,17 +1278,38 @@ export async function renderGameForm(state, gameId) {
             const i = player.secondaries.indexOf(entry);
             if (i >= 0) player.secondaries.splice(i, 1);
             rerender();
+          } else {
+            // The 10e secondary/challenger boxes were the only score inputs on
+            // this form that changed state without repainting the read-outs —
+            // 11e's does it (see the scoreInp change handler in the 11e deck
+            // row) and so does 10e's own primary box. So typing a VP here left
+            // the player total showing the old number until something else
+            // happened to rebuild the form, which read as "my score was
+            // ignored" (40k#14). Deliberately NOT persistDraft(): scores are
+            // not written to localStorage anywhere on this form, only
+            // structural changes are, and primary behaves the same way.
+            refreshTotals();
           }
         } else if (v > 0) {
-          player.secondaries.push({ cardId: null, cardName: 'Unspecified', roundNumber: rn, score: v });
-          rerender();
+          // Same shape as the card path above, and the same focus bug: this
+          // fires on blur, so tabbing out of the score box rebuilt the form
+          // and dropped whatever the user typed next.
+          entry = { cardId: null, cardName: 'Unspecified', roundNumber: rn, score: v };
+          player.secondaries.push(entry);
+          persistDraft();
+          refreshTotals();
         }
       });
       return el('div', { class: 'round-slot' }, [cardSel, scoreInp]);
     }
 
     function buildChalSlot(player, rn) {
-      const entry = player.challengers.find(c => c.roundNumber === rn);
+      // `let`, not the parameter itself: when a card is first named in an
+      // EMPTY slot we have to create the record, and both this closure and the
+      // score input's closure need to see it. Rebuilding the form was how that
+      // used to happen, and it cost the user their cursor — see the comment on
+      // the push below and CLAUDE.md pitfall #2.
+      let entry = player.challengers.find(c => c.roundNumber === rn);
       const scoreInp = el('input', {
         type: 'number', min: '0', max: '20',
         value: entry?.score ?? 0,
@@ -1289,8 +1326,18 @@ export async function renderGameForm(state, gameId) {
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
           } else {
-            player.challengers.push({ cardId: id, cardName: name, roundNumber: rn, completed: true, score: parseInt(scoreInp.value, 10) || 0 });
-            rerender();
+            // Naming a card in an empty slot used to push the record and then
+            // rerender() — which clears the form root and rebuilds every input.
+            // The text box the user was typing in got destroyed, focus fell to
+            // <body>, and the next Tab + keystroke went nowhere (40k#14). The
+            // rebuild was only ever there to hand these closures the new entry,
+            // so bind it directly instead. An empty slot and a filled one render
+            // identically, so there is nothing to rebuild. persistDraft() is
+            // kept because rerender() used to do it for us.
+            entry = { cardId: id, cardName: name, roundNumber: rn, completed: true, score: parseInt(scoreInp.value, 10) || 0 };
+            player.challengers.push(entry);
+            persistDraft();
+            refreshTotals();
           }
         }, { placeholder: '—' });
       scoreInp.addEventListener('change', () => {
@@ -1301,10 +1348,26 @@ export async function renderGameForm(state, gameId) {
             const i = player.challengers.indexOf(entry);
             if (i >= 0) player.challengers.splice(i, 1);
             rerender();
+          } else {
+            // The 10e secondary/challenger boxes were the only score inputs on
+            // this form that changed state without repainting the read-outs —
+            // 11e's does it (see the scoreInp change handler in the 11e deck
+            // row) and so does 10e's own primary box. So typing a VP here left
+            // the player total showing the old number until something else
+            // happened to rebuild the form, which read as "my score was
+            // ignored" (40k#14). Deliberately NOT persistDraft(): scores are
+            // not written to localStorage anywhere on this form, only
+            // structural changes are, and primary behaves the same way.
+            refreshTotals();
           }
         } else if (v > 0) {
-          player.challengers.push({ cardId: null, cardName: 'Unspecified', roundNumber: rn, completed: true, score: v });
-          rerender();
+          // Same shape as the card path above, and the same focus bug: this
+          // fires on blur, so tabbing out of the score box rebuilt the form
+          // and dropped whatever the user typed next.
+          entry = { cardId: null, cardName: 'Unspecified', roundNumber: rn, completed: true, score: v };
+          player.challengers.push(entry);
+          persistDraft();
+          refreshTotals();
         }
       });
       return el('div', { class: 'round-slot' }, [cardSel, scoreInp]);
