@@ -59,8 +59,21 @@ router.get('/mission-packs/:id/details', async (req, res) => {
 });
 
 router.get('/users', async (_req, res) => {
+  // armies rides along so the game forms can quick-pick a matched player's
+  // registered factions without an N+1 fetch per typed name.
   const { rows } = await pool.query(
-    `SELECT id, username, display_name FROM users WHERE is_active = TRUE ORDER BY display_name`
+    `SELECT u.id, u.username, u.display_name, COALESCE(a.armies, '[]'::json) AS armies
+       FROM users u
+       LEFT JOIN LATERAL (
+         SELECT json_agg(json_build_object(
+                  'factionId', ua.faction_id,
+                  'name', ua.name,
+                  'isPrimary', ua.is_primary)
+                ORDER BY ua.position, ua.id) AS armies
+           FROM user_armies ua WHERE ua.user_id = u.id
+       ) a ON TRUE
+      WHERE u.is_active = TRUE
+      ORDER BY u.display_name`
   );
   res.json(rows);
 });

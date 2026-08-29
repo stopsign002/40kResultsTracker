@@ -56,7 +56,7 @@ export async function renderAdmin(state) {
       el('div', { class: 'form-row cols-3' }, [
         field('Username', cuUsername),
         field('Display Name', cuDisplay),
-        field('Army Name', cuArmyName),
+        field('Banner Name', cuArmyName),
       ]),
       el('div', { class: 'form-row cols-2' }, [
         field('Password', cuPassword),
@@ -580,7 +580,7 @@ function buildUsersTable(users, refresh) {
   const head = el('thead', {}, el('tr', {}, [
     el('th', {}, 'Username'),
     el('th', {}, 'Display Name'),
-    el('th', {}, 'Army Name'),
+    el('th', {}, 'Banner Name'),
     el('th', {}, 'Role'),
     el('th', {}, 'Active'),
     el('th', {}, 'Last Login'),
@@ -614,19 +614,19 @@ function buildUsersTable(users, refresh) {
       class: 'btn small',
       onClick: async () => {
         const name = await promptModal({
-          title: 'Set army name',
-          label: `Army name for "${u.username}" — leave blank to clear`,
+          title: 'Set war-map banner name',
+          label: `Banner shown on the Theatre of War for "${u.username}" — leave blank to clear`,
           defaultValue: u.army_name || '',
           placeholder: 'House Vosk',
         });
         if (name === null) return;
         try {
           await admin.updateUser(u.id, { armyName: name.trim() });
-          toast('Army name updated');
+          toast('Banner name updated');
           refresh();
         } catch (e) { toast(e.message, 'error'); }
       },
-    }, 'Army');
+    }, 'Banner');
 
     const resetPw = el('button', {
       class: 'btn small',

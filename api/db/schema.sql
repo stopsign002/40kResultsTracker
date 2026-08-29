@@ -57,6 +57,21 @@ CREATE TABLE IF NOT EXISTS factions (
   parent_id INTEGER REFERENCES factions(id) ON DELETE SET NULL
 );
 
+-- A player's registered armies: ordered, at most one primary, faction required,
+-- free-text name optional. Profile/quick-pick data only — nothing FKs into this
+-- table and game_players.faction_id stays authoritative per match.
+CREATE TABLE IF NOT EXISTS user_armies (
+  id         SERIAL PRIMARY KEY,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  faction_id INTEGER NOT NULL REFERENCES factions(id) ON DELETE CASCADE,
+  name       TEXT,
+  is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+  position   INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_user_armies_user ON user_armies (user_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_user_armies_primary ON user_armies (user_id) WHERE is_primary;
+
 CREATE TABLE IF NOT EXISTS detachments (
   id         SERIAL PRIMARY KEY,
   faction_id INTEGER NOT NULL REFERENCES factions(id) ON DELETE CASCADE,

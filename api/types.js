@@ -83,6 +83,18 @@
  */
 
 /**
+ * A registered army on a player's profile (user_armies). Quick-pick data for
+ * the game forms only — game_players.faction_id stays authoritative per match.
+ *
+ * @typedef {Object} UserArmy
+ * @property {number} id
+ * @property {number} factionId
+ * @property {string|null} name
+ * @property {boolean} isPrimary
+ * @property {number} position     0-based list order
+ */
+
+/**
  * /stats/warmap returns one row per (player_key, faction_id) banner.
  *
  * @typedef {Object} BannerUnit

@@ -1,11 +1,15 @@
-import { stats } from '../api.js';
+import { stats, reference } from '../api.js';
 import { el, clear, pill } from '../components.js';
 
 export async function renderPlayer(_state, playerKey) {
   const root = el('div', { class: 'fade-in' });
   let data;
+  let factions = [];
   try {
-    data = await stats.player(playerKey);
+    [data, factions] = await Promise.all([
+      stats.player(playerKey),
+      reference.factions().catch(() => []),
+    ]);
   } catch (e) {
     root.appendChild(el('div', { class: 'panel' }, [
       el('div', { class: 'panel-header' }, el('h2', {}, 'Player')),
@@ -39,7 +43,14 @@ export async function renderPlayer(_state, playerKey) {
     buildRecordsList(data),
   ]);
 
-  const grid = el('div', { class: 'stats-grid' }, [factionPanel, recordsPanel]);
+  const armiesPanel = (data.armies || []).length
+    ? el('div', { class: 'stat-card' }, [
+        el('h3', {}, 'Armies'),
+        buildArmiesList(data.armies, factions),
+      ])
+    : null;
+
+  const grid = el('div', { class: 'stats-grid' }, [armiesPanel, factionPanel, recordsPanel].filter(Boolean));
 
   root.appendChild(header);
   root.appendChild(grid);
@@ -65,6 +76,20 @@ function kpi(label, value, kindClass = '') {
     el('div', { class: 'label' }, label),
     el('div', { class: `value ${kindClass}` }, String(value ?? '–')),
   ]);
+}
+
+function buildArmiesList(armies, factions) {
+  const factionName = (id) => factions.find((f) => f.id === id)?.name || `Faction ${id}`;
+  return el('div', {}, armies.map((a) => el('div', {
+    class: 'bar-row',
+    style: { borderBottom: '1px solid var(--border)', paddingBottom: '6px' },
+  }, [
+    el('div', { style: { width: '70%' } }, [
+      a.name ? el('span', {}, a.name) : el('span', { class: 'muted' }, 'unnamed'),
+      el('div', { class: 'muted', style: { fontSize: '12px' } }, factionName(a.factionId)),
+    ]),
+    a.isPrimary ? pill('primary', 'first') : null,
+  ].filter(Boolean))));
 }
 
 function buildFactionTable(rows) {

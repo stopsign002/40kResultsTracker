@@ -1,7 +1,8 @@
 import { Router } from 'express';
-import { pool } from '../lib/db.js';
+import { pool, withTx } from '../lib/db.js';
 import { verifyPassword, hashPassword, requireAuth } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { normalizeArmies, armiesForUser } from '../lib/armies.js';
 
 const router = Router();
 
@@ -44,7 +45,7 @@ router.get('/me', async (req, res) => {
     [req.session.userId]
   );
   if (!rows[0]) return res.status(401).json({ error: 'unauthorized' });
-  res.json(publicUser(rows[0]));
+  res.json({ ...publicUser(rows[0]), armies: await armiesForUser(pool, req.session.userId) });
 });
 
 function publicUser(u) {
@@ -60,24 +61,71 @@ function publicUser(u) {
 
 // Self-serve update of profile fields the user can edit themselves.
 // army_name plus the live tracker's between-rounds photo prompt.
+// Omitted = untouched, so a partial update (the photo-prompt toggle) can never
+// wipe another field; an explicit '' clears army_name to NULL.
 router.patch('/me', requireAuth, async (req, res) => {
   const { armyName, promptRoundPhoto } = req.body || {};
   if (armyName !== undefined && typeof armyName !== 'string') {
     return res.status(400).json({ error: 'armyName must be a string' });
   }
-  const { rows } = await pool.query(
-    `UPDATE users SET army_name = $1,
-                      prompt_round_photo = COALESCE($2, prompt_round_photo)
-      WHERE id = $3
-     RETURNING id, username, display_name, role, army_name, prompt_round_photo`,
-    [
-      armyName ? armyName.trim() || null : null,
-      typeof promptRoundPhoto === 'boolean' ? promptRoundPhoto : null,
-      req.session.userId,
-    ]
-  );
+  const sets = [];
+  const vals = [];
+  if (armyName !== undefined) {
+    sets.push(`army_name = $${vals.length + 1}`);
+    vals.push(armyName.trim() || null);
+  }
+  if (typeof promptRoundPhoto === 'boolean') {
+    sets.push(`prompt_round_photo = $${vals.length + 1}`);
+    vals.push(promptRoundPhoto);
+  }
+  const returning = 'id, username, display_name, role, army_name, prompt_round_photo';
+  const { rows } = sets.length
+    ? await pool.query(
+        `UPDATE users SET ${sets.join(', ')} WHERE id = $${vals.length + 1} RETURNING ${returning}`,
+        [...vals, req.session.userId]
+      )
+    : await pool.query(`SELECT ${returning} FROM users WHERE id = $1`, [req.session.userId]);
   if (!rows[0]) return res.status(404).json({ error: 'not found' });
   res.json(publicUser(rows[0]));
+});
+
+// Replace the user's whole registered-army list — the same delete-then-reinsert
+// contract as PUT /games/:id, so add/remove/reorder/rename/set-primary are all
+// this one write. Nothing FKs into user_armies, so replacing loses nothing.
+router.put('/me/armies', requireAuth, async (req, res) => {
+  let armies;
+  try {
+    armies = normalizeArmies((req.body || {}).armies);
+  } catch (e) {
+    return res.status(400).json({ error: e.message, code: e.code });
+  }
+  const factionIds = [...new Set(armies.map((a) => a.factionId))];
+  const saved = await withTx(async (client) => {
+    if (factionIds.length) {
+      const { rows } = await client.query('SELECT id FROM factions WHERE id = ANY($1)', [factionIds]);
+      if (rows.length !== factionIds.length) {
+        const known = new Set(rows.map((r) => r.id));
+        const missing = factionIds.filter((id) => !known.has(id));
+        throw Object.assign(new Error(`unknown faction id ${missing[0]}`), { status: 400, code: 'bad_faction' });
+      }
+    }
+    await client.query('DELETE FROM user_armies WHERE user_id = $1', [req.session.userId]);
+    for (let i = 0; i < armies.length; i++) {
+      const a = armies[i];
+      await client.query(
+        `INSERT INTO user_armies (user_id, faction_id, name, is_primary, position)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [req.session.userId, a.factionId, a.name, a.isPrimary, i]
+      );
+    }
+    return armiesForUser(client, req.session.userId);
+  });
+  await audit(req, 'auth.update_armies', {
+    type: 'user',
+    id: req.session.userId,
+    payload: { count: saved.length, factionIds },
+  });
+  res.json({ armies: saved });
 });
 
 router.post('/change-password', requireAuth, async (req, res) => {

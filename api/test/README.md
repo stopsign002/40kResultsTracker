@@ -2,9 +2,9 @@
 
 Two suites, both on Node's built-in `node:test` runner, no framework:
 
-- **`test/*.test.js` — 190 unit cases.** Pure functions, no DB, no network, no
+- **`test/*.test.js` — 202 unit cases.** Pure functions, no DB, no network, no
   filesystem. Runs in under two seconds.
-- **`test/integration/*.test.js` — 156 cases.** Real HTTP against the running
+- **`test/integration/*.test.js` — 166 cases.** Real HTTP against the running
   API and the **live** Postgres. Every row it creates belongs to a `zz_test_*`
   user, and it cleans up after itself. That prefix is also what keeps the run
   out of the operator's inbox — see `isFixtureActor()` in `lib/mail.js`.
@@ -17,8 +17,8 @@ cd api && npm test                    # node --test test/*.test.js
 node --test test/game-scoring.test.js # single file
 
 # from the repo root, in a node:22-alpine container
-scripts/test-unit.sh                  # the 190 unit cases, --network none
-scripts/test-live.sh                  # all 156 integration cases
+scripts/test-unit.sh                  # the 202 unit cases, --network none
+scripts/test-live.sh                  # all 166 integration cases
 scripts/test-live.sh drafts-lifecycle # one integration file
 ```
 

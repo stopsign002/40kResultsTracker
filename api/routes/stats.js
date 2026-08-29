@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { pool } from '../lib/db.js';
 import { COUNTED_GAMES } from '../lib/game-filter.js';
 import { idParam, intParam } from '../lib/params.js';
+import { armiesForUser } from '../lib/armies.js';
 
 const router = Router();
 
@@ -370,6 +371,9 @@ router.get('/player/:playerKey', async (req, res) => {
   if (!idRow.rows[0]) return res.status(404).json({ error: 'player not found' });
   const identity = idRow.rows[0];
 
+  const userId = playerKey.startsWith('user:') ? idParam(playerKey.slice(5)) : null;
+  const armies = userId ? await armiesForUser(pool, userId) : [];
+
   // Overall + per-faction
   const overall = await pool.query(`
     SELECT
@@ -464,6 +468,7 @@ router.get('/player/:playerKey', async (req, res) => {
     biggest_win_margin: biggestWinMargin,
     biggest_loss_margin: biggestLossMargin,
     by_faction: byFaction.rows,
+    armies,
   });
 });
 

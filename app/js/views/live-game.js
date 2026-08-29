@@ -11,7 +11,7 @@
 // entries live over SSE.
 
 import { drafts, draftImages, reference } from '../api.js';
-import { el, clear, toast, confirmModal, choiceModal, promptModal, fmtDuration, selectOptions } from '../components.js';
+import { el, clear, toast, confirmModal, choiceModal, promptModal, fmtDuration, selectOptions, matchRegisteredUser, armyChipLabel } from '../components.js';
 import {
   missionLink, openMissionCard, openMissionBrowser, fixedSecondaryOptions,
 } from '../mission-cards.js';
@@ -266,7 +266,9 @@ async function renderWizard(state, draftId) {
     reference.factions().catch(() => []),
     reference.missionPacks().catch(() => []),
     reference.playerNames().catch(() => []),
-    isOwner ? reference.users().catch(() => []) : Promise.resolve([]),
+    // Public endpoint. The invite picker needs it for the owner only, but the
+    // army quick-pick needs it for whoever is editing a seat.
+    reference.users().catch(() => []),
   ]);
   if (!payload.missionPackId) {
     const pack11 = packs.find((p) => p.name === E11_PACK_NAME);
@@ -1093,11 +1095,27 @@ async function renderWizard(state, draftId) {
     // `change` fires on blur, so a rerender here destroys whatever control the
     // user just tabbed or tapped into. Patch the two places the name shows,
     // the same way refreshTotals() patches the scores (pitfall #2).
-    nameInp.addEventListener('change', () => {
+    const chipUser = matchRegisteredUser(p.guestName, users);
+    nameInp.addEventListener('change', async () => {
       const heading = seat.querySelector('.lg-seat-name');
       if (heading) heading.textContent = seatName(p, i);
       const tab = screen.querySelectorAll('.lg-seat-tab')[i];
       if (tab) tab.textContent = seatName(p, i);
+      // Quick-pick default: a matched registered player's primary army fills an
+      // EMPTY faction — never overwrites a chosen one (a remote co-editor may
+      // have set it). A faction change already rerenders (see facSel), so
+      // rerendering here is the established behaviour, not a blur rerender.
+      const u = matchRegisteredUser(nameInp.value, users);
+      const userArmies = u ? (u.armies || []) : [];
+      if (editable && p.factionId == null && userArmies.length) {
+        const prim = userArmies.find((a) => a.isPrimary) || userArmies[0];
+        p.factionId = prim.factionId;
+        await cacheDetachments(p.factionId);
+        touch();
+        rerender();
+      } else if ((u?.id ?? null) !== (chipUser?.id ?? null)) {
+        rerender();
+      }
     });
     const nameList = el('datalist', { id: nameId },
       (playerNames || []).map((n) => el('option', { value: typeof n === 'string' ? n : n.name }, '')));
@@ -1153,6 +1171,26 @@ async function renderWizard(state, draftId) {
 
     seat.appendChild(el('div', { class: 'lg-field' }, [el('label', {}, 'Name'), nameInp, nameList]));
     seat.appendChild(el('div', { class: 'lg-field' }, [el('label', {}, 'Faction'), facSel]));
+    const chipArmies = chipUser ? (chipUser.armies || []) : [];
+    if (chipArmies.length) {
+      seat.appendChild(el('div', { class: 'lg-field' }, [
+        el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+          chipArmies.map((a) => {
+            const chip = el('button', {
+              type: 'button',
+              class: 'btn small' + (p.factionId === a.factionId ? ' primary' : ''),
+            }, armyChipLabel(a, factions));
+            chip.disabled = !editable;
+            chip.addEventListener('click', async () => {
+              p.factionId = a.factionId;
+              await cacheDetachments(p.factionId);
+              touch();
+              rerender();
+            });
+            return chip;
+          })),
+      ]));
+    }
     seat.appendChild(buildDetachments(p, i, editable));
     seat.appendChild(el('div', { class: 'lg-field' }, [el('label', {}, 'Force disposition'), dispSel, primary]));
     seat.appendChild(buildSecondaryMode(p, i, editable));

@@ -45,6 +45,7 @@ export const auth = {
   changePassword: (currentPassword, newPassword) =>
     api.post('/auth/change-password', { currentPassword, newPassword }),
   updateMe: (data) => api.patch('/auth/me', data),
+  setArmies: (armies) => api.put('/auth/me/armies', { armies }),
 };
 
 export const seasons = {

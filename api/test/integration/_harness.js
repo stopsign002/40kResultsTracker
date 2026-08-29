@@ -264,6 +264,11 @@ export async function cleanup() {
       [ids.map((i) => `user:${i}`)]
     );
   }
+  // Cascades with the users delete below, but the sweep is explicit by
+  // convention — every table the server writes on a user's behalf is named here.
+  if (ids.length) {
+    await pool.query('DELETE FROM user_armies WHERE user_id = ANY($1::int[])', [ids]);
+  }
   await pool.query('DELETE FROM users WHERE username LIKE $1', [like]);
 }
 
@@ -279,6 +284,8 @@ export async function assertNoResidue() {
        (SELECT count(*) FROM deployment_maps WHERE name LIKE 'ZZ %') AS maps,
        (SELECT count(*) FROM mission_rules WHERE name LIKE 'ZZ %') AS rules,
        (SELECT count(*) FROM detachments WHERE name LIKE 'ZZ %') AS detachments,
+       (SELECT count(*) FROM user_armies ua JOIN users u ON u.id = ua.user_id
+         WHERE u.username LIKE $1) AS armies,
        (SELECT count(*) FROM deleted_items WHERE deleted_by_name LIKE $1) AS archived`,
     [TEST_PREFIX + '%']
   );
@@ -293,6 +300,7 @@ export async function assertNoResidue() {
   assert.equal(Number(r.maps), 0, 'test deployment maps leaked into a real mission pack');
   assert.equal(Number(r.detachments), 0, "test detachments leaked into a faction's shared library");
   assert.equal(Number(r.rules), 0, 'test mission rules leaked into a real mission pack');
+  assert.equal(Number(r.armies), 0, 'test user armies left behind');
   assert.equal(Number(r.archived), 0, 'test items left behind in the deleted-items archive');
 }
 

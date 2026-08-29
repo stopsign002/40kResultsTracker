@@ -172,3 +172,18 @@ export function promptModal({ title = 'Enter value', label = '', defaultValue = 
     setTimeout(() => input.focus(), 100);
   });
 }
+
+// The client-side mirror of resolvePlayerIdentities' name match (lib/game-write.js):
+// case-insensitive display_name against /reference/users, so the game forms can
+// quick-pick a registered player's armies for exactly the names the server will link.
+export function matchRegisteredUser(name, users) {
+  const needle = (name || '').trim().toLowerCase();
+  if (!needle) return null;
+  return (users || []).find((u) => (u.display_name || '').trim().toLowerCase() === needle) || null;
+}
+
+export function armyChipLabel(army, factions) {
+  const faction = (factions || []).find((f) => f.id === army.factionId);
+  const factionName = faction ? faction.name : `Faction ${army.factionId}`;
+  return army.name ? `${army.name} · ${factionName}` : factionName;
+}

@@ -109,7 +109,7 @@ Deletion is **recoverable**: removing a game or a live game archives it into a r
 │   │   └── seed.sql        29 factions + detachments + Pariah Nexus + Leviathan packs +
 │   │                       the 11e "2026 - 2027 Chapter Approved" pack +
 │   │                       Season 1 + guest→user backfill (all idempotent)
-│   └── test/                see "Testing" — 190 unit + 156 integration
+│   └── test/                see "Testing" — 202 unit + 166 integration
 │       ├── README.md       how to run + what's covered
 │       ├── game-scoring.test.js  42 cases pinning the camelCase payload contract
 │       ├── game-rules.test.js    34 — the client mirror, cross-checked payload-by-payload
@@ -671,7 +671,7 @@ that `.panel` / `.panel-body` carry, so nothing contained it.
 Always extend the right export object — never call `fetch` directly from a view:
 
 ```js
-export const auth      = { me, login, logout, changePassword, updateMe };
+export const auth      = { me, login, logout, changePassword, updateMe, setArmies };
 export const reference = { factions, detachments, missionPacks, missionDetails, users,
                             players, playerNames };   // players = unified user+guest picker
 export const games     = { list, get, create, update };
@@ -708,14 +708,15 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/health` | public | `{ ok: true }` |
 | POST | `/auth/login` | public | `{ username, password }` → user object; sets session |
 | POST | `/auth/logout` | public | destroys session; no guard, so it returns `{ ok: true }` even when nobody is logged in |
-| GET | `/auth/me` | auth | current user `{ id, username, displayName, role, armyName, promptRoundPhoto }` |
-| PATCH | `/auth/me` | auth | self-serve update: `{ armyName?, promptRoundPhoto? }`. `armyName` is write-always (omitting it clears it); `promptRoundPhoto` is `COALESCE`d, so omitting it leaves it alone |
+| GET | `/auth/me` | auth | current user `{ id, username, displayName, role, armyName, promptRoundPhoto, armies }` |
+| PATCH | `/auth/me` | auth | self-serve update: `{ armyName?, promptRoundPhoto? }`. Dynamic SET: an omitted field is untouched (a partial update can't wipe the other field — it did once); `armyName: ''` clears to NULL |
+| PUT | `/auth/me/armies` | auth | replace the user's whole registered-army list: `{ armies: [{ factionId, name?, isPrimary? }] }` → `{ armies: [{ id, factionId, name, isPrimary, position }] }`. Delete-then-reinsert like `PUT /games/:id`; ≤1 primary (first defaults when none flagged), ≤50 entries, names ≤120 chars; 400 `bad_faction` / `multiple_primary`. Quick-pick data only — `game_players.faction_id` stays authoritative per match |
 | POST | `/auth/change-password` | auth | `{ currentPassword, newPassword }` |
 | GET | `/reference/factions` | public | `[{ id, name }]` |
 | GET | `/reference/factions/:id/detachments` | public | `[{ id, name }]` — UNION of seeded + free-text from past games |
 | GET | `/reference/mission-packs` | public | `[{ id, name }]` |
 | GET | `/reference/mission-packs/:id/details` | public | `{ primaryMissions, deploymentMaps, missionRules, secondaryCards, challengerCards }` |
-| GET | `/reference/users` | public | active users `[{ id, username, display_name }]` |
+| GET | `/reference/users` | public | active users `[{ id, username, display_name, armies }]` — `armies` is the registered list (ordered, `isPrimary` flagged) so the game forms can quick-pick without an N+1 |
 | GET | `/reference/player-names` | public | distinct names from past games (for autocomplete) |
 | GET | `/reference/players` | public | unified player picker — every entity that has appeared in a game, registered or guest: `[{ key, label }]` where `key` is the canonical `user:<id>` / `guest:<name>` accepted by `/games?playerKey=` |
 | GET | `/games` | public | filtered list (q params: `playerUserId`, `playerKey` (`user:<id>`\|`guest:<name>`), `playerFaction`, `opponentFaction`, `missionPack`, `primaryMission`, `deploymentMap`, `format`, `playMedium` (`physical`\|`digital`), `edition` (`10`\|`11`), `dateFrom`, `dateTo`, `includeHidden`, `q` (free-text search over notes / tournament / location / player names / army-list paste), `limit` (default 100), `offset`). `opponentFaction` is only applied when `playerFaction` is also set |
@@ -750,7 +751,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/stats/detachment-winrates[?factionId=N]` | public | per-`(faction, detachment_name)` W/L/D + win% |
 | GET | `/stats/trends` | public | `{ monthlyGames, monthlyAvgScore, factionPopularity }` |
 | GET | `/stats/calendar[?days=365]` | public | `[{ date, games }]` — fuels the heatmap. `days` is capped at 730 |
-| GET | `/stats/player/:playerKey` | public | profile + per-faction + streaks for `'user:<id>'` or `'guest:<name>'` |
+| GET | `/stats/player/:playerKey` | public | profile + per-faction + streaks + registered `armies` (always `[]` for a guest key) for `'user:<id>'` or `'guest:<name>'` |
 | GET | `/stats/warmap[?season=N][&through_game_id=N]` | public | array of (player, faction) banners: `player_key`, `player_name`, `army_name`, `faction_id`, `faction`, `games`, `wins`, `losses`, `draws`, `avg_score`, `adjusted_points`, `win_rate`, `territory_score`, `first_seen_at`, `anchor_x`, `anchor_y`. Defaults to the active season. `through_game_id` truncates the aggregation at that game in `(played_at, id)` order — that's what the time-travel slider scrubs. Also lazily back-fills any missing `banner_first_seen` row. |
 | GET | `/stats/warmap-timeline[?season=N]` | public | the season's games in chronological order with enough metadata to label a slider tick: `id`, `played_at`, `p1_name`/`p2_name`, `p1_faction`/`p2_faction`, `p1_result` |
 | GET | `/seasons` | public | every season + games count |
@@ -775,7 +776,7 @@ Login is rate-limited to 20 attempts / IP / 15 min.
 | GET | `/ratings/history[?marginOfVictory=true&model=…]` | admin | every player's day-by-day series for the compare chart `[{ userId, displayName, series:[{x,y}] }]` (y = confidence floor; carried forward to today) |
 | GET | `/events` | public | Server-Sent Events stream; emits `game.saved`, `season.changed`, `draft.updated`. Comment heartbeat every 25s. The subscriber records `req.session?.userId` when there is one, but a session is **not** required — anonymous viewers get live updates too, which is exactly why `draft.updated` carries **no draft content**, only `{ id, rev, by }` |
 
-**Total: 68 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check:
+**Total: 69 endpoints** in `routes/*.js`, plus `/health` defined inline in `server.js`. Cross-check:
 
 ```bash
 grep -hE "router\.(get|post|put|patch|delete)\(" api/routes/*.js | wc -l
@@ -793,6 +794,7 @@ Tables (snake_case throughout):
 | `users` | account holders | id, username (unique), display_name, password_hash, role ('user'\|'admin'), is_active, army_name (optional, shown on the war map), prompt_round_photo (BOOLEAN NOT NULL DEFAULT TRUE — the live tracker's between-rounds "snap a photo?" nudge; opt-out from My Profile), last_login_at (TIMESTAMPTZ, NULL = never — stamped by `POST /auth/login` only, so a returning user on a live 30-day cookie does **not** refresh it; backfilled from `audit_log` `auth.login` rows by seed.sql) |
 | `session` | express-session storage | sid, sess (json), expire — auto-managed by `connect-pg-simple` |
 | `factions` | parent codex factions | id, name (unique), parent_id (nullable, currently unused) |
+| `user_armies` | a player's registered armies — profile/quick-pick data only; nothing FKs into it and no stats/warmap query reads it. Written only by `PUT /auth/me/armies` (replace-the-whole-list) | id, user_id (CASCADE), faction_id (CASCADE), name (optional free text), is_primary (partial unique index: at most one per user), position, created_at |
 | `detachments` | seeded per-faction detachments — autocomplete only; UNIONed with free-text `game_players.detachment_name` from past games. Consumed by `/stats/detachment-winrates`. | id, faction_id, name; UNIQUE (faction_id, name) |
 | `mission_packs` | e.g. Pariah Nexus, Leviathan | id, name (unique) |
 | `primary_missions` | e.g. Take and Hold | id, mission_pack_id, name |
@@ -2210,21 +2212,21 @@ To change behaviour, the tunables in `ratings.js` are the dial; the math in `gli
 
 ## Testing
 
-**346 tests in two suites.** Both are `node:test` — no framework, no assertion
+**368 tests in two suites.** Both are `node:test` — no framework, no assertion
 library, no mocking library. Run the unit suite before every deploy; run the
 integration suite before anything that touches `drafts.js`, `admin.js`,
 `archive.js` or the schema.
 
 ```bash
-bash scripts/test-unit.sh                    # 190 tests, ~1.5s, no network, no DB
-bash scripts/test-live.sh                    # 156 tests, live API + real Postgres
+bash scripts/test-unit.sh                    # 202 tests, ~1.5s, no network, no DB
+bash scripts/test-live.sh                    # 166 tests, live API + real Postgres
 bash scripts/test-live.sh drafts-lifecycle   # one file
 ```
 
 Both shell out to `docker run`, which is why they live in `scripts/` rather than
 as npm scripts. `npm test` inside `api/` runs the same unit glob on the host.
 
-### Unit suite (`scripts/test-unit.sh`) — 190 tests, 11 files
+### Unit suite (`scripts/test-unit.sh`) — 202 tests, 12 files
 
 `--network none`, no database, no containers. It mounts `app/` **read-only**,
 because several suites test *frontend* modules — they're dependency-free ES
@@ -2253,7 +2255,7 @@ The three additions worth knowing about:
   **the route never moves while a layer is open** — the failure this module
   exists to prevent.
 
-### Integration suite (`scripts/test-live.sh`) — 156 tests, 8 files
+### Integration suite (`scripts/test-live.sh`) — 166 tests, 9 files
 
 Joined to the `web` docker network, hitting `40k-api:3000` and `postgres:5432`
 directly — no Caddy, no NAT loopback (which doesn't work on this host anyway).

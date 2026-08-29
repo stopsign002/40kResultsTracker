@@ -2,7 +2,7 @@
 
 Two `.sql` files run on every container start by `lib/db.js#initSchema()`:
 
-1. `schema.sql` — 23 tables, indexes, the `v_game_player_stats` view, and 17 guarded `ALTER` migrations
+1. `schema.sql` — 24 tables, indexes, the `v_game_player_stats` view, and 17 guarded `ALTER` migrations
 2. `seed.sql` — reference data (factions, detachments, mission packs, cards), Season 1 bootstrap, idempotent guest→user, detachment, `last_login_at` and `submitted_at` backfills
 
 `seed.sql` also carries a **guarded rename** for secondary-card casing, which

@@ -13,7 +13,7 @@ to a read module silently takes the site private.
 
 | File | Mounted at | Auth gate | What it serves |
 |---|---|---|---|
-| `auth.js` | `/auth` | **per-route** (login/logout/`GET /me` reachable while logged out; `GET /me` self-checks the session and 401s) | login, logout, me, PATCH me (self-serve `army_name` + `promptRoundPhoto`), change-password |
+| `auth.js` | `/auth` | **per-route** (login/logout/`GET /me` reachable while logged out; `GET /me` self-checks the session and 401s) | login, logout, me, PATCH me (self-serve `army_name` + `promptRoundPhoto`; dynamic SET — omitted fields untouched), PUT me/armies (replace the registered-army list), change-password |
 | `admin.js` | `/admin` | `requireAdmin` (**top-level**) | user CRUD, game visibility toggle, game delete (**archives**), the **recycle bin** (`/deleted*`), the **detachment library** (`/detachments`, see below), audit log viewer, guest-account preview + promotion |
 | `games.js` | `/games` | **none top-level** — `GET /`, `GET /:id` public; `POST /`, `PUT /:id` inline `requireAuth` | list (with filters + free-text `q`), get, create, update. The write helpers live in `lib/game-write.js`; this file keeps the filter SQL and `PUT`'s delete-then-reinsert body. Still has **no DELETE** — hard delete is the admin escape hatch |
 | `images.js` | `/games` (mounted **before** `games.js`) | per-route: `GET /:gameId/images` public, writes `requireAuth` | game photos — list/upload/flag/delete. `POST` and `PATCH` both accept `isMap`, which tags the shot of the terrain **that game** was played on. Bytes go to `UPLOAD_DIR` on disk and are served **by Caddy**, not by Node. Also exports `removeGameImageFiles(gameId)` — called from `lib/archive.js#removeArchivedFiles`, i.e. only on a **permanent** delete |

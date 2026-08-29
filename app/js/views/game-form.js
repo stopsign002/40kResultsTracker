@@ -1,5 +1,5 @@
 import { games, reference } from '../api.js';
-import { el, clear, toast, selectOptions, confirmModal, fmtDuration } from '../components.js';
+import { el, clear, toast, selectOptions, confirmModal, fmtDuration, matchRegisteredUser, armyChipLabel } from '../components.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
 import { missionLink, fixedSecondaryOptions } from '../mission-cards.js';
 import {
@@ -43,10 +43,11 @@ function comboField(items, currentId, currentName, onChange, opts = {}) {
 export async function renderGameForm(state, gameId) {
   const root = el('div', { class: 'fade-in' }, el('div', {}, 'Loading…'));
 
-  const [factions, missionPacks, playerNames] = await Promise.all([
+  const [factions, missionPacks, playerNames, users] = await Promise.all([
     reference.factions(),
     reference.missionPacks(),
     reference.playerNames(),
+    reference.users().catch(() => []),
   ]);
 
   // Load existing game if editing
@@ -365,6 +366,47 @@ export async function renderGameForm(state, gameId) {
       (playerNames || []).map(n => el('option', { value: n }, ''))
     );
 
+    // Quick-pick from the matched player's registered armies. The match mirrors
+    // what resolvePlayerIdentities will link at save time; the chips and the
+    // primary-army default only ever fill an EMPTY faction — a chosen one is
+    // never overwritten. change fires on blur / datalist pick, not per keystroke.
+    const chipUser = matchRegisteredUser(p.guestName, users);
+    nameInput.addEventListener('change', async () => {
+      const u = matchRegisteredUser(nameInput.value, users);
+      const userArmies = u ? (u.armies || []) : [];
+      if (p.factionId == null && userArmies.length) {
+        const prim = userArmies.find(a => a.isPrimary) || userArmies[0];
+        p.factionId = prim.factionId;
+        if (!detachmentsByFaction[p.factionId]) {
+          detachmentsByFaction[p.factionId] = await reference.detachments(p.factionId);
+        }
+        rerender();
+      } else if ((u?.id ?? null) !== (chipUser?.id ?? null)) {
+        rerender();
+      }
+    });
+
+    function buildArmyChips() {
+      const armies = chipUser ? (chipUser.armies || []) : [];
+      if (!armies.length) return null;
+      return el('div', { class: 'form-row' }, [
+        el('div', { class: 'form-group' }, [
+          el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap' } },
+            armies.map(a => el('button', {
+              type: 'button',
+              class: 'btn small' + (p.factionId === a.factionId ? ' primary' : ''),
+              onClick: async () => {
+                p.factionId = a.factionId;
+                if (!detachmentsByFaction[p.factionId]) {
+                  detachmentsByFaction[p.factionId] = await reference.detachments(p.factionId);
+                }
+                rerender();
+              },
+            }, armyChipLabel(a, factions)))),
+        ]),
+      ]);
+    }
+
     const factionSel = el('select', {}, selectOptions(factions));
     factionSel.value = p.factionId || '';
     factionSel.addEventListener('change', async () => {
@@ -430,6 +472,7 @@ export async function renderGameForm(state, gameId) {
       el('div', { class: 'form-row' }, [
         el('div', { class: 'form-group' }, [el('label', {}, 'Name'), nameInput, datalist]),
       ]),
+      buildArmyChips(),
       el('div', { class: 'form-row cols-2' }, [
         field('Faction', factionSel),
         buildDetachments(p, idx),
