@@ -73,15 +73,22 @@ router.get('/', async (req, res) => {
       params.push(String(playerKey).slice(6));
     }
   }
-  if (playerFaction) {
-    where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.faction_id = $${i++})`);
-    params.push(playerFaction);
-  }
-  if (opponentFaction && playerFaction) {
+  if (playerFaction && opponentFaction) {
+    // Both set: a game where one player has playerFaction and a DIFFERENT
+    // seat in the same game has opponentFaction (the paired case).
     where.push(`EXISTS (
       SELECT 1 FROM game_players a JOIN game_players b ON a.game_id = b.game_id AND a.seat <> b.seat
-      WHERE a.game_id = g.id AND a.faction_id = $${i - 1} AND b.faction_id = $${i++}
+      WHERE a.game_id = g.id AND a.faction_id = $${i++} AND b.faction_id = $${i++}
     )`);
+    params.push(playerFaction, opponentFaction);
+  } else if (playerFaction) {
+    where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.faction_id = $${i++})`);
+    params.push(playerFaction);
+  } else if (opponentFaction) {
+    // Vs Faction alone: same semantics as Faction alone (some player in the
+    // game has this faction) — there's no "primary" player to pair against
+    // when only the opponent side is specified. See #12.
+    where.push(`EXISTS (SELECT 1 FROM game_players gp WHERE gp.game_id = g.id AND gp.faction_id = $${i++})`);
     params.push(opponentFaction);
   }
 
