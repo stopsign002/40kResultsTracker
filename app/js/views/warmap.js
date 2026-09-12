@@ -1008,9 +1008,25 @@ export async function renderWarmap(_state) {
     e.stopPropagation();
     legendPanel.style.display = legendPanel.style.display === 'none' ? 'block' : 'none';
   });
-  document.addEventListener('click', (e) => {
+  const onOutsideClick = (e) => {
     if (!canvasWrapper.contains(e.target)) legendPanel.style.display = 'none';
-  });
+  };
+  document.addEventListener('click', onOutsideClick);
+
+  // ── Teardown (#9) ────────────────────────────────────────────
+  // app.js's router has no unmount hook — renderShell() just clears the DOM
+  // and calls the next route's handler, which for `/` and `/war` is a brand
+  // new renderWarmap() call even when staying on this same route (e.g. the
+  // season picker rewrites the hash). Without this, the old closure's play
+  // interval keeps firing /api/stats/warmap every 600ms against a detached
+  // canvas, and onOutsideClick above leaks one more copy of itself onto
+  // `document` every time this view is opened.
+  const onHash = () => {
+    stopPlay();
+    document.removeEventListener('click', onOutsideClick);
+    window.removeEventListener('hashchange', onHash);
+  };
+  window.addEventListener('hashchange', onHash);
 
   return root;
 }
