@@ -69,7 +69,7 @@ router.get('/player-winrates', async (req, res) => {
   const { whereSql, params } = buildFilters(req.query);
   const sql = `
     SELECT
-      COALESCE(u.id::text, 'guest:' || gp.guest_name) AS player_key,
+      COALESCE('user:' || u.id::text, 'guest:' || gp.guest_name) AS player_key,
       COALESCE(u.display_name, gp.guest_name) AS player_name,
       COUNT(*)::int AS games,
       SUM(CASE WHEN gp.result = 'win' THEN 1 ELSE 0 END)::int AS wins,
