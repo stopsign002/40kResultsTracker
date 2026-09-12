@@ -39,19 +39,45 @@ export async function renderGamesList(state) {
     deploymentMaps = d.deploymentMaps;
   }
 
+  // Primary/Deployment options depend on the chosen Mission Pack. Their
+  // <select> elements are kept in `dependentSelects` so the Mission Pack
+  // change handler can repopulate them in place — `refresh()` only rebuilds
+  // #games-table, so without this the two selects stay stuck on whatever
+  // options they were built with at initial render (see #11).
+  const dependentSelects = {};
+
   const filterSel = (label, key, items, valueKey, labelKey) => {
     const sel = el('select', {}, selectOptions(items, valueKey, labelKey));
     sel.value = filterState[key];
+    if (key === 'primaryMission' || key === 'deploymentMap') dependentSelects[key] = sel;
     sel.addEventListener('change', async () => {
       filterState[key] = sel.value;
       if (key === 'missionPack') {
         filterState.primaryMission = '';
         filterState.deploymentMap = '';
+        await updateMissionDetailSelects();
       }
       await refresh();
     });
     return el('div', { class: 'form-group' }, [el('label', {}, label), sel]);
   };
+
+  async function updateMissionDetailSelects() {
+    let pm = [], dm = [];
+    if (filterState.missionPack) {
+      const d = await reference.missionDetails(filterState.missionPack);
+      pm = d.primaryMissions;
+      dm = d.deploymentMaps;
+    }
+    const pmSel = dependentSelects.primaryMission;
+    const dmSel = dependentSelects.deploymentMap;
+    clear(pmSel);
+    pmSel.append(...selectOptions(pm));
+    pmSel.value = filterState.primaryMission;
+    clear(dmSel);
+    dmSel.append(...selectOptions(dm));
+    dmSel.value = filterState.deploymentMap;
+  }
 
   const dateInput = (label, key) => {
     const inp = el('input', { type: 'date', value: filterState[key] });
