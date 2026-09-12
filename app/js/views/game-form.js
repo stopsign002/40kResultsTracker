@@ -1295,7 +1295,16 @@ export async function renderGameForm(state, gameId) {
               if (entry.score > 0) { entry.cardId = null; entry.cardName = 'Unspecified'; }
               else { const i = player.secondaries.indexOf(entry); if (i >= 0) player.secondaries.splice(i, 1); }
             }
-            rerender();
+            // Deferred, not synchronous: this fires on blur (comboField
+            // resolves on `change`), and blur happens on Save Game's
+            // mousedown — before its mouseup/click. A synchronous rerender()
+            // here clear()s and rebuilds the form root between those two
+            // events, so the button the mouse went down on is gone before
+            // the browser can fire `click` on it, and the first Save click is
+            // silently swallowed (#13). Pushing the rebuild to a macrotask
+            // lets the pending click fire first; the rebuild still happens,
+            // just a tick later, which is imperceptible for a card clear.
+            setTimeout(rerender, 0);
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
           } else {
@@ -1320,7 +1329,9 @@ export async function renderGameForm(state, gameId) {
           if (v === 0 && (!entry.cardName || entry.cardName === 'Unspecified')) {
             const i = player.secondaries.indexOf(entry);
             if (i >= 0) player.secondaries.splice(i, 1);
-            rerender();
+            // Deferred for the same reason as the card-clear branch above —
+            // see #13.
+            setTimeout(rerender, 0);
           } else {
             // The 10e secondary/challenger boxes were the only score inputs on
             // this form that changed state without repainting the read-outs —
@@ -1365,7 +1376,8 @@ export async function renderGameForm(state, gameId) {
               if (entry.score > 0) { entry.cardId = null; entry.cardName = 'Unspecified'; }
               else { const i = player.challengers.indexOf(entry); if (i >= 0) player.challengers.splice(i, 1); }
             }
-            rerender();
+            // Deferred — see the identical comment in buildSecSlot (#13).
+            setTimeout(rerender, 0);
           } else if (entry) {
             entry.cardId = id; entry.cardName = name;
           } else {
@@ -1390,7 +1402,8 @@ export async function renderGameForm(state, gameId) {
           if (v === 0 && (!entry.cardName || entry.cardName === 'Unspecified')) {
             const i = player.challengers.indexOf(entry);
             if (i >= 0) player.challengers.splice(i, 1);
-            rerender();
+            // Deferred — see the identical comment in buildSecSlot (#13).
+            setTimeout(rerender, 0);
           } else {
             // The 10e secondary/challenger boxes were the only score inputs on
             // this form that changed state without repainting the read-outs —
