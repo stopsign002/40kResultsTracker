@@ -715,10 +715,12 @@ async function renderWizard(state, draftId) {
       const r = (p.rounds || []).find((x) => x.roundNumber === n);
       if (r) {
         if ((r.primaryScore || 0) > 0 || (r.timeSeconds || 0) > 0) return true;
-        // A CP identical to the previous round's is the carried default, not
-        // something recorded here — otherwise merely opening a round lights
-        // its pip, which is the "skipped rounds read as done" bug again.
-        if (r.cpRemaining != null && r.cpRemaining !== carriedCp(p, n)) return true;
+        // A stored cpRemaining now means someone typed one here: the carried
+        // figure is display-only (see buildRoundSeat), so merely opening a
+        // round records nothing and cannot light its pip. This used to compare
+        // against carriedCp() instead, which moves when an earlier round is
+        // edited — that is how a seeded value started reading as real data.
+        if (r.cpRemaining != null) return true;
       }
       return (p.secondaries || []).some((sec) => sec.drawnRound === n || sec.roundNumber === n);
     });
@@ -1438,14 +1440,12 @@ async function renderWizard(state, draftId) {
   function buildRoundSeat(p, i, n) {
     const editable = canEditSeat(i);
     const r = roundRec(p, n);
-    // Seed on render rather than up front, so a round nobody opened stays
-    // blank — and deliberately without touch(), so paging through the wizard
-    // doesn't dirty the draft. Only our own seat: writing the opponent's
-    // number locally would push it over their in-flight edit.
-    if (editable && r.cpRemaining == null) {
-      const carried = carriedCp(p, n);
-      if (carried != null) r.cpRemaining = carried;
-    }
+    // The carried CP is a DISPLAY DEFAULT and is never written into `payload`
+    // — it is resolved in the stepper's getter below. Seeding it into the
+    // record (which is what used to happen here) dirtied the draft merely by
+    // opening a round: goStep's whole-payload PATCH then filed CP for rounds
+    // nobody touched, lit their pip, and froze the figure, so editing round 2
+    // afterwards left round 3 showing the stale number it had already stored.
     const seat = el('div', {
       class: `lg-seat ${i === activeSeat ? '' : 'is-inactive'} ${editable ? '' : 'is-readonly'}`.trim(),
     });
@@ -1486,7 +1486,11 @@ async function renderWizard(state, draftId) {
     seat.appendChild(el('div', { class: 'lg-field' }, [
       el('label', {}, 'CP remaining'),
       stepper({
-        get: () => r.cpRemaining,
+        // Unrecorded shows the nearest earlier round's STORED figure, so a
+        // later correction to round 2 changes what round 3 offers. Writing
+        // happens only on a real edit, which is what keeps "was CP entered
+        // in this round?" answerable at all.
+        get: () => r.cpRemaining ?? carriedCp(p, n),
         set: (v) => { r.cpRemaining = v; },
         min: 0, max: 30, editable, blankable: true,
         label: `CP remaining, round ${n}, ${seatName(p, i)}`,
@@ -2076,6 +2080,20 @@ async function renderWizard(state, draftId) {
     return wrap;
   }
 
+  // A round with no CP of its own shows the carried pool, muted: the round
+  // screen offers that same number, and a bare dash next to a played round
+  // reads as "they spent it all". Muted because it is inferred — nothing was
+  // recorded there and nothing is filed for it on submit.
+  function cpCell(p, n, r) {
+    if (r.cpRemaining != null) return el('td', { class: 'tabular' }, String(r.cpRemaining));
+    const carried = carriedCp(p, n);
+    if (carried == null) return el('td', { class: 'tabular' }, '–');
+    return el('td', {
+      class: 'tabular muted',
+      title: 'Carried forward from an earlier round — no CP was recorded here',
+    }, String(carried));
+  }
+
   function buildSummarySeat(p, i) {
     const rows = ROUNDS.map((n) => {
       const r = roundRec(p, n);
@@ -2085,7 +2103,7 @@ async function renderWizard(state, draftId) {
         el('td', {}, `R${n}`),
         el('td', { class: 'tabular' }, String(r.primaryScore || 0)),
         el('td', { class: 'tabular' }, String(secPts)),
-        el('td', { class: 'tabular' }, r.cpRemaining == null ? '–' : String(r.cpRemaining)),
+        cpCell(p, n, r),
         el('td', { class: 'tabular' }, fmtDuration(r.timeSeconds) ?? '–'),
       ]);
     });

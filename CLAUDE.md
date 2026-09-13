@@ -1640,13 +1640,25 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
 - **CP carries forward between rounds; primary VP does not.** `cp_remaining` is
   a running pool, not a per-round score, so opening round N with a blank box
   meant re-typing the carried figure before you could adjust it. `carriedCp(p, n)`
-  finds the nearest earlier round with a figure and `buildRoundSeat` seeds from
-  it. Three deliberate limits: it seeds **on render**, so a round nobody opened
-  stays untouched; it does **not** call `touch()`, so paging through the wizard
-  can't dirty the draft; and it only seeds a seat you can edit, since writing the
-  opponent's number locally would push it over their in-flight edit. It is a pure
-  carry — the +1 CP a player gains each battle round is **not** auto-added, since
-  the field records what you *had left*, not an income model.
+  finds the nearest earlier round with a **stored** figure, and the CP stepper's
+  getter (`r.cpRemaining ?? carriedCp(p, n)`) shows it. **The carried value is a
+  display default and is never written into the payload** — only a real edit
+  stores anything. That one rule is what makes three separate things true at
+  once: a round nobody typed into keeps `cpRemaining: null`, so paging through
+  the wizard cannot dirty the draft and Submit files CP only for rounds that
+  were actually entered; the number shown re-derives on every render, so
+  correcting round 2 afterwards changes what round 3 offers; and
+  `roundHasData()` can treat a stored `cpRemaining` as proof someone typed one.
+  It used to seed **into the record** instead (guarded on `cpRemaining == null`,
+  on render, without `touch()`), which looked equivalent and was not — the
+  seeded value rode the next whole-payload PATCH out to the server, so merely
+  opening round 3 lit its pip and filed a phantom CP, and once stored it was
+  frozen against any later edit to round 2 (`40kResultsTracker#8`). It is a pure
+  carry either way — the +1 CP a player gains each battle round is **not**
+  auto-added, since the field records what you *had left*, not an income model.
+  The Summary table shows an unrecorded round's carried figure **muted**
+  (`cpCell()`), because the round screen offers that same number and a bare dash
+  beside a played round reads as "they spent it all"; nothing muted is filed.
 - **The chess clock banks seconds as they elapse** rather than computing from a
   start stamp, so a crash costs at most one autosave interval. It writes per-round
   `time_seconds`, and `resolvePlayerTimes()` already makes the player total the
@@ -1658,11 +1670,15 @@ autosave. Like everything else in `lib/mail.js`, it no-ops without
   disabled rather than hidden when `canNavigate` is false.
 - **A pip reads "played" from the recorded data**, not from `n < currentRound`.
   `roundHasData(n)` asks whether either player has a primary score, a clocked
-  time, a secondary drawn/scored in that round, or a `cpRemaining` **that
-  differs from the carried one**. The round-number version marked rounds you
-  skipped past as done, and blanked every pip the moment you stepped back to
-  Setup. That last clause is what keeps CP carry-forward from re-creating the
-  same bug: without it, merely opening round 4 seeds its CP and lights its pip.
+  time, a secondary drawn/scored in that round, or a stored `cpRemaining`. The
+  round-number version marked rounds you skipped past as done, and blanked every
+  pip the moment you stepped back to Setup. The CP clause used to read
+  `cpRemaining != null && cpRemaining !== carriedCp(p, n)`, because back then
+  opening a round wrote the carried value into the record and something had to
+  tell a seeded figure from a typed one. That test moves when an earlier round
+  is edited — change round 2 and round 3's seeded copy stops matching, so it
+  starts reading as real data — which is half of `40kResultsTracker#8`. Now that
+  nothing is stored unless it was typed, a stored value simply *is* data.
   From Setup, the forward button is labelled from the same source — `Round 4 →`
   when round 4 is the last one with data — so it returns you where you were
   rather than to round 1.
