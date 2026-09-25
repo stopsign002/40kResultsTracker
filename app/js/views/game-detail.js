@@ -196,6 +196,13 @@ function buildPhotosPanel(state, g, gallery) {
   const canEdit = (img) => state.user &&
     (state.user.role === 'admin' || img.uploaded_by_user_id === state.user.id);
 
+  // Same caption vocabulary the live tracker writes at source (see
+  // live-game.js), so a photo tagged either way renders the same badge.
+  const ROUND_OPTIONS = [
+    ...[1, 2, 3, 4, 5].map(n => `Round ${n}`),
+    ...[1, 2, 3, 4, 5].map(n => `End of round ${n}`),
+  ];
+
   // Rebuilt by paint(); the lightbox needs the live element per index so it can
   // zoom back into whichever photo you cycled to, not the one you opened.
   let thumbEls = [];
@@ -286,6 +293,28 @@ function buildPhotosPanel(state, g, gallery) {
               } catch (e) { toast(e.message, 'error'); }
             },
           }, 'Delete') : null,
+          (() => {
+            const current = img.caption || '';
+            const known = ROUND_OPTIONS.includes(current);
+            const optionValues = [''].concat(known || !current ? [] : [current]).concat(ROUND_OPTIONS);
+            const sel = el('select', {
+              class: 'photo-round',
+              title: 'Which battle round this photo is from',
+            }, optionValues.map(v => el('option', { value: v }, v || 'Round…')));
+            sel.value = current;
+            sel.addEventListener('change', async () => {
+              try {
+                await gameImages.update(g.id, img.id, { caption: sel.value });
+                gallery.images = images.map(x => x.id === img.id ? { ...x, caption: sel.value || null } : x);
+                gallery.repaint();
+                toast(sel.value ? 'Round label set' : 'Round label cleared');
+              } catch (e) {
+                toast(e.message, 'error');
+                gallery.repaint();
+              }
+            });
+            return sel;
+          })(),
         ].filter(Boolean)) : null,
       ].filter(Boolean));
       grid.appendChild(tile);

@@ -1029,8 +1029,19 @@ button.stats-cal-day:focus-visible { outline: 2px solid var(--accent); outline-o
    hover, so an overlay would either always show or never be reachable. */
 .photo-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
+}
+/* Own full-width line under the buttons: a tile is ~180px on desktop and
+   ~130px on a phone, and Cover + Map + Delete already fill that. */
+.photo-actions .photo-round {
+  flex: 1 1 100%;
+  min-width: 0;
+  width: auto;
+  min-height: 0;
+  font-size: 11px;
+  padding: 4px 6px;
 }
 @media (max-width: 700px) {
   .photo-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }

@@ -2192,6 +2192,22 @@ Bytes on disk, metadata in Postgres. Deliberately **not** bytea: a nightly
   index at relink and the loser would be dropped as a failed relink (a lost
   photo). Re-shooting the table demotes the previous shot rather than deleting
   it: it stays on the game, just untagged.
+- **Round label** — no new column: it is just `game_images.caption`, the same
+  field the live tracker writes at source (`Round N`, `End of round N`, N =
+  1..5, or `Terrain layout`) and the same field `paint()` already reads to
+  render the bottom-right `photo-badge is-round` on a finished game's photo
+  tile. `game_draft_images.round_number` is not carried across by
+  `relinkDraftImages` — only the caption survives relink, so the badge's data
+  source has always been the caption, never a round column. On game detail,
+  the Photos panel's actions row has a `select.photo-round` on its own
+  full-width line under the Cover / Map / Delete buttons (the row wraps — a
+  tile is ~180px on desktop, ~130px on a phone, and a fourth control in the
+  same line clipped Delete off the tile), offering `Round 1`..`Round 5` and
+  `End of round 1`..`End of round 5` (plus the current caption as an extra
+  option if it's something else, e.g. `Terrain layout`, so it isn't clobbered
+  by picking it). Choosing an option calls `gameImages.update` with that
+  caption; the blank option clears it. Vocabulary is deliberately identical to
+  the live tracker's so a photo tagged either way renders the same badge.
 - **Deleting a game leaves its photo files exactly where they are.** Both
   `DELETE /admin/games/:id` and `DELETE /drafts/:id` archive into `deleted_items`
   and touch nothing on disk, because a restore that comes back with no pictures
