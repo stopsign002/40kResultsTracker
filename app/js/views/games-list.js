@@ -181,7 +181,7 @@ export async function renderGamesList(state) {
   const tablePanel = el('div', { class: 'panel' }, [
     el('div', { class: 'panel-header' }, [
       el('h2', {}, 'Games'),
-      state.user ? el('a', { class: 'btn primary small', href: '#/games/new' }, 'New Game') : null,
+      state.user ? el('a', { class: 'btn primary small', href: '#/games/new' }, 'Record Game') : null,
     ].filter(Boolean)),
     el('div', { class: 'panel-body' }, [el('div', { id: 'games-table' }, 'Loading…')]),
   ]);

@@ -16,7 +16,7 @@ Every file exports one function: `export async function renderXxx(state, ...args
 | `admin.js` | `/admin` | User CRUD (incl. a **Last Login** column), change own password, audit log viewer, seasons panel (start new), **Guest Accounts** panel (preview + promote guests to inactive accounts), **Deleted Items** panel (Restore / Delete forever). Admin-only nav gating. |
 | `ratings.js` | `/rankings` | **Admin-only.** Leaderboard ranked by a confidence floor (Glicko-2 ⇄ Whole-History toggle, margin-of-victory toggle; headline = floor, "est"/± = raw mean + uncertainty, provisional badges), balanced matchmaker (tick who's present → closest-skill pairings with predicted win-% and last-met, reshuffle), and an all-players rating-history compare chart (Chart.js time axis, daily points / month ticks, lines = the confidence floor, carried forward to today; click a player to highlight, others dim). Refuses non-admins; the API behind it is `requireAdmin`. |
 | `player.js` | `/players/:playerKey` | Per-player profile. Streaks, biggest win/loss margin, per-faction breakdown. `playerKey` is `'user:<id>'` or `'guest:<name>'`. |
-| `profile.js` | `/profile` | Self-serve "My Profile" — edit own `army_name`, change own password, and a **Live Game** panel holding the between-rounds photo-prompt opt-out (`users.prompt_round_photo`, saved through `auth.updateMe`). Linked from the username in the header session row. |
+| `profile.js` | `/profile` | Self-serve "My Profile" — edit own `army_name`, change own password, and a **Live games** panel holding the between-rounds photo-prompt opt-out (`users.prompt_round_photo`, saved through `auth.updateMe`). Linked from the username in the header session row. |
 
 ## Convention
 

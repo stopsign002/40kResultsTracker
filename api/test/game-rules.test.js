@@ -31,6 +31,7 @@ import {
   sumSecondaryPoints,
   capLabel,
   calcTotal,
+  playerThroughRound,
   E11_FIXED_CARD_CAP,
   FIXED_SECONDARY_COUNT,
   secondaryMode,
@@ -157,6 +158,42 @@ test('calcTotal for 11e reproduces the pinned reference game: 46 raw primary cli
 test('calcTotal for 11e clips both halves at once when both overflow', () => {
   const p = { rounds: rounds([15, 15, 15, 15, 15]), secondaries: cards(30, 30) };
   assert.equal(calcTotal(p, '11'), 90);
+});
+
+/* ── playerThroughRound: the live tracker's "score after round n" ── */
+
+test('playerThroughRound totals the pinned reference game round by round, and round 5 is the full total', () => {
+  const p = { rounds: rounds([4, 8, 11, 8, 15]), secondaries: cards(5, 8, 4, 10, 5) };
+  const after = [1, 2, 3, 4, 5].map((n) => calcTotal(playerThroughRound(p, n), '11'));
+  assert.deepEqual(after, [9, 25, 40, 58, 77]);
+  assert.equal(after[4], calcTotal(p, '11'));
+});
+
+test('playerThroughRound drops cards scored later and cards never scored, but keeps the input untouched', () => {
+  const p = {
+    rounds: rounds([5, 5, 5, 0, 0]),
+    secondaries: [
+      { cardName: 'A', drawnRound: 1, roundNumber: 1, score: 4 },
+      { cardName: 'B', drawnRound: 1, roundNumber: 3, score: 5 },
+      { cardName: 'C', drawnRound: 2, roundNumber: null, score: 0 },
+    ],
+  };
+  const r2 = playerThroughRound(p, 2);
+  assert.equal(sumPrimary(r2), 10);
+  assert.equal(sumSecondaryPoints(r2), 4);
+  assert.equal(calcTotal(r2, '11'), 14);
+  assert.equal(p.secondaries.length, 3, 'the live payload is not mutated');
+});
+
+test('playerThroughRound reads 0 for a round with nothing in it, not the stored finalScore', () => {
+  const p = { finalScore: 60, rounds: rounds([0, 0, 0, 0, 0]), secondaries: [] };
+  assert.equal(calcTotal(playerThroughRound(p, 1), '11'), 0);
+});
+
+test('playerThroughRound applies the 45-point halves caps at the round being viewed', () => {
+  const p = { rounds: rounds([15, 15, 15, 15, 15]), secondaries: [] };
+  assert.equal(calcTotal(playerThroughRound(p, 2), '11'), 30);
+  assert.equal(calcTotal(playerThroughRound(p, 4), '11'), 45);
 });
 
 /* ── calcTotal: 10e ────────────────────────────────────────────── */

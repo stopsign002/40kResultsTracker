@@ -146,7 +146,7 @@ export async function renderGameForm(state, gameId) {
     return el('div', {}, [
       el('div', { class: 'panel' }, [
         el('div', { class: 'panel-header' }, [
-          el('h2', {}, editing ? `Edit Game #${gameId}` : 'New Game'),
+          el('h2', {}, editing ? `Edit Game #${gameId}` : 'Record Game'),
         ]),
         el('div', { class: 'panel-body' }, [buildMetaSection(), buildPlayersSection(), buildSubmit()]),
       ]),

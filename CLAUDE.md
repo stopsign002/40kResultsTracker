@@ -548,9 +548,12 @@ share link like `#/play/12?token=…` hit the bare `/^\/play\/(\d+)$/` route; th
 view reads the token back out of `location.hash` itself.
 
 Nav links come from `linkDefs` in `renderShell()`. Order: **Theatre of War,
-Games, Stats**, then **Live Game** (`/play`) and **New Game** (`/games/new`) when
-there's a session, then **Rankings** and **Admin** for admins. Live Game sits
-before New Game deliberately — during a game it's the one you want.
+Games, Stats**, then **New Game** (`/play`, the live tracker) and **Record Game**
+(`/games/new`, the after-the-fact form) when there's a session, then **Rankings**
+and **Admin** for admins. New Game sits before Record Game deliberately — during a
+game it's the one you want. The labels were swapped on 2026-11-03 (they used to
+read "Live Game" / "New Game") because players kept starting a game in the
+after-the-fact form; keep the verb on each label matching what the page does.
 
 ### View module convention
 
@@ -848,8 +851,8 @@ When the user adds a new faction or mission pack, see "How to add things" below.
 |---|---|---|---|---|
 | Log in | ✓ | ✓ | ✓ | `POST /auth/login` (rate-limited) |
 | View games / stats / war map / player profiles / photos | ✓ | ✓ | ✓ | **Nothing** — `games.js`, `stats.js`, `warmap.js`, `reference.js`, `events.js`, `GET /seasons` and `GET /games/:id/images` have no auth gate. Reads are public by design; `app.js` renders every non-flagged route for `state.user === null` |
-| Create / edit games | – | ✓ | ✓ | `requireAuth` inline on `POST /games` + `PUT /games/:id`; client-side, the `/games/new` and `/games/:id/edit` routes carry `requireAuth: true` and the "New Game" nav link only renders with a session |
-| Start a live game | – | ✓ | ✓ | `requireAuth` on `POST /drafts`; the `/play` and `/play/:id` client routes carry `requireAuth: true` and the **Live Game** nav link only renders with a session |
+| Create / edit games | – | ✓ | ✓ | `requireAuth` inline on `POST /games` + `PUT /games/:id`; client-side, the `/games/new` and `/games/:id/edit` routes carry `requireAuth: true` and the "Record Game" nav link only renders with a session |
+| Start a live game | – | ✓ | ✓ | `requireAuth` on `POST /drafts`; the `/play` and `/play/:id` client routes carry `requireAuth: true` and the **New Game** nav link only renders with a session |
 | List live games | ✓ | ✓ | ✓ | `GET /drafts` is public and returns **everyone's** in-progress games, yours first. Each row carries `owner_name` so you can see whose game it is |
 | Watch a live game | ✓ | ✓ | ✓ | `GET /drafts/:id` is public. A viewer with no seat is a **spectator**: `viewerSeat: null`, the client renders read-only and follows the owner's round over SSE. `share_token` is echoed only to the owner — it is the credential for *claiming the second seat*, not for reading. Note the **client** routes `/play` and `/play/:id` still carry `requireAuth: true`, so in practice a spectator is a signed-in user with no seat; the API being public is what makes a share link work without one |
 | Edit a live game | – | **scoped** | **scoped** | `PATCH /drafts/:id`. The **owner may patch anything**. An invited **opponent may send only** `{ patch: { players: { "1": … } } }` — any other top-level key, a `"0"` seat, or a `currentStep` is 403. So the opponent scores their own side; they can't rewrite your scores or move the game on. Seat indexes are bounded to 0–1 — see "Security posture" |
@@ -1369,6 +1372,16 @@ Two routes: `#/play` lists in-progress games, `#/play/:id` is the wizard. Both
 client routes carry `requireAuth: true`. The **API** behind them is public
 (`GET /drafts`, `GET /drafts/:id`, `GET /drafts/:id/images`) — that asymmetry is
 deliberate and is what makes a share link work; see "Spectating" below.
+
+**Scores on a round screen are "as of the end of that round"** (2026-11-03): the
+topbar scoreline, each seat's total and the pri/sec split all go through
+`seatTotal()` / `splitLabel()`, which feed `calcTotal` a
+`playerThroughRound(p, n)` copy — rounds 1..n plus only the cards whose
+`roundNumber` (the round scored) is ≤ n. Setup and Summary show the full game;
+the `#/play` list row shows the current total. Never patch `calcTotal(p)` in
+directly on a round screen — stepping back to round 2 used to show today's
+total, which is the bug this replaced. Photo tiles are `<button class="lg-photo">`
+opening the shared `lightbox.js` viewer over that panel's set (`photoTiles()`).
 
 ### The draft lifecycle
 

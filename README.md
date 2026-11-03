@@ -58,7 +58,7 @@ A new game defaults to **11th edition** — the steps below describe the 10e for
 switch **Edition** to 10th at the top if you're logging an older game. See
 "Adding an 11th-edition game" for what changes.
 
-1. Click **New Game** in the top nav (only visible when logged in).
+1. Click **Record Game** in the top nav (only visible when logged in).
 2. Fill in **Date**, **Format** (matched / crusade / narrative / open / tournament), **Points** (free integer), **Turns played**.
 3. Pick a **Mission Pack** (Pariah Nexus has primaries + secondaries + Secret Missions; Leviathan has the older deck for historical games).
 4. Pick a **Primary Mission**, **Deployment Map**, and (optionally) a **Mission Rule** — defaults to "None".

@@ -1710,11 +1710,22 @@ body.lb-lock { overflow: hidden; }
 .lg-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 8px; }
 .lg-photo {
   position: relative;
+  display: block;
+  width: 100%;
   aspect-ratio: 1;
+  padding: 0;
+  background: none;
   border-radius: var(--radius);
   overflow: hidden;
   border: 1px solid var(--border);
+  /* A <button> that opens the photo viewer: strip the native chrome and kill
+     the inline-image gap, as .photo-open does on the game page. */
+  cursor: zoom-in;
+  line-height: 0;
+  transition: border-color 0.15s ease;
 }
+.lg-photo:hover { border-color: var(--accent); }
+.lg-photo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lg-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* ── Sticky footer nav ───────────────────────────────────────── */

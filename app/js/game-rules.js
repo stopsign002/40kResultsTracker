@@ -212,6 +212,22 @@ export function sumSecondaryPoints(p) {
   return (p.rounds || []).reduce((s, r) => s + (r.secondaryScore || 0), 0);
 }
 
+// A player's record as it stood at the END of round n: rounds 1..n, and only the
+// secondary cards scored by then (`roundNumber` is the round a card was scored
+// in; null means never scored). Fed to calcTotal / sumPrimary /
+// sumSecondaryPoints so the live tracker's "score after round n" readout uses
+// the exact arithmetic and caps of the full-game total — through round 5 it is
+// the full total. `finalScore` is zeroed so an early round with nothing in it
+// reads 0 instead of falling through calcTotal's no-detail branch.
+export function playerThroughRound(p, n) {
+  return {
+    ...p,
+    finalScore: 0,
+    rounds: (p.rounds || []).filter((r) => (r.roundNumber || 0) <= n),
+    secondaries: (p.secondaries || []).filter((s) => s.roundNumber != null && s.roundNumber <= n),
+  };
+}
+
 // "32 / 45", or "45 / 45 (46 raw)" when the cap is actually biting, so it's
 // obvious the entry wasn't mis-typed — the ceiling just clipped it.
 export function capLabel(raw, cap) {

@@ -17,6 +17,7 @@ import {
 } from '../mission-cards.js';
 import { shrink } from '../images.js';
 import { pushLayer } from '../nav-stack.js';
+import { openLightbox } from '../lightbox.js';
 import { looksLikeYaabCode, normaliseArmyList } from '../army-list.js';
 import {
   ROUNDS,
@@ -40,6 +41,7 @@ import {
   FORCE_DISPOSITIONS,
   PRIMARY_MATRIX,
   calcTotal,
+  playerThroughRound,
   sumPrimary,
   sumSecondaryPoints,
   capLabel,
@@ -120,7 +122,7 @@ async function renderDraftList(state) {
   ]));
 
   root.appendChild(el('div', { class: 'muted', style: { fontSize: '13px' } },
-    'Tracking a game as you play it. Already finished? Log it the quick way from New Game.'));
+    'Tracking a game as you play it. Already finished? Log it the quick way from Record Game.'));
 
   return root;
 }
@@ -675,13 +677,13 @@ async function renderWizard(state, draftId) {
   function refreshTotals() {
     payload.players.forEach((p, i) => {
       const total = screen.querySelector(`[data-lg-total="${i}"]`);
-      if (total) total.textContent = String(calcTotal(p, '11'));
+      if (total) total.textContent = String(seatTotal(p));
       const split = screen.querySelector(`[data-lg-split="${i}"]`);
       if (split) split.textContent = splitLabel(p);
       const head = screen.querySelector(`[data-lg-head="${i}"]`);
-      if (head) head.textContent = String(calcTotal(p, '11'));
+      if (head) head.textContent = String(seatTotal(p));
     });
-    const [a, b] = payload.players.map((p) => calcTotal(p, '11'));
+    const [a, b] = payload.players.map(seatTotal);
     const aEl = screen.querySelector('[data-lg-head="0"]');
     const bEl = screen.querySelector('[data-lg-head="1"]');
     if (aEl && bEl) {
@@ -690,8 +692,25 @@ async function renderWizard(state, draftId) {
     }
   }
 
+  // On a round screen every score readout (topbar scoreline, seat totals, the
+  // pri/sec split) is the score AT THE END OF THAT ROUND, so stepping back to
+  // round 2 shows what the game stood at after round 2 rather than today's
+  // total. Setup and the summary show the full game.
+  function shownRound() {
+    const m = /^round(\d)$/.exec(String(step || ''));
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function asShown(p) {
+    const n = shownRound();
+    return n == null ? p : playerThroughRound(p, n);
+  }
+  function seatTotal(p) {
+    return calcTotal(asShown(p), '11');
+  }
+
   function splitLabel(p) {
-    return `${capLabel(sumPrimary(p), E11_PRIMARY_CAP)} pri · ${capLabel(sumSecondaryPoints(p), E11_SECONDARY_CAP)} sec`;
+    const q = asShown(p);
+    return `${capLabel(sumPrimary(q), E11_PRIMARY_CAP)} pri · ${capLabel(sumSecondaryPoints(q), E11_SECONDARY_CAP)} sec`;
   }
 
   /* ── Shared chrome ────────────────────────────────────────── */
@@ -733,7 +752,7 @@ async function renderWizard(state, draftId) {
 
   function buildTopbar(title, currentRound) {
     const scores = payload.players.map((p, i) =>
-      el('span', { class: 'lg-sc', 'data-lg-head': String(i) }, String(calcTotal(p, '11'))));
+      el('span', { class: 'lg-sc', 'data-lg-head': String(i) }, String(seatTotal(p))));
     const pips = ROUNDS.map((n) => {
       const isCurrent = currentRound === n;
       const done = !isCurrent && roundHasData(n);
@@ -1315,7 +1334,7 @@ async function renderWizard(state, draftId) {
         try {
           await drafts.invite(draftId, parseInt(sel.value, 10));
           d.opponent_user_id = parseInt(sel.value, 10);
-          toast('Invited — it will show up in their Live Game list');
+          toast('Invited — it will show up in their New Game list');
           rerender();
         } catch (e) {
           send.disabled = false;
@@ -1456,7 +1475,7 @@ async function renderWizard(state, draftId) {
         el('div', { class: 'lg-seat-faction' }, factionName(p.factionId) || '—'),
       ]),
       el('div', {}, [
-        el('div', { class: 'lg-seat-total', 'data-lg-total': String(i) }, String(calcTotal(p, '11'))),
+        el('div', { class: 'lg-seat-total', 'data-lg-total': String(i) }, String(seatTotal(p))),
         el('div', { class: 'lg-seat-split', 'data-lg-split': String(i) }, splitLabel(p)),
       ]),
     ]));
@@ -1978,17 +1997,7 @@ async function renderWizard(state, draftId) {
   function buildMapPhotoPanel() {
     const setupPhotos = images.filter((im) => im.round_number == null);
     setupPhotos.sort((a, b) => (b.is_map === true) - (a.is_map === true) || a.id - b.id);
-    const tiles = setupPhotos.map((im) => el('div', { class: 'lg-photo' }, [
-      el('img', {
-        src: draftImages.url(draftId, im.thumb_name || im.file_name),
-        alt: im.caption || 'Terrain layout', loading: 'lazy',
-      }),
-      im.is_map
-        ? el('span', { class: 'photo-badge is-map' }, 'MAP')
-        : im.caption
-          ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption)
-          : null,
-    ].filter(Boolean)));
+    const tiles = photoTiles(setupPhotos, (im) => im.caption || 'Terrain layout');
 
     const take = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
       el('span', { 'aria-hidden': 'true' }, '\u{1F4F7}'), ' Take photo',
@@ -2014,12 +2023,45 @@ async function renderWizard(state, draftId) {
     ]);
   }
 
+  // A panel's photos as tap-to-open tiles: each one opens the same full-screen
+  // viewer the game page uses, cycling through that panel's set. The tile is a
+  // <button> so it is keyboard-reachable. thumbFor only answers with a tile
+  // still in the document — a spectator's screen is rebuilt on every SSE
+  // update, and zooming back into a detached tile would fly to the corner.
+  function photoTiles(list, altFor) {
+    const thumbs = [];
+    return list.map((im, i) => {
+      const img = el('img', {
+        src: draftImages.url(draftId, im.thumb_name || im.file_name),
+        alt: altFor(im), loading: 'lazy',
+      });
+      thumbs[i] = img;
+      const badge = im.is_map
+        ? el('span', { class: 'photo-badge is-map' }, 'MAP')
+        : im.caption
+          ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption)
+          : null;
+      const tile = el('button', {
+        class: 'lg-photo',
+        type: 'button',
+        'aria-label': `Open photo ${i + 1} of ${list.length}`,
+      }, [img, badge].filter(Boolean));
+      tile.addEventListener('click', () => openLightbox({
+        items: list.map((x) => ({
+          full: draftImages.url(draftId, x.file_name),
+          thumb: draftImages.url(draftId, x.thumb_name || x.file_name),
+          caption: x.is_map ? 'Terrain layout' : (x.caption || ''),
+        })),
+        startIndex: i,
+        thumbFor: (idx) => (thumbs[idx]?.isConnected ? thumbs[idx] : null),
+      }));
+      return tile;
+    });
+  }
+
   function buildPhotoPanel(n) {
     const mine = images.filter((im) => im.round_number === n);
-    const tiles = mine.map((im) => el('div', { class: 'lg-photo' }, [
-      el('img', { src: draftImages.url(draftId, im.thumb_name || im.file_name), alt: im.caption || `Round ${n}`, loading: 'lazy' }),
-      im.caption ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption) : null,
-    ].filter(Boolean)));
+    const tiles = photoTiles(mine, (im) => im.caption || `Round ${n}`);
     const take = el('button', { class: 'btn', type: 'button', style: { minHeight: '44px' } }, [
       el('span', { 'aria-hidden': 'true' }, '\u{1F4F7}'), ' Take photo',
     ]);
@@ -2064,14 +2106,7 @@ async function renderWizard(state, draftId) {
       body.appendChild(el('div', { class: 'panel' }, [
         el('div', { class: 'panel-header' }, el('h2', {}, `Photos (${photos.length})`)),
         el('div', { class: 'panel-body' }, el('div', { class: 'lg-photos' },
-          photos.map((im) => el('div', { class: 'lg-photo' }, [
-            el('img', { src: draftImages.url(draftId, im.thumb_name || im.file_name), alt: im.caption || 'Game photo', loading: 'lazy' }),
-            im.is_map
-              ? el('span', { class: 'photo-badge is-map' }, 'MAP')
-              : im.caption
-                ? el('span', { class: 'photo-badge is-round', title: im.caption }, im.caption)
-                : null,
-          ].filter(Boolean))))),
+          photoTiles(photos, (im) => im.caption || 'Game photo'))),
       ]));
     }
 
@@ -2121,7 +2156,7 @@ async function renderWizard(state, draftId) {
           el('div', { class: 'lg-seat-faction' }, [factionName(p.factionId), p.detachmentName].filter(Boolean).join(' · ') || '—'),
         ]),
         el('div', {}, [
-          el('div', { class: 'lg-seat-total', 'data-lg-total': String(i) }, String(calcTotal(p, '11'))),
+          el('div', { class: 'lg-seat-total', 'data-lg-total': String(i) }, String(seatTotal(p))),
           el('div', { class: 'lg-seat-split', 'data-lg-split': String(i) }, splitLabel(p)),
         ]),
       ]),
@@ -2195,7 +2230,7 @@ async function renderWizard(state, draftId) {
     const keep = el('button', { class: 'btn lg-nav-btn', type: 'button' }, 'Save draft');
     keep.addEventListener('click', async () => {
       const saved = await flush();
-      toast(saved ? 'Draft saved — pick it up from Live Game'
+      toast(saved ? 'Draft saved — pick it up from New Game'
                   : 'Kept on this device — it will sync when you are back online',
             saved ? 'info' : 'error');
       window.__nav('/play');

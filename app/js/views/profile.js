@@ -177,7 +177,7 @@ export async function renderProfile(state) {
   });
 
   root.appendChild(el('div', { class: 'panel' }, [
-    el('div', { class: 'panel-header' }, el('h2', {}, 'Live Game')),
+    el('div', { class: 'panel-header' }, el('h2', {}, 'Live games')),
     el('div', { class: 'panel-body' }, [
       el('div', { class: 'form-group' }, [
         el('label', {}, 'Photo prompts'),

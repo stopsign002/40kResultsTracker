@@ -58,8 +58,8 @@ function renderShell(viewNode) {
     { href: '/games', label: 'Games' },
     { href: '/stats', label: 'Stats' },
   ];
-  if (state.user) linkDefs.push({ href: '/play', label: 'Live Game' });
-  if (state.user) linkDefs.push({ href: '/games/new', label: 'New Game' });
+  if (state.user) linkDefs.push({ href: '/play', label: 'New Game' });
+  if (state.user) linkDefs.push({ href: '/games/new', label: 'Record Game' });
   if (state.user?.role === 'admin') linkDefs.push({ href: '/rankings', label: 'Rankings' });
   if (state.user?.role === 'admin') linkDefs.push({ href: '/admin', label: 'Admin' });
 
